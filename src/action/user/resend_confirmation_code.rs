@@ -2,7 +2,7 @@
 
 use chrono::{Duration, Utc};
 use serde::Deserialize;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use crate::{
     error::{AppError, Result},
@@ -41,11 +41,7 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
     };
     storage.save_confirmation_code(confirmation).await;
 
-    tracing::info!(
-        "Resend confirmation code for {}: {}",
-        req.username,
-        code
-    );
+    tracing::info!("Resend confirmation code for {}: {}", req.username, code);
 
     Ok(json!({
         "CodeDeliveryDetails": {

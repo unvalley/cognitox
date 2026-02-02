@@ -26,7 +26,10 @@ impl TestClient {
             .method("POST")
             .uri("/")
             .header("content-type", "application/x-amz-json-1.1")
-            .header("x-amz-target", format!("AWSCognitoIdentityProviderService.{}", target))
+            .header(
+                "x-amz-target",
+                format!("AWSCognitoIdentityProviderService.{}", target),
+            )
             .body(Body::from(serde_json::to_string(&body).unwrap()))
             .unwrap();
 

@@ -4,10 +4,10 @@
 //! Requests are routed based on the `X-Amz-Target` header.
 
 use axum::{
+    Json,
     extract::State,
     http::{HeaderMap, StatusCode},
     response::IntoResponse,
-    Json,
 };
 use serde_json::Value;
 use tracing::{info, warn};

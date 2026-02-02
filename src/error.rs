@@ -1,7 +1,7 @@
 use axum::{
+    Json,
     http::StatusCode,
     response::{IntoResponse, Response},
-    Json,
 };
 use serde::Serialize;
 
@@ -67,9 +67,7 @@ impl IntoResponse for AppError {
             AppError::UserNotConfirmed => (StatusCode::BAD_REQUEST, "UserNotConfirmedException"),
             AppError::Internal(_) => (StatusCode::INTERNAL_SERVER_ERROR, "InternalErrorException"),
             AppError::Database(_) => (StatusCode::INTERNAL_SERVER_ERROR, "InternalErrorException"),
-            AppError::NotImplemented(_) => {
-                (StatusCode::NOT_IMPLEMENTED, "NotImplementedException")
-            }
+            AppError::NotImplemented(_) => (StatusCode::NOT_IMPLEMENTED, "NotImplementedException"),
         };
 
         let body = ErrorResponse {

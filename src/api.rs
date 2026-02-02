@@ -1,7 +1,7 @@
 pub mod cognito_idp;
 pub mod extractor;
 
-use axum::{routing::post, Router};
+use axum::{Router, routing::post};
 
 use crate::storage::Storage;
 

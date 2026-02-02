@@ -2,7 +2,7 @@
 
 use chrono::Utc;
 use serde::Deserialize;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use crate::{
     error::{AppError, Result},
@@ -48,7 +48,9 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
     user.user_status = UserStatus::Confirmed;
     user.last_modified_date = Utc::now();
     storage.update_user(user).await;
-    storage.delete_confirmation_code(&confirmation.user_id).await;
+    storage
+        .delete_confirmation_code(&confirmation.user_id)
+        .await;
 
     Ok(json!({}))
 }

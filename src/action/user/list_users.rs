@@ -1,7 +1,7 @@
 //! ListUsers API implementation
 
 use serde::Deserialize;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use crate::{
     error::{AppError, Result},

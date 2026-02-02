@@ -4,7 +4,7 @@ use std::collections::HashMap;
 
 use chrono::{Duration, Utc};
 use serde::Deserialize;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use crate::{
     error::{AppError, Result},
@@ -57,8 +57,7 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
                 return Err(AppError::InvalidPassword);
             }
 
-            let (access_token, id_token, refresh_token) =
-                generate_tokens(&user.id, &req.client_id);
+            let (access_token, id_token, refresh_token) = generate_tokens(&user.id, &req.client_id);
 
             let refresh = RefreshToken {
                 token: refresh_token.clone(),

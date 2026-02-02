@@ -204,9 +204,7 @@ async fn test_confirm_sign_up_invalid_code() {
 async fn test_not_implemented_operation() {
     let client = TestClient::new();
 
-    let (status, body) = client
-        .request("SomeUnknownOperation", json!({}))
-        .await;
+    let (status, body) = client.request("SomeUnknownOperation", json!({})).await;
 
     assert_eq!(status, StatusCode::NOT_IMPLEMENTED);
     assert_eq!(body["__type"], "NotImplementedException");
