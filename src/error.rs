@@ -1,0 +1,84 @@
+use axum::{
+    http::StatusCode,
+    response::{IntoResponse, Response},
+    Json,
+};
+use serde::Serialize;
+
+#[derive(Debug, thiserror::Error)]
+pub enum AppError {
+    #[error("User not found")]
+    UserNotFound,
+
+    #[error("User pool not found")]
+    UserPoolNotFound,
+
+    #[error("User pool client not found")]
+    UserPoolClientNotFound,
+
+    #[error("User already exists")]
+    UserAlreadyExists,
+
+    #[error("Invalid password")]
+    InvalidPassword,
+
+    #[error("Invalid confirmation code")]
+    InvalidConfirmationCode,
+
+    #[error("Invalid access token")]
+    InvalidAccessToken,
+
+    #[error("Invalid refresh token")]
+    InvalidRefreshToken,
+
+    #[error("User not confirmed")]
+    UserNotConfirmed,
+
+    #[error("Internal server error: {0}")]
+    Internal(String),
+
+    #[error("Database error: {0}")]
+    Database(#[from] sqlx::Error),
+
+    #[error("Not implemented: {0}")]
+    NotImplemented(String),
+}
+
+#[derive(Serialize)]
+struct ErrorResponse {
+    #[serde(rename = "__type")]
+    error_type: String,
+    message: String,
+}
+
+impl IntoResponse for AppError {
+    fn into_response(self) -> Response {
+        let (status, error_type) = match &self {
+            AppError::UserNotFound => (StatusCode::BAD_REQUEST, "UserNotFoundException"),
+            AppError::UserPoolNotFound => (StatusCode::BAD_REQUEST, "ResourceNotFoundException"),
+            AppError::UserPoolClientNotFound => {
+                (StatusCode::BAD_REQUEST, "ResourceNotFoundException")
+            }
+            AppError::UserAlreadyExists => (StatusCode::BAD_REQUEST, "UsernameExistsException"),
+            AppError::InvalidPassword => (StatusCode::BAD_REQUEST, "InvalidPasswordException"),
+            AppError::InvalidConfirmationCode => (StatusCode::BAD_REQUEST, "CodeMismatchException"),
+            AppError::InvalidAccessToken => (StatusCode::UNAUTHORIZED, "NotAuthorizedException"),
+            AppError::InvalidRefreshToken => (StatusCode::UNAUTHORIZED, "NotAuthorizedException"),
+            AppError::UserNotConfirmed => (StatusCode::BAD_REQUEST, "UserNotConfirmedException"),
+            AppError::Internal(_) => (StatusCode::INTERNAL_SERVER_ERROR, "InternalErrorException"),
+            AppError::Database(_) => (StatusCode::INTERNAL_SERVER_ERROR, "InternalErrorException"),
+            AppError::NotImplemented(_) => {
+                (StatusCode::NOT_IMPLEMENTED, "NotImplementedException")
+            }
+        };
+
+        let body = ErrorResponse {
+            error_type: error_type.to_string(),
+            message: self.to_string(),
+        };
+
+        (status, Json(body)).into_response()
+    }
+}
+
+pub type Result<T> = std::result::Result<T, AppError>;

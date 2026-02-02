@@ -1,0 +1,27 @@
+//! DeleteUserPool API implementation
+
+use serde::Deserialize;
+use serde_json::{json, Value};
+
+use crate::{
+    error::{AppError, Result},
+    storage::Storage,
+};
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+struct Request {
+    user_pool_id: String,
+}
+
+pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
+    let req: Request = serde_json::from_value(body)
+        .map_err(|e| AppError::Internal(format!("Invalid request: {}", e)))?;
+
+    storage
+        .delete_user_pool(&req.user_pool_id)
+        .await
+        .ok_or(AppError::UserPoolNotFound)?;
+
+    Ok(json!({}))
+}

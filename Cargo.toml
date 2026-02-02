@@ -2,5 +2,48 @@
 name = "cognito-emulator"
 version = "0.1.0"
 edition = "2024"
+description = "AWS Cognito User Pools emulator for local development"
+license = "MIT"
 
 [dependencies]
+# Web framework
+axum = { version = "0.8", features = ["macros"] }
+tower = "0.5"
+tower-http = { version = "0.6", features = ["cors", "trace"] }
+
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Database
+sqlx = { version = "0.8", features = ["runtime-tokio", "sqlite"] }
+
+# Authentication
+jsonwebtoken = "9"
+uuid = { version = "1", features = ["v4", "serde"] }
+base64 = "0.22"
+ring = "0.17"
+srp = "0.6"
+sha2 = "0.10"
+hmac = "0.12"
+rand = "0.8"
+
+# Error handling
+thiserror = "2"
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Time
+chrono = { version = "0.4", features = ["serde"] }
+
+# Config
+dotenvy = "0.15"
+
+[dev-dependencies]
+tokio-test = "0.4"
+reqwest = { version = "0.12", features = ["json"] }
