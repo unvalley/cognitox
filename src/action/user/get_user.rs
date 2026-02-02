@@ -1,4 +1,6 @@
 //! GetUser API implementation
+//!
+//! <https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_GetUser.html>
 
 use serde::Deserialize;
 use serde_json::{Value, json};

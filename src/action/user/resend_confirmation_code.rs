@@ -1,4 +1,6 @@
 //! ResendConfirmationCode API implementation
+//!
+//! <https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_ResendConfirmationCode.html>
 
 use chrono::{Duration, Utc};
 use serde::Deserialize;

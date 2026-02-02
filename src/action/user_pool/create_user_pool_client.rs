@@ -1,4 +1,6 @@
 //! CreateUserPoolClient API implementation
+//!
+//! <https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_CreateUserPoolClient.html>
 
 use chrono::Utc;
 use serde::Deserialize;

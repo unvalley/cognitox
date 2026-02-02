@@ -1,4 +1,6 @@
 //! InitiateAuth API implementation
+//!
+//! <https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_InitiateAuth.html>
 
 use std::collections::HashMap;
 

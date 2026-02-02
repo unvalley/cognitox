@@ -1,4 +1,6 @@
 //! SignUp API implementation
+//!
+//! <https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_SignUp.html>
 
 use chrono::{Duration, Utc};
 use serde::Deserialize;

@@ -1,4 +1,6 @@
 //! DescribeUserPool API implementation
+//!
+//! <https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_DescribeUserPool.html>
 
 use serde::Deserialize;
 use serde_json::{Value, json};

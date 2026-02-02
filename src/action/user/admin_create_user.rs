@@ -1,4 +1,6 @@
 //! AdminCreateUser API implementation
+//!
+//! <https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_AdminCreateUser.html>
 
 use chrono::Utc;
 use serde::Deserialize;
