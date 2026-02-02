@@ -24,7 +24,7 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
     let now = Utc::now();
     let pool_id = format!(
         "local_{}",
-        Uuid::new_v4().to_string().replace("-", "")[..9].to_string()
+        &Uuid::new_v4().to_string().replace("-", "")[..9]
     );
 
     let pool = UserPool {
