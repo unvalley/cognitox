@@ -4,30 +4,30 @@ Based on [Amazon Cognito User Pools API Reference](https://docs.aws.amazon.com/c
 
 ## cognito-idp
 
-14% implemented (17/119)
+30% implemented (36/119)
 
 ### Admin Operations
-- [ ] AdminAddUserToGroup
-- [ ] AdminConfirmSignUp
+- [x] AdminAddUserToGroup
+- [x] AdminConfirmSignUp
 - [x] AdminCreateUser
 - [x] AdminDeleteUser
 - [ ] AdminDeleteUserAttributes
 - [ ] AdminDisableProviderForUser
-- [ ] AdminDisableUser
-- [ ] AdminEnableUser
+- [x] AdminDisableUser
+- [x] AdminEnableUser
 - [ ] AdminForgetDevice
 - [ ] AdminGetDevice
 - [x] AdminGetUser
 - [ ] AdminInitiateAuth
 - [ ] AdminLinkProviderForUser
 - [ ] AdminListDevices
-- [ ] AdminListGroupsForUser
+- [x] AdminListGroupsForUser
 - [ ] AdminListUserAuthEvents
-- [ ] AdminRemoveUserFromGroup
+- [x] AdminRemoveUserFromGroup
 - [ ] AdminResetUserPassword
 - [ ] AdminRespondToAuthChallenge
 - [ ] AdminSetUserMFAPreference
-- [ ] AdminSetUserPassword
+- [x] AdminSetUserPassword
 - [ ] AdminSetUserSettings
 - [ ] AdminUpdateAuthEventFeedback
 - [ ] AdminUpdateDeviceStatus
@@ -44,7 +44,7 @@ Based on [Amazon Cognito User Pools API Reference](https://docs.aws.amazon.com/c
 ### User Pool Client Operations
 - [x] CreateUserPoolClient
 - [x] DeleteUserPoolClient
-- [ ] DescribeUserPoolClient
+- [x] DescribeUserPoolClient
 - [x] ListUserPoolClients
 - [ ] UpdateUserPoolClient
 
@@ -63,11 +63,11 @@ Based on [Amazon Cognito User Pools API Reference](https://docs.aws.amazon.com/c
 - [ ] VerifyUserAttribute
 
 ### Authentication Operations
-- [ ] ChangePassword
-- [ ] ConfirmForgotPassword
+- [x] ChangePassword
+- [x] ConfirmForgotPassword
 - [x] ConfirmSignUp
-- [ ] ForgotPassword
-- [ ] GlobalSignOut
+- [x] ForgotPassword
+- [x] GlobalSignOut
 - [x] InitiateAuth
 - [x] ResendConfirmationCode
 - [ ] RespondToAuthChallenge
@@ -91,11 +91,11 @@ Based on [Amazon Cognito User Pools API Reference](https://docs.aws.amazon.com/c
 - [ ] ListDevices
 
 ### Group Operations
-- [ ] CreateGroup
-- [ ] DeleteGroup
-- [ ] GetGroup
-- [ ] ListGroups
-- [ ] ListUsersInGroup
+- [x] CreateGroup
+- [x] DeleteGroup
+- [x] GetGroup
+- [x] ListGroups
+- [x] ListUsersInGroup
 - [ ] UpdateGroup
 
 ### Identity Provider Operations

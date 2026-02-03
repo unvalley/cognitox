@@ -107,3 +107,26 @@ pub enum ChallengeType {
     AdminNoSrpAuth,
     NewPasswordRequired,
 }
+
+/// Group ID
+pub type GroupName = String;
+
+/// User group
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Group {
+    pub group_name: GroupName,
+    pub user_pool_id: UserPoolId,
+    pub description: Option<String>,
+    pub role_arn: Option<String>,
+    pub precedence: Option<i32>,
+    pub creation_date: DateTime<Utc>,
+    pub last_modified_date: DateTime<Utc>,
+}
+
+/// Password reset code
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PasswordResetCode {
+    pub user_id: UserId,
+    pub code: String,
+    pub expires_at: DateTime<Utc>,
+}

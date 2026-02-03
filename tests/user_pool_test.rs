@@ -219,3 +219,67 @@ async fn test_delete_user_pool_client() {
 
     assert_eq!(list_body["UserPoolClients"].as_array().unwrap().len(), 0);
 }
+
+#[tokio::test]
+async fn test_describe_user_pool_client() {
+    let client = TestClient::new();
+
+    let (_, pool_body) = client
+        .request("CreateUserPool", json!({ "PoolName": "TestPool" }))
+        .await;
+
+    let pool_id = pool_body["UserPool"]["Id"].as_str().unwrap();
+
+    let (_, create_body) = client
+        .request(
+            "CreateUserPoolClient",
+            json!({
+                "UserPoolId": pool_id,
+                "ClientName": "TestClient",
+                "GenerateSecret": true
+            }),
+        )
+        .await;
+
+    let client_id = create_body["UserPoolClient"]["ClientId"].as_str().unwrap();
+
+    let (status, body) = client
+        .request(
+            "DescribeUserPoolClient",
+            json!({
+                "UserPoolId": pool_id,
+                "ClientId": client_id
+            }),
+        )
+        .await;
+
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["UserPoolClient"]["ClientId"], client_id);
+    assert_eq!(body["UserPoolClient"]["ClientName"], "TestClient");
+    assert_eq!(body["UserPoolClient"]["UserPoolId"], pool_id);
+    assert!(body["UserPoolClient"]["ClientSecret"].as_str().is_some());
+}
+
+#[tokio::test]
+async fn test_describe_user_pool_client_not_found() {
+    let client = TestClient::new();
+
+    let (_, pool_body) = client
+        .request("CreateUserPool", json!({ "PoolName": "TestPool" }))
+        .await;
+
+    let pool_id = pool_body["UserPool"]["Id"].as_str().unwrap();
+
+    let (status, body) = client
+        .request(
+            "DescribeUserPoolClient",
+            json!({
+                "UserPoolId": pool_id,
+                "ClientId": "nonexistent"
+            }),
+        )
+        .await;
+
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(body["__type"], "ResourceNotFoundException");
+}

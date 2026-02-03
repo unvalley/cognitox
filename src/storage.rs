@@ -8,7 +8,8 @@ use std::{collections::HashMap, sync::Arc};
 use tokio::sync::RwLock;
 
 use crate::types::{
-    ClientId, ConfirmationCode, RefreshToken, User, UserId, UserPool, UserPoolClient, UserPoolId,
+    ClientId, ConfirmationCode, Group, GroupName, PasswordResetCode, RefreshToken, User, UserId,
+    UserPool, UserPoolClient, UserPoolId,
 };
 
 #[derive(Debug, Clone)]
@@ -24,6 +25,9 @@ struct StorageInner {
     confirmation_codes: HashMap<UserId, ConfirmationCode>,
     refresh_tokens: HashMap<String, RefreshToken>,
     username_index: HashMap<(UserPoolId, String), UserId>,
+    groups: HashMap<(UserPoolId, GroupName), Group>,
+    user_groups: HashMap<UserId, Vec<GroupName>>,
+    password_reset_codes: HashMap<UserId, PasswordResetCode>,
 }
 
 impl Storage {
@@ -183,6 +187,117 @@ impl Storage {
     pub async fn delete_refresh_tokens_for_user(&self, user_id: &UserId) {
         let mut inner = self.inner.write().await;
         inner.refresh_tokens.retain(|_, v| &v.user_id != user_id);
+    }
+
+    // ==================== Group Operations ====================
+
+    pub async fn create_group(&self, group: Group) -> Group {
+        let mut inner = self.inner.write().await;
+        inner.groups.insert(
+            (group.user_pool_id.clone(), group.group_name.clone()),
+            group.clone(),
+        );
+        group
+    }
+
+    pub async fn get_group(
+        &self,
+        user_pool_id: &UserPoolId,
+        group_name: &GroupName,
+    ) -> Option<Group> {
+        let inner = self.inner.read().await;
+        inner
+            .groups
+            .get(&(user_pool_id.clone(), group_name.clone()))
+            .cloned()
+    }
+
+    pub async fn update_group(&self, group: Group) -> Option<Group> {
+        let mut inner = self.inner.write().await;
+        let key = (group.user_pool_id.clone(), group.group_name.clone());
+        if let std::collections::hash_map::Entry::Occupied(mut e) = inner.groups.entry(key) {
+            e.insert(group.clone());
+            Some(group)
+        } else {
+            None
+        }
+    }
+
+    pub async fn delete_group(
+        &self,
+        user_pool_id: &UserPoolId,
+        group_name: &GroupName,
+    ) -> Option<Group> {
+        let mut inner = self.inner.write().await;
+        inner
+            .groups
+            .remove(&(user_pool_id.clone(), group_name.clone()))
+    }
+
+    pub async fn list_groups(&self, user_pool_id: &UserPoolId) -> Vec<Group> {
+        let inner = self.inner.read().await;
+        inner
+            .groups
+            .values()
+            .filter(|g| &g.user_pool_id == user_pool_id)
+            .cloned()
+            .collect()
+    }
+
+    // ==================== User Group Membership Operations ====================
+
+    pub async fn add_user_to_group(&self, user_id: &UserId, group_name: &GroupName) {
+        let mut inner = self.inner.write().await;
+        inner
+            .user_groups
+            .entry(*user_id)
+            .or_default()
+            .push(group_name.clone());
+    }
+
+    pub async fn remove_user_from_group(&self, user_id: &UserId, group_name: &GroupName) {
+        let mut inner = self.inner.write().await;
+        if let Some(groups) = inner.user_groups.get_mut(user_id) {
+            groups.retain(|g| g != group_name);
+        }
+    }
+
+    pub async fn get_groups_for_user(&self, user_id: &UserId) -> Vec<GroupName> {
+        let inner = self.inner.read().await;
+        inner.user_groups.get(user_id).cloned().unwrap_or_default()
+    }
+
+    pub async fn get_users_in_group(
+        &self,
+        user_pool_id: &UserPoolId,
+        group_name: &GroupName,
+    ) -> Vec<User> {
+        let inner = self.inner.read().await;
+        inner
+            .user_groups
+            .iter()
+            .filter(|(_, groups)| groups.contains(group_name))
+            .filter_map(|(user_id, _)| inner.users.get(user_id))
+            .filter(|user| &user.user_pool_id == user_pool_id)
+            .cloned()
+            .collect()
+    }
+
+    // ==================== Password Reset Code Operations ====================
+
+    pub async fn save_password_reset_code(&self, code: PasswordResetCode) {
+        let mut inner = self.inner.write().await;
+        inner.password_reset_codes.insert(code.user_id, code);
+    }
+
+    pub async fn get_password_reset_code(&self, user_id: &UserId) -> Option<PasswordResetCode> {
+        let inner = self.inner.read().await;
+        inner.password_reset_codes.get(user_id).cloned()
+    }
+
+    pub async fn delete_password_reset_code(&self, user_id: &UserId) {
+        let mut inner = self.inner.write().await;
+        inner.password_reset_codes.remove(user_id);
     }
 }
 
