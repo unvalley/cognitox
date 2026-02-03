@@ -419,5 +419,9 @@ async fn test_admin_set_user_password() {
         .await;
 
     assert_eq!(status, StatusCode::OK);
-    assert!(body["AuthenticationResult"]["AccessToken"].as_str().is_some());
+    assert!(
+        body["AuthenticationResult"]["AccessToken"]
+            .as_str()
+            .is_some()
+    );
 }
