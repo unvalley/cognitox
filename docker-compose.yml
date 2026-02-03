@@ -1,0 +1,14 @@
+services:
+  cognitox:
+    build: .
+    ports:
+      - "9229:9229"
+    environment:
+      - PORT=9229
+      - RUST_LOG=cognito_emulator=info
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--spider", "http://127.0.0.1:9229/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 3
+      start_period: 5s

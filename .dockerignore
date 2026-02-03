@@ -1,0 +1,28 @@
+# Build artifacts
+target/
+
+# Git
+.git/
+.gitignore
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Documentation
+*.md
+!README.md
+
+# Reference files
+ref/
+
+# Tests (not needed in production image)
+tests/
+scripts/
+
+# Misc
+.env
+.env.*
+*.log
