@@ -34,6 +34,21 @@ pub enum AppError {
     #[error("User not confirmed")]
     UserNotConfirmed,
 
+    #[error("Group not found")]
+    GroupNotFound,
+
+    #[error("Group already exists")]
+    GroupAlreadyExists,
+
+    #[error("Expired code")]
+    ExpiredCode,
+
+    #[error("Limit exceeded")]
+    LimitExceeded,
+
+    #[error("Invalid parameter: {0}")]
+    InvalidParameter(String),
+
     #[error("Internal server error: {0}")]
     Internal(String),
 
@@ -65,6 +80,11 @@ impl IntoResponse for AppError {
             AppError::InvalidAccessToken => (StatusCode::UNAUTHORIZED, "NotAuthorizedException"),
             AppError::InvalidRefreshToken => (StatusCode::UNAUTHORIZED, "NotAuthorizedException"),
             AppError::UserNotConfirmed => (StatusCode::BAD_REQUEST, "UserNotConfirmedException"),
+            AppError::GroupNotFound => (StatusCode::BAD_REQUEST, "ResourceNotFoundException"),
+            AppError::GroupAlreadyExists => (StatusCode::BAD_REQUEST, "GroupExistsException"),
+            AppError::ExpiredCode => (StatusCode::BAD_REQUEST, "ExpiredCodeException"),
+            AppError::LimitExceeded => (StatusCode::BAD_REQUEST, "LimitExceededException"),
+            AppError::InvalidParameter(_) => (StatusCode::BAD_REQUEST, "InvalidParameterException"),
             AppError::Internal(_) => (StatusCode::INTERNAL_SERVER_ERROR, "InternalErrorException"),
             AppError::Database(_) => (StatusCode::INTERNAL_SERVER_ERROR, "InternalErrorException"),
             AppError::NotImplemented(_) => (StatusCode::NOT_IMPLEMENTED, "NotImplementedException"),

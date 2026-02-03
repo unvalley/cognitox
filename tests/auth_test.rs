@@ -209,3 +209,268 @@ async fn test_not_implemented_operation() {
     assert_eq!(status, StatusCode::NOT_IMPLEMENTED);
     assert_eq!(body["__type"], "NotImplementedException");
 }
+
+#[tokio::test]
+async fn test_change_password() {
+    let client = TestClient::new();
+    let (pool_id, client_id) = setup_pool_and_client(&client).await;
+
+    // Create and confirm user
+    client
+        .request(
+            "AdminCreateUser",
+            json!({
+                "UserPoolId": pool_id,
+                "Username": "testuser"
+            }),
+        )
+        .await;
+
+    client
+        .request(
+            "AdminConfirmSignUp",
+            json!({
+                "UserPoolId": pool_id,
+                "Username": "testuser"
+            }),
+        )
+        .await;
+
+    // Set initial password
+    client
+        .request(
+            "AdminSetUserPassword",
+            json!({
+                "UserPoolId": pool_id,
+                "Username": "testuser",
+                "Password": "OldPassword123!",
+                "Permanent": true
+            }),
+        )
+        .await;
+
+    // Authenticate to get access token
+    let (_, auth_body) = client
+        .request(
+            "InitiateAuth",
+            json!({
+                "ClientId": client_id,
+                "AuthFlow": "USER_PASSWORD_AUTH",
+                "AuthParameters": {
+                    "USERNAME": "testuser",
+                    "PASSWORD": "OldPassword123!"
+                }
+            }),
+        )
+        .await;
+
+    let access_token = auth_body["AuthenticationResult"]["AccessToken"]
+        .as_str()
+        .unwrap();
+
+    // Change password
+    let (status, _) = client
+        .request(
+            "ChangePassword",
+            json!({
+                "AccessToken": access_token,
+                "PreviousPassword": "OldPassword123!",
+                "ProposedPassword": "NewPassword456!"
+            }),
+        )
+        .await;
+
+    assert_eq!(status, StatusCode::OK);
+
+    // Verify new password works
+    let (status, _) = client
+        .request(
+            "InitiateAuth",
+            json!({
+                "ClientId": client_id,
+                "AuthFlow": "USER_PASSWORD_AUTH",
+                "AuthParameters": {
+                    "USERNAME": "testuser",
+                    "PASSWORD": "NewPassword456!"
+                }
+            }),
+        )
+        .await;
+
+    assert_eq!(status, StatusCode::OK);
+}
+
+#[tokio::test]
+async fn test_change_password_wrong_previous() {
+    let client = TestClient::new();
+    let (pool_id, client_id) = setup_pool_and_client(&client).await;
+
+    // Create and confirm user
+    client
+        .request(
+            "AdminCreateUser",
+            json!({
+                "UserPoolId": pool_id,
+                "Username": "testuser"
+            }),
+        )
+        .await;
+
+    client
+        .request(
+            "AdminConfirmSignUp",
+            json!({
+                "UserPoolId": pool_id,
+                "Username": "testuser"
+            }),
+        )
+        .await;
+
+    client
+        .request(
+            "AdminSetUserPassword",
+            json!({
+                "UserPoolId": pool_id,
+                "Username": "testuser",
+                "Password": "Password123!",
+                "Permanent": true
+            }),
+        )
+        .await;
+
+    let (_, auth_body) = client
+        .request(
+            "InitiateAuth",
+            json!({
+                "ClientId": client_id,
+                "AuthFlow": "USER_PASSWORD_AUTH",
+                "AuthParameters": {
+                    "USERNAME": "testuser",
+                    "PASSWORD": "Password123!"
+                }
+            }),
+        )
+        .await;
+
+    let access_token = auth_body["AuthenticationResult"]["AccessToken"]
+        .as_str()
+        .unwrap();
+
+    // Try to change with wrong previous password
+    let (status, body) = client
+        .request(
+            "ChangePassword",
+            json!({
+                "AccessToken": access_token,
+                "PreviousPassword": "WrongPassword!",
+                "ProposedPassword": "NewPassword456!"
+            }),
+        )
+        .await;
+
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(body["__type"], "InvalidPasswordException");
+}
+
+#[tokio::test]
+async fn test_forgot_password() {
+    let client = TestClient::new();
+    let (pool_id, client_id) = setup_pool_and_client(&client).await;
+
+    // Create user with email
+    client
+        .request(
+            "AdminCreateUser",
+            json!({
+                "UserPoolId": pool_id,
+                "Username": "testuser",
+                "UserAttributes": [
+                    { "Name": "email", "Value": "test@example.com" }
+                ]
+            }),
+        )
+        .await;
+
+    let (status, body) = client
+        .request(
+            "ForgotPassword",
+            json!({
+                "ClientId": client_id,
+                "Username": "testuser"
+            }),
+        )
+        .await;
+
+    assert_eq!(status, StatusCode::OK);
+    assert!(body["CodeDeliveryDetails"].is_object());
+    assert_eq!(body["CodeDeliveryDetails"]["DeliveryMedium"], "EMAIL");
+}
+
+#[tokio::test]
+async fn test_global_sign_out() {
+    let client = TestClient::new();
+    let (pool_id, client_id) = setup_pool_and_client(&client).await;
+
+    // Create and confirm user
+    client
+        .request(
+            "AdminCreateUser",
+            json!({
+                "UserPoolId": pool_id,
+                "Username": "testuser"
+            }),
+        )
+        .await;
+
+    client
+        .request(
+            "AdminConfirmSignUp",
+            json!({
+                "UserPoolId": pool_id,
+                "Username": "testuser"
+            }),
+        )
+        .await;
+
+    client
+        .request(
+            "AdminSetUserPassword",
+            json!({
+                "UserPoolId": pool_id,
+                "Username": "testuser",
+                "Password": "Password123!",
+                "Permanent": true
+            }),
+        )
+        .await;
+
+    let (_, auth_body) = client
+        .request(
+            "InitiateAuth",
+            json!({
+                "ClientId": client_id,
+                "AuthFlow": "USER_PASSWORD_AUTH",
+                "AuthParameters": {
+                    "USERNAME": "testuser",
+                    "PASSWORD": "Password123!"
+                }
+            }),
+        )
+        .await;
+
+    let access_token = auth_body["AuthenticationResult"]["AccessToken"]
+        .as_str()
+        .unwrap();
+
+    // Global sign out
+    let (status, _) = client
+        .request(
+            "GlobalSignOut",
+            json!({
+                "AccessToken": access_token
+            }),
+        )
+        .await;
+
+    assert_eq!(status, StatusCode::OK);
+}

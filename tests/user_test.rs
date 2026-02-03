@@ -222,3 +222,206 @@ async fn test_list_users() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["Users"].as_array().unwrap().len(), 2);
 }
+
+#[tokio::test]
+async fn test_admin_confirm_sign_up() {
+    let client = TestClient::new();
+    let (pool_id, client_id) = setup_pool_and_client(&client).await;
+
+    // Sign up user (unconfirmed)
+    client
+        .request(
+            "SignUp",
+            json!({
+                "ClientId": client_id,
+                "Username": "testuser",
+                "Password": "Password123!"
+            }),
+        )
+        .await;
+
+    // Admin confirm
+    let (status, _) = client
+        .request(
+            "AdminConfirmSignUp",
+            json!({
+                "UserPoolId": pool_id,
+                "Username": "testuser"
+            }),
+        )
+        .await;
+
+    assert_eq!(status, StatusCode::OK);
+
+    // Verify user is confirmed
+    let (_, body) = client
+        .request(
+            "AdminGetUser",
+            json!({
+                "UserPoolId": pool_id,
+                "Username": "testuser"
+            }),
+        )
+        .await;
+
+    assert_eq!(body["UserStatus"], "CONFIRMED");
+}
+
+#[tokio::test]
+async fn test_admin_disable_user() {
+    let client = TestClient::new();
+    let (pool_id, _) = setup_pool_and_client(&client).await;
+
+    client
+        .request(
+            "AdminCreateUser",
+            json!({
+                "UserPoolId": pool_id,
+                "Username": "testuser"
+            }),
+        )
+        .await;
+
+    let (status, _) = client
+        .request(
+            "AdminDisableUser",
+            json!({
+                "UserPoolId": pool_id,
+                "Username": "testuser"
+            }),
+        )
+        .await;
+
+    assert_eq!(status, StatusCode::OK);
+
+    // Verify user is disabled
+    let (_, body) = client
+        .request(
+            "AdminGetUser",
+            json!({
+                "UserPoolId": pool_id,
+                "Username": "testuser"
+            }),
+        )
+        .await;
+
+    assert_eq!(body["Enabled"], false);
+}
+
+#[tokio::test]
+async fn test_admin_enable_user() {
+    let client = TestClient::new();
+    let (pool_id, _) = setup_pool_and_client(&client).await;
+
+    client
+        .request(
+            "AdminCreateUser",
+            json!({
+                "UserPoolId": pool_id,
+                "Username": "testuser"
+            }),
+        )
+        .await;
+
+    // Disable first
+    client
+        .request(
+            "AdminDisableUser",
+            json!({
+                "UserPoolId": pool_id,
+                "Username": "testuser"
+            }),
+        )
+        .await;
+
+    // Then enable
+    let (status, _) = client
+        .request(
+            "AdminEnableUser",
+            json!({
+                "UserPoolId": pool_id,
+                "Username": "testuser"
+            }),
+        )
+        .await;
+
+    assert_eq!(status, StatusCode::OK);
+
+    // Verify user is enabled
+    let (_, body) = client
+        .request(
+            "AdminGetUser",
+            json!({
+                "UserPoolId": pool_id,
+                "Username": "testuser"
+            }),
+        )
+        .await;
+
+    assert_eq!(body["Enabled"], true);
+}
+
+#[tokio::test]
+async fn test_admin_set_user_password() {
+    let client = TestClient::new();
+    let (pool_id, client_id) = setup_pool_and_client(&client).await;
+
+    // Create user with FORCE_CHANGE_PASSWORD status
+    client
+        .request(
+            "AdminCreateUser",
+            json!({
+                "UserPoolId": pool_id,
+                "Username": "testuser"
+            }),
+        )
+        .await;
+
+    // Admin confirm the user first
+    client
+        .request(
+            "AdminConfirmSignUp",
+            json!({
+                "UserPoolId": pool_id,
+                "Username": "testuser"
+            }),
+        )
+        .await;
+
+    // Set permanent password
+    let (status, _) = client
+        .request(
+            "AdminSetUserPassword",
+            json!({
+                "UserPoolId": pool_id,
+                "Username": "testuser",
+                "Password": "NewPassword123!",
+                "Permanent": true
+            }),
+        )
+        .await;
+
+    assert_eq!(status, StatusCode::OK);
+
+    // Try to authenticate with new password
+    let (status, body) = client
+        .request(
+            "InitiateAuth",
+            json!({
+                "ClientId": client_id,
+                "AuthFlow": "USER_PASSWORD_AUTH",
+                "AuthParameters": {
+                    "USERNAME": "testuser",
+                    "PASSWORD": "NewPassword123!"
+                }
+            }),
+        )
+        .await;
+
+    assert_eq!(status, StatusCode::OK);
+    assert!(
+        body["AuthenticationResult"]["AccessToken"]
+            .as_str()
+            .is_some()
+    );
+}

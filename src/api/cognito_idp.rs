@@ -14,7 +14,7 @@ use tracing::{info, warn};
 
 use super::extractor::AmzJson;
 use crate::{
-    action::{user, user_pool},
+    action::{group, user, user_pool},
     error::AppError,
     storage::Storage,
 };
@@ -74,6 +74,9 @@ async fn dispatch_action(
         // User Pool Client Actions
         CreateUserPoolClient => user_pool::create_user_pool_client::handler(storage, body).await,
         DeleteUserPoolClient => user_pool::delete_user_pool_client::handler(storage, body).await,
+        DescribeUserPoolClient => {
+            user_pool::describe_user_pool_client::handler(storage, body).await
+        }
         ListUserPoolClients => user_pool::list_user_pool_clients::handler(storage, body).await,
 
         // User Actions
@@ -85,11 +88,31 @@ async fn dispatch_action(
         GetUser => user::get_user::handler(storage, body).await,
         DeleteUser => user::delete_user::handler(storage, body).await,
         ListUsers => user::list_users::handler(storage, body).await,
+        ChangePassword => user::change_password::handler(storage, body).await,
+        ForgotPassword => user::forgot_password::handler(storage, body).await,
+        ConfirmForgotPassword => user::confirm_forgot_password::handler(storage, body).await,
+        GlobalSignOut => user::global_sign_out::handler(storage, body).await,
 
         // Admin Actions
+        AdminConfirmSignUp => user::admin_confirm_sign_up::handler(storage, body).await,
         AdminCreateUser => user::admin_create_user::handler(storage, body).await,
         AdminDeleteUser => user::admin_delete_user::handler(storage, body).await,
+        AdminDisableUser => user::admin_disable_user::handler(storage, body).await,
+        AdminEnableUser => user::admin_enable_user::handler(storage, body).await,
         AdminGetUser => user::admin_get_user::handler(storage, body).await,
+        AdminSetUserPassword => user::admin_set_user_password::handler(storage, body).await,
+        AdminAddUserToGroup => group::admin_add_user_to_group::handler(storage, body).await,
+        AdminRemoveUserFromGroup => {
+            group::admin_remove_user_from_group::handler(storage, body).await
+        }
+        AdminListGroupsForUser => group::admin_list_groups_for_user::handler(storage, body).await,
+
+        // Group Actions
+        CreateGroup => group::create_group::handler(storage, body).await,
+        DeleteGroup => group::delete_group::handler(storage, body).await,
+        GetGroup => group::get_group::handler(storage, body).await,
+        ListGroups => group::list_groups::handler(storage, body).await,
+        ListUsersInGroup => group::list_users_in_group::handler(storage, body).await,
 
         // Not implemented operations
         op => {
@@ -256,13 +279,17 @@ impl Action {
     pub const fn is_implemented(&self) -> bool {
         matches!(
             self,
+            // User Pool Actions
             Self::CreateUserPool
                 | Self::DeleteUserPool
                 | Self::DescribeUserPool
                 | Self::ListUserPools
+                // User Pool Client Actions
                 | Self::CreateUserPoolClient
                 | Self::DeleteUserPoolClient
+                | Self::DescribeUserPoolClient
                 | Self::ListUserPoolClients
+                // User Actions
                 | Self::SignUp
                 | Self::ConfirmSignUp
                 | Self::ResendConfirmationCode
@@ -271,9 +298,27 @@ impl Action {
                 | Self::GetUser
                 | Self::DeleteUser
                 | Self::ListUsers
+                | Self::ChangePassword
+                | Self::ForgotPassword
+                | Self::ConfirmForgotPassword
+                | Self::GlobalSignOut
+                // Admin Actions
+                | Self::AdminConfirmSignUp
                 | Self::AdminCreateUser
                 | Self::AdminDeleteUser
+                | Self::AdminDisableUser
+                | Self::AdminEnableUser
                 | Self::AdminGetUser
+                | Self::AdminSetUserPassword
+                | Self::AdminAddUserToGroup
+                | Self::AdminRemoveUserFromGroup
+                | Self::AdminListGroupsForUser
+                // Group Actions
+                | Self::CreateGroup
+                | Self::DeleteGroup
+                | Self::GetGroup
+                | Self::ListGroups
+                | Self::ListUsersInGroup
         )
     }
 
@@ -465,7 +510,8 @@ mod tests {
     fn test_is_implemented() {
         assert!(Action::SignUp.is_implemented());
         assert!(Action::CreateUserPool.is_implemented());
-        assert!(!Action::AdminAddUserToGroup.is_implemented());
+        assert!(Action::AdminAddUserToGroup.is_implemented());
+        assert!(!Action::AdminInitiateAuth.is_implemented());
     }
 
     #[test]
