@@ -1,7 +1,10 @@
 pub mod cognito_idp;
 pub mod extractor;
 
-use axum::{Json, Router, routing::{get, post}};
+use axum::{
+    Json, Router,
+    routing::{get, post},
+};
 use serde_json::{Value, json};
 
 use crate::storage::Storage;

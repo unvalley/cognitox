@@ -3,7 +3,7 @@
 //! Run with: cargo test --test docker_test -- --ignored --nocapture
 
 use reqwest::Client;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::process::{Command, Stdio};
 use std::time::Duration;
 
@@ -146,9 +146,13 @@ async fn test_docker_container() {
 
     // Test 2: CreateUserPool
     println!("Test 2: CreateUserPool");
-    let create_pool_resp =
-        cognito_request(&client, &base_url, "CreateUserPool", json!({"PoolName": "TestPool"}))
-            .await;
+    let create_pool_resp = cognito_request(
+        &client,
+        &base_url,
+        "CreateUserPool",
+        json!({"PoolName": "TestPool"}),
+    )
+    .await;
     assert!(create_pool_resp.get("UserPool").is_some());
     let pool_id = create_pool_resp["UserPool"]["Id"]
         .as_str()
@@ -157,8 +161,13 @@ async fn test_docker_container() {
 
     // Test 3: ListUserPools
     println!("Test 3: ListUserPools");
-    let list_pools_resp =
-        cognito_request(&client, &base_url, "ListUserPools", json!({"MaxResults": 10})).await;
+    let list_pools_resp = cognito_request(
+        &client,
+        &base_url,
+        "ListUserPools",
+        json!({"MaxResults": 10}),
+    )
+    .await;
     assert!(list_pools_resp.get("UserPools").is_some());
     println!("  PASS: ListUserPools returns UserPools");
 
