@@ -521,3 +521,169 @@ async fn test_create_user_pool_domain_duplicate() {
     assert_eq!(status, StatusCode::BAD_REQUEST);
     assert_eq!(body["__type"], "InvalidParameterException");
 }
+
+// ==================== User Pool Client OAuth Tests ====================
+
+#[tokio::test]
+async fn test_create_user_pool_client_with_oauth() {
+    let client = TestClient::new();
+
+    let (_, pool_body) = client
+        .request("CreateUserPool", json!({ "PoolName": "TestPool" }))
+        .await;
+
+    let pool_id = pool_body["UserPool"]["Id"].as_str().unwrap();
+
+    let (status, body) = client
+        .request(
+            "CreateUserPoolClient",
+            json!({
+                "UserPoolId": pool_id,
+                "ClientName": "OAuthClient",
+                "AllowedOAuthFlows": ["code", "implicit"],
+                "AllowedOAuthScopes": ["openid", "email", "profile"],
+                "AllowedOAuthFlowsUserPoolClient": true,
+                "CallbackURLs": ["https://example.com/callback"],
+                "LogoutURLs": ["https://example.com/logout"],
+                "SupportedIdentityProviders": ["COGNITO"],
+                "ExplicitAuthFlows": ["ALLOW_USER_PASSWORD_AUTH", "ALLOW_REFRESH_TOKEN_AUTH"]
+            }),
+        )
+        .await;
+
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        body["UserPoolClient"]["AllowedOAuthFlows"],
+        json!(["code", "implicit"])
+    );
+    assert_eq!(
+        body["UserPoolClient"]["AllowedOAuthScopes"],
+        json!(["openid", "email", "profile"])
+    );
+    assert_eq!(
+        body["UserPoolClient"]["AllowedOAuthFlowsUserPoolClient"],
+        true
+    );
+    assert_eq!(
+        body["UserPoolClient"]["CallbackURLs"],
+        json!(["https://example.com/callback"])
+    );
+    assert_eq!(
+        body["UserPoolClient"]["LogoutURLs"],
+        json!(["https://example.com/logout"])
+    );
+}
+
+#[tokio::test]
+async fn test_create_user_pool_client_with_token_validity() {
+    let client = TestClient::new();
+
+    let (_, pool_body) = client
+        .request("CreateUserPool", json!({ "PoolName": "TestPool" }))
+        .await;
+
+    let pool_id = pool_body["UserPool"]["Id"].as_str().unwrap();
+
+    let (status, body) = client
+        .request(
+            "CreateUserPoolClient",
+            json!({
+                "UserPoolId": pool_id,
+                "ClientName": "TokenClient",
+                "AccessTokenValidity": 60,
+                "IdTokenValidity": 60,
+                "RefreshTokenValidity": 30,
+                "TokenValidityUnits": {
+                    "AccessToken": "minutes",
+                    "IdToken": "minutes",
+                    "RefreshToken": "days"
+                }
+            }),
+        )
+        .await;
+
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["UserPoolClient"]["AccessTokenValidity"], 60);
+    assert_eq!(body["UserPoolClient"]["IdTokenValidity"], 60);
+    assert_eq!(body["UserPoolClient"]["RefreshTokenValidity"], 30);
+    assert_eq!(
+        body["UserPoolClient"]["TokenValidityUnits"]["AccessToken"],
+        "minutes"
+    );
+}
+
+#[tokio::test]
+async fn test_update_user_pool_client() {
+    let client = TestClient::new();
+
+    let (_, pool_body) = client
+        .request("CreateUserPool", json!({ "PoolName": "TestPool" }))
+        .await;
+
+    let pool_id = pool_body["UserPool"]["Id"].as_str().unwrap();
+
+    let (_, create_body) = client
+        .request(
+            "CreateUserPoolClient",
+            json!({
+                "UserPoolId": pool_id,
+                "ClientName": "OriginalClient"
+            }),
+        )
+        .await;
+
+    let client_id = create_body["UserPoolClient"]["ClientId"].as_str().unwrap();
+
+    // Update the client with OAuth settings
+    let (status, body) = client
+        .request(
+            "UpdateUserPoolClient",
+            json!({
+                "UserPoolId": pool_id,
+                "ClientId": client_id,
+                "ClientName": "UpdatedClient",
+                "AllowedOAuthFlows": ["code"],
+                "AllowedOAuthScopes": ["openid", "email"],
+                "AllowedOAuthFlowsUserPoolClient": true,
+                "CallbackURLs": ["https://updated.example.com/callback"]
+            }),
+        )
+        .await;
+
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["UserPoolClient"]["ClientName"], "UpdatedClient");
+    assert_eq!(body["UserPoolClient"]["AllowedOAuthFlows"], json!(["code"]));
+    assert_eq!(
+        body["UserPoolClient"]["AllowedOAuthScopes"],
+        json!(["openid", "email"])
+    );
+    assert_eq!(
+        body["UserPoolClient"]["CallbackURLs"],
+        json!(["https://updated.example.com/callback"])
+    );
+}
+
+#[tokio::test]
+async fn test_update_user_pool_client_not_found() {
+    let client = TestClient::new();
+
+    let (_, pool_body) = client
+        .request("CreateUserPool", json!({ "PoolName": "TestPool" }))
+        .await;
+
+    let pool_id = pool_body["UserPool"]["Id"].as_str().unwrap();
+
+    let (status, body) = client
+        .request(
+            "UpdateUserPoolClient",
+            json!({
+                "UserPoolId": pool_id,
+                "ClientId": "nonexistent",
+                "ClientName": "UpdatedClient"
+            }),
+        )
+        .await;
+
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(body["__type"], "ResourceNotFoundException");
+}

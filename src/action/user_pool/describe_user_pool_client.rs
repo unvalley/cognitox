@@ -5,6 +5,7 @@
 use serde::Deserialize;
 use serde_json::{Value, json};
 
+use super::create_user_pool_client::build_client_response;
 use crate::{
     error::{AppError, Result},
     storage::Storage,
@@ -19,7 +20,7 @@ struct Request {
 
 pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
     let req: Request = serde_json::from_value(body)
-        .map_err(|e| AppError::Internal(format!("Invalid request: {}", e)))?;
+        .map_err(|e| AppError::InvalidParameter(format!("Invalid request: {}", e)))?;
 
     storage
         .get_user_pool(&req.user_pool_id)
@@ -36,13 +37,6 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
     }
 
     Ok(json!({
-        "UserPoolClient": {
-            "ClientId": client.client_id,
-            "UserPoolId": client.user_pool_id,
-            "ClientName": client.client_name,
-            "ClientSecret": client.client_secret,
-            "CreationDate": client.creation_date.timestamp(),
-            "LastModifiedDate": client.last_modified_date.timestamp()
-        }
+        "UserPoolClient": build_client_response(&client)
     }))
 }

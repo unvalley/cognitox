@@ -4,7 +4,7 @@ Based on [Amazon Cognito User Pools API Reference](https://docs.aws.amazon.com/c
 
 ## cognito-idp
 
-33% implemented (40/119)
+34% implemented (41/119)
 
 ### Admin Operations
 - [x] AdminAddUserToGroup
@@ -46,7 +46,7 @@ Based on [Amazon Cognito User Pools API Reference](https://docs.aws.amazon.com/c
 - [x] DeleteUserPoolClient
 - [x] DescribeUserPoolClient
 - [x] ListUserPoolClients
-- [ ] UpdateUserPoolClient
+- [x] UpdateUserPoolClient
 
 ### User Pool Domain Operations
 - [x] CreateUserPoolDomain

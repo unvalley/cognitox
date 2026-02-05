@@ -92,6 +92,18 @@ impl Storage {
             .collect()
     }
 
+    pub async fn update_user_pool_client(&self, client: UserPoolClient) -> Option<UserPoolClient> {
+        let mut inner = self.inner.write().await;
+        if let std::collections::hash_map::Entry::Occupied(mut e) =
+            inner.user_pool_clients.entry(client.client_id.clone())
+        {
+            e.insert(client.clone());
+            Some(client)
+        } else {
+            None
+        }
+    }
+
     // ==================== User Pool Domain Operations ====================
 
     pub async fn create_user_pool_domain(&self, domain: UserPoolDomain) -> UserPoolDomain {

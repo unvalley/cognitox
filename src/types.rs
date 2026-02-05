@@ -19,6 +19,14 @@ pub struct UserPool {
     pub last_modified_date: DateTime<Utc>,
 }
 
+/// Token validity time units
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct TokenValidityUnits {
+    pub access_token: Option<String>,  // seconds, minutes, hours, days
+    pub id_token: Option<String>,      // seconds, minutes, hours, days
+    pub refresh_token: Option<String>, // seconds, minutes, hours, days
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UserPoolClient {
     pub client_id: ClientId,
@@ -27,6 +35,29 @@ pub struct UserPoolClient {
     pub client_secret: Option<String>,
     pub creation_date: DateTime<Utc>,
     pub last_modified_date: DateTime<Utc>,
+
+    // OAuth configuration
+    pub allowed_oauth_flows: Vec<String>,
+    pub allowed_oauth_scopes: Vec<String>,
+    pub allowed_oauth_flows_user_pool_client: bool,
+    pub callback_urls: Vec<String>,
+    pub logout_urls: Vec<String>,
+    pub default_redirect_uri: Option<String>,
+    pub supported_identity_providers: Vec<String>,
+
+    // Auth flows
+    pub explicit_auth_flows: Vec<String>,
+
+    // Token validity
+    pub access_token_validity: Option<i32>,
+    pub id_token_validity: Option<i32>,
+    pub refresh_token_validity: Option<i32>,
+    pub token_validity_units: Option<TokenValidityUnits>,
+
+    // Security settings
+    pub enable_token_revocation: bool,
+    pub prevent_user_existence_errors: Option<String>,
+    pub enable_propagate_additional_user_context_data: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
