@@ -7,14 +7,16 @@ use std::collections::HashMap;
 use chrono::{Duration, Utc};
 use serde::Deserialize;
 use serde_json::{Value, json};
+use uuid::Uuid;
 
 use crate::{
     error::{AppError, Result},
+    jwt::{generate_access_token, generate_id_token},
     storage::Storage,
     types::{RefreshToken, UserStatus},
 };
 
-use super::helpers::{generate_tokens, hash_password};
+use super::helpers::hash_password;
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "PascalCase")]
@@ -26,7 +28,7 @@ struct Request {
 
 pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
     let req: Request = serde_json::from_value(body)
-        .map_err(|e| AppError::Internal(format!("Invalid request: {}", e)))?;
+        .map_err(|e| AppError::InvalidParameter(format!("Invalid request: {}", e)))?;
 
     let client = storage
         .get_user_pool_client(&req.client_id)
@@ -37,14 +39,14 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
         "USER_PASSWORD_AUTH" => {
             let params = req
                 .auth_parameters
-                .ok_or_else(|| AppError::Internal("AuthParameters required".to_string()))?;
+                .ok_or_else(|| AppError::InvalidParameter("AuthParameters required".to_string()))?;
 
             let username = params
                 .get("USERNAME")
-                .ok_or_else(|| AppError::Internal("USERNAME required".to_string()))?;
+                .ok_or_else(|| AppError::InvalidParameter("USERNAME required".to_string()))?;
             let password = params
                 .get("PASSWORD")
-                .ok_or_else(|| AppError::Internal("PASSWORD required".to_string()))?;
+                .ok_or_else(|| AppError::InvalidParameter("PASSWORD required".to_string()))?;
 
             let user = storage
                 .get_user_by_username(&client.user_pool_id, username)
@@ -59,7 +61,21 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
                 return Err(AppError::InvalidPassword);
             }
 
-            let (access_token, id_token, refresh_token) = generate_tokens(&user.id, &req.client_id);
+            // Get user groups
+            let groups = storage.get_groups_for_user(&user.id).await;
+
+            // Generate JWT tokens
+            let access_token = generate_access_token(
+                &user,
+                &req.client_id,
+                &client.user_pool_id,
+                &groups,
+                &client.allowed_oauth_scopes,
+            );
+            let id_token = generate_id_token(&user, &req.client_id, &client.user_pool_id, &groups);
+
+            // Generate refresh token (UUID-based, stored in database)
+            let refresh_token = Uuid::new_v4().to_string();
 
             let refresh = RefreshToken {
                 token: refresh_token.clone(),
@@ -82,11 +98,11 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
         "REFRESH_TOKEN" | "REFRESH_TOKEN_AUTH" => {
             let params = req
                 .auth_parameters
-                .ok_or_else(|| AppError::Internal("AuthParameters required".to_string()))?;
+                .ok_or_else(|| AppError::InvalidParameter("AuthParameters required".to_string()))?;
 
             let refresh_token = params
                 .get("REFRESH_TOKEN")
-                .ok_or_else(|| AppError::Internal("REFRESH_TOKEN required".to_string()))?;
+                .ok_or_else(|| AppError::InvalidParameter("REFRESH_TOKEN required".to_string()))?;
 
             let stored_token = storage
                 .get_refresh_token(refresh_token)
@@ -102,7 +118,18 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
                 .await
                 .ok_or(AppError::UserNotFound)?;
 
-            let (access_token, id_token, _) = generate_tokens(&user.id, &req.client_id);
+            // Get user groups
+            let groups = storage.get_groups_for_user(&user.id).await;
+
+            // Generate new JWT tokens
+            let access_token = generate_access_token(
+                &user,
+                &req.client_id,
+                &client.user_pool_id,
+                &groups,
+                &client.allowed_oauth_scopes,
+            );
+            let id_token = generate_id_token(&user, &req.client_id, &client.user_pool_id, &groups);
 
             Ok(json!({
                 "AuthenticationResult": {
