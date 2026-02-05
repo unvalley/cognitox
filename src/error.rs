@@ -16,6 +16,12 @@ pub enum AppError {
     #[error("User pool client not found")]
     UserPoolClientNotFound,
 
+    #[error("User pool domain not found")]
+    UserPoolDomainNotFound,
+
+    #[error("User pool domain already exists")]
+    UserPoolDomainAlreadyExists,
+
     #[error("User already exists")]
     UserAlreadyExists,
 
@@ -73,6 +79,12 @@ impl IntoResponse for AppError {
             AppError::UserPoolNotFound => (StatusCode::BAD_REQUEST, "ResourceNotFoundException"),
             AppError::UserPoolClientNotFound => {
                 (StatusCode::BAD_REQUEST, "ResourceNotFoundException")
+            }
+            AppError::UserPoolDomainNotFound => {
+                (StatusCode::BAD_REQUEST, "ResourceNotFoundException")
+            }
+            AppError::UserPoolDomainAlreadyExists => {
+                (StatusCode::BAD_REQUEST, "InvalidParameterException")
             }
             AppError::UserAlreadyExists => (StatusCode::BAD_REQUEST, "UsernameExistsException"),
             AppError::InvalidPassword => (StatusCode::BAD_REQUEST, "InvalidPasswordException"),

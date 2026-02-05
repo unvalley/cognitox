@@ -8,8 +8,8 @@ use std::{collections::HashMap, sync::Arc};
 use tokio::sync::RwLock;
 
 use crate::types::{
-    ClientId, ConfirmationCode, Group, GroupName, PasswordResetCode, RefreshToken, User, UserId,
-    UserPool, UserPoolClient, UserPoolId,
+    ClientId, ConfirmationCode, DomainPrefix, Group, GroupName, PasswordResetCode, RefreshToken,
+    User, UserId, UserPool, UserPoolClient, UserPoolDomain, UserPoolId,
 };
 
 #[derive(Debug, Clone)]
@@ -21,6 +21,8 @@ pub struct Storage {
 struct StorageInner {
     user_pools: HashMap<UserPoolId, UserPool>,
     user_pool_clients: HashMap<ClientId, UserPoolClient>,
+    user_pool_domains: HashMap<DomainPrefix, UserPoolDomain>,
+    user_pool_id_to_domain: HashMap<UserPoolId, DomainPrefix>,
     users: HashMap<UserId, User>,
     confirmation_codes: HashMap<UserId, ConfirmationCode>,
     refresh_tokens: HashMap<String, RefreshToken>,
@@ -88,6 +90,55 @@ impl Storage {
             .filter(|c| &c.user_pool_id == user_pool_id)
             .cloned()
             .collect()
+    }
+
+    // ==================== User Pool Domain Operations ====================
+
+    pub async fn create_user_pool_domain(&self, domain: UserPoolDomain) -> UserPoolDomain {
+        let mut inner = self.inner.write().await;
+        inner
+            .user_pool_id_to_domain
+            .insert(domain.user_pool_id.clone(), domain.domain.clone());
+        inner
+            .user_pool_domains
+            .insert(domain.domain.clone(), domain.clone());
+        domain
+    }
+
+    pub async fn get_user_pool_domain(&self, domain: &DomainPrefix) -> Option<UserPoolDomain> {
+        let inner = self.inner.read().await;
+        inner.user_pool_domains.get(domain).cloned()
+    }
+
+    pub async fn get_user_pool_domain_by_user_pool_id(
+        &self,
+        user_pool_id: &UserPoolId,
+    ) -> Option<UserPoolDomain> {
+        let inner = self.inner.read().await;
+        let domain_prefix = inner.user_pool_id_to_domain.get(user_pool_id)?;
+        inner.user_pool_domains.get(domain_prefix).cloned()
+    }
+
+    pub async fn update_user_pool_domain(&self, domain: UserPoolDomain) -> Option<UserPoolDomain> {
+        let mut inner = self.inner.write().await;
+        if let std::collections::hash_map::Entry::Occupied(mut e) =
+            inner.user_pool_domains.entry(domain.domain.clone())
+        {
+            e.insert(domain.clone());
+            Some(domain)
+        } else {
+            None
+        }
+    }
+
+    pub async fn delete_user_pool_domain(&self, domain: &DomainPrefix) -> Option<UserPoolDomain> {
+        let mut inner = self.inner.write().await;
+        if let Some(removed) = inner.user_pool_domains.remove(domain) {
+            inner.user_pool_id_to_domain.remove(&removed.user_pool_id);
+            Some(removed)
+        } else {
+            None
+        }
     }
 
     // ==================== User Operations ====================

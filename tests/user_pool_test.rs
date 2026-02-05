@@ -283,3 +283,241 @@ async fn test_describe_user_pool_client_not_found() {
     assert_eq!(status, StatusCode::BAD_REQUEST);
     assert_eq!(body["__type"], "ResourceNotFoundException");
 }
+
+// ==================== User Pool Domain Tests ====================
+
+#[tokio::test]
+async fn test_create_user_pool_domain() {
+    let client = TestClient::new();
+
+    let (_, pool_body) = client
+        .request("CreateUserPool", json!({ "PoolName": "TestPool" }))
+        .await;
+
+    let pool_id = pool_body["UserPool"]["Id"].as_str().unwrap();
+
+    let (status, _) = client
+        .request(
+            "CreateUserPoolDomain",
+            json!({
+                "Domain": "my-test-domain",
+                "UserPoolId": pool_id
+            }),
+        )
+        .await;
+
+    assert_eq!(status, StatusCode::OK);
+}
+
+#[tokio::test]
+async fn test_create_user_pool_domain_with_managed_login() {
+    let client = TestClient::new();
+
+    let (_, pool_body) = client
+        .request("CreateUserPool", json!({ "PoolName": "TestPool" }))
+        .await;
+
+    let pool_id = pool_body["UserPool"]["Id"].as_str().unwrap();
+
+    let (status, _) = client
+        .request(
+            "CreateUserPoolDomain",
+            json!({
+                "Domain": "my-managed-domain",
+                "UserPoolId": pool_id,
+                "ManagedLoginVersion": 2
+            }),
+        )
+        .await;
+
+    assert_eq!(status, StatusCode::OK);
+
+    // Verify the domain was created with ManagedLoginVersion
+    let (_, describe_body) = client
+        .request(
+            "DescribeUserPoolDomain",
+            json!({ "Domain": "my-managed-domain" }),
+        )
+        .await;
+
+    assert_eq!(describe_body["DomainDescription"]["ManagedLoginVersion"], 2);
+}
+
+#[tokio::test]
+async fn test_describe_user_pool_domain() {
+    let client = TestClient::new();
+
+    let (_, pool_body) = client
+        .request("CreateUserPool", json!({ "PoolName": "TestPool" }))
+        .await;
+
+    let pool_id = pool_body["UserPool"]["Id"].as_str().unwrap();
+
+    client
+        .request(
+            "CreateUserPoolDomain",
+            json!({
+                "Domain": "describe-test-domain",
+                "UserPoolId": pool_id
+            }),
+        )
+        .await;
+
+    let (status, body) = client
+        .request(
+            "DescribeUserPoolDomain",
+            json!({ "Domain": "describe-test-domain" }),
+        )
+        .await;
+
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["DomainDescription"]["Domain"], "describe-test-domain");
+    assert_eq!(body["DomainDescription"]["UserPoolId"], pool_id);
+    assert_eq!(body["DomainDescription"]["Status"], "ACTIVE");
+}
+
+#[tokio::test]
+async fn test_describe_user_pool_domain_not_found() {
+    let client = TestClient::new();
+
+    let (status, body) = client
+        .request(
+            "DescribeUserPoolDomain",
+            json!({ "Domain": "nonexistent-domain" }),
+        )
+        .await;
+
+    assert_eq!(status, StatusCode::OK);
+    // AWS returns an empty DomainDescription when domain doesn't exist
+    assert!(body["DomainDescription"].as_object().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn test_delete_user_pool_domain() {
+    let client = TestClient::new();
+
+    let (_, pool_body) = client
+        .request("CreateUserPool", json!({ "PoolName": "TestPool" }))
+        .await;
+
+    let pool_id = pool_body["UserPool"]["Id"].as_str().unwrap();
+
+    client
+        .request(
+            "CreateUserPoolDomain",
+            json!({
+                "Domain": "delete-test-domain",
+                "UserPoolId": pool_id
+            }),
+        )
+        .await;
+
+    let (status, _) = client
+        .request(
+            "DeleteUserPoolDomain",
+            json!({
+                "Domain": "delete-test-domain",
+                "UserPoolId": pool_id
+            }),
+        )
+        .await;
+
+    assert_eq!(status, StatusCode::OK);
+
+    // Verify it's deleted
+    let (_, body) = client
+        .request(
+            "DescribeUserPoolDomain",
+            json!({ "Domain": "delete-test-domain" }),
+        )
+        .await;
+
+    assert!(body["DomainDescription"].as_object().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn test_update_user_pool_domain() {
+    let client = TestClient::new();
+
+    let (_, pool_body) = client
+        .request("CreateUserPool", json!({ "PoolName": "TestPool" }))
+        .await;
+
+    let pool_id = pool_body["UserPool"]["Id"].as_str().unwrap();
+
+    client
+        .request(
+            "CreateUserPoolDomain",
+            json!({
+                "Domain": "update-test-domain",
+                "UserPoolId": pool_id
+            }),
+        )
+        .await;
+
+    let (status, _) = client
+        .request(
+            "UpdateUserPoolDomain",
+            json!({
+                "Domain": "update-test-domain",
+                "UserPoolId": pool_id,
+                "ManagedLoginVersion": 2
+            }),
+        )
+        .await;
+
+    assert_eq!(status, StatusCode::OK);
+
+    // Verify the update
+    let (_, body) = client
+        .request(
+            "DescribeUserPoolDomain",
+            json!({ "Domain": "update-test-domain" }),
+        )
+        .await;
+
+    assert_eq!(body["DomainDescription"]["ManagedLoginVersion"], 2);
+    assert_eq!(body["DomainDescription"]["Version"], "2"); // Version should be incremented
+}
+
+#[tokio::test]
+async fn test_create_user_pool_domain_duplicate() {
+    let client = TestClient::new();
+
+    let (_, pool_body) = client
+        .request("CreateUserPool", json!({ "PoolName": "TestPool" }))
+        .await;
+
+    let pool_id = pool_body["UserPool"]["Id"].as_str().unwrap();
+
+    // Create first domain
+    client
+        .request(
+            "CreateUserPoolDomain",
+            json!({
+                "Domain": "duplicate-test-domain",
+                "UserPoolId": pool_id
+            }),
+        )
+        .await;
+
+    // Try to create domain with same name for different pool
+    let (_, pool_body2) = client
+        .request("CreateUserPool", json!({ "PoolName": "TestPool2" }))
+        .await;
+
+    let pool_id2 = pool_body2["UserPool"]["Id"].as_str().unwrap();
+
+    let (status, body) = client
+        .request(
+            "CreateUserPoolDomain",
+            json!({
+                "Domain": "duplicate-test-domain",
+                "UserPoolId": pool_id2
+            }),
+        )
+        .await;
+
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(body["__type"], "InvalidParameterException");
+}

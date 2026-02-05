@@ -79,6 +79,14 @@ async fn dispatch_action(
         }
         ListUserPoolClients => user_pool::list_user_pool_clients::handler(storage, body).await,
 
+        // User Pool Domain Actions
+        CreateUserPoolDomain => user_pool::create_user_pool_domain::handler(storage, body).await,
+        DeleteUserPoolDomain => user_pool::delete_user_pool_domain::handler(storage, body).await,
+        DescribeUserPoolDomain => {
+            user_pool::describe_user_pool_domain::handler(storage, body).await
+        }
+        UpdateUserPoolDomain => user_pool::update_user_pool_domain::handler(storage, body).await,
+
         // User Actions
         SignUp => user::sign_up::handler(storage, body).await,
         ConfirmSignUp => user::confirm_sign_up::handler(storage, body).await,
@@ -289,6 +297,11 @@ impl Action {
                 | Self::DeleteUserPoolClient
                 | Self::DescribeUserPoolClient
                 | Self::ListUserPoolClients
+                // User Pool Domain Actions
+                | Self::CreateUserPoolDomain
+                | Self::DeleteUserPoolDomain
+                | Self::DescribeUserPoolDomain
+                | Self::UpdateUserPoolDomain
                 // User Actions
                 | Self::SignUp
                 | Self::ConfirmSignUp

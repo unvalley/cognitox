@@ -130,3 +130,37 @@ pub struct PasswordResetCode {
     pub code: String,
     pub expires_at: DateTime<Utc>,
 }
+
+/// Domain prefix for User Pool
+pub type DomainPrefix = String;
+
+/// User Pool Domain status
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum DomainStatus {
+    #[default]
+    Creating,
+    Active,
+    Deleting,
+    Updating,
+    Failed,
+}
+
+/// Custom domain configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CustomDomainConfig {
+    pub certificate_arn: String,
+}
+
+/// User Pool Domain
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UserPoolDomain {
+    pub domain: DomainPrefix,
+    pub user_pool_id: UserPoolId,
+    pub status: DomainStatus,
+    pub version: Option<String>,
+    pub s3_bucket: Option<String>,
+    pub cloud_front_distribution: Option<String>,
+    pub custom_domain_config: Option<CustomDomainConfig>,
+    pub managed_login_version: Option<i32>,
+}
