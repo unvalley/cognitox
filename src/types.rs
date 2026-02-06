@@ -162,6 +162,20 @@ pub struct PasswordResetCode {
     pub expires_at: DateTime<Utc>,
 }
 
+/// OAuth 2.0 Authorization Code
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AuthorizationCode {
+    pub code: String,
+    pub user_id: UserId,
+    pub client_id: ClientId,
+    pub redirect_uri: String,
+    pub scope: Vec<String>,
+    pub nonce: Option<String>,
+    pub code_challenge: Option<String>,
+    pub code_challenge_method: Option<String>,
+    pub expires_at: DateTime<Utc>,
+}
+
 /// Domain prefix for User Pool
 pub type DomainPrefix = String;
 
@@ -194,4 +208,65 @@ pub struct UserPoolDomain {
     pub cloud_front_distribution: Option<String>,
     pub custom_domain_config: Option<CustomDomainConfig>,
     pub managed_login_version: Option<i32>,
+}
+
+/// Managed Login Branding ID
+pub type BrandingId = String;
+
+/// Color settings for managed login branding
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct BrandingColorSettings {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub background_color: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub primary_color: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub secondary_color: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub text_color: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub link_color: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub button_color: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub button_text_color: Option<String>,
+}
+
+/// Asset settings for managed login branding
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct BrandingAssets {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub logo_url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub favicon_url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub background_image_url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub css_url: Option<String>,
+}
+
+/// Managed Login Branding
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ManagedLoginBranding {
+    pub branding_id: BrandingId,
+    pub user_pool_id: UserPoolId,
+    pub client_id: Option<ClientId>,
+    pub use_cognito_provided_values: bool,
+    pub settings: Option<BrandingSettings>,
+    pub assets: Option<BrandingAssets>,
+    pub creation_date: chrono::DateTime<chrono::Utc>,
+    pub last_modified_date: chrono::DateTime<chrono::Utc>,
+}
+
+/// Combined branding settings
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct BrandingSettings {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub colors: Option<BrandingColorSettings>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub page_title: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sign_in_header: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sign_in_subheader: Option<String>,
 }

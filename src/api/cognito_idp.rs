@@ -88,6 +88,23 @@ async fn dispatch_action(
         }
         UpdateUserPoolDomain => user_pool::update_user_pool_domain::handler(storage, body).await,
 
+        // Managed Login Branding Actions
+        CreateManagedLoginBranding => {
+            user_pool::create_managed_login_branding::handler(storage, body).await
+        }
+        DeleteManagedLoginBranding => {
+            user_pool::delete_managed_login_branding::handler(storage, body).await
+        }
+        DescribeManagedLoginBranding => {
+            user_pool::describe_managed_login_branding::handler(storage, body).await
+        }
+        DescribeManagedLoginBrandingByClient => {
+            user_pool::describe_managed_login_branding_by_client::handler(storage, body).await
+        }
+        UpdateManagedLoginBranding => {
+            user_pool::update_managed_login_branding::handler(storage, body).await
+        }
+
         // User Actions
         SignUp => user::sign_up::handler(storage, body).await,
         ConfirmSignUp => user::confirm_sign_up::handler(storage, body).await,
@@ -185,6 +202,13 @@ pub enum Action {
     DeleteUserPoolDomain,
     DescribeUserPoolDomain,
     UpdateUserPoolDomain,
+
+    // Managed Login Branding Actions
+    CreateManagedLoginBranding,
+    DeleteManagedLoginBranding,
+    DescribeManagedLoginBranding,
+    DescribeManagedLoginBrandingByClient,
+    UpdateManagedLoginBranding,
 
     // User Actions
     DeleteUser,
@@ -304,6 +328,12 @@ impl Action {
                 | Self::DeleteUserPoolDomain
                 | Self::DescribeUserPoolDomain
                 | Self::UpdateUserPoolDomain
+                // Managed Login Branding Actions
+                | Self::CreateManagedLoginBranding
+                | Self::DeleteManagedLoginBranding
+                | Self::DescribeManagedLoginBranding
+                | Self::DescribeManagedLoginBrandingByClient
+                | Self::UpdateManagedLoginBranding
                 // User Actions
                 | Self::SignUp
                 | Self::ConfirmSignUp
@@ -401,6 +431,15 @@ impl FromStr for Action {
             "DeleteUserPoolDomain" => Ok(Self::DeleteUserPoolDomain),
             "DescribeUserPoolDomain" => Ok(Self::DescribeUserPoolDomain),
             "UpdateUserPoolDomain" => Ok(Self::UpdateUserPoolDomain),
+
+            // Managed Login Branding Actions
+            "CreateManagedLoginBranding" => Ok(Self::CreateManagedLoginBranding),
+            "DeleteManagedLoginBranding" => Ok(Self::DeleteManagedLoginBranding),
+            "DescribeManagedLoginBranding" => Ok(Self::DescribeManagedLoginBranding),
+            "DescribeManagedLoginBrandingByClient" => {
+                Ok(Self::DescribeManagedLoginBrandingByClient)
+            }
+            "UpdateManagedLoginBranding" => Ok(Self::UpdateManagedLoginBranding),
 
             // User Actions
             "DeleteUser" => Ok(Self::DeleteUser),

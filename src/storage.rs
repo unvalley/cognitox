@@ -8,8 +8,9 @@ use std::{collections::HashMap, sync::Arc};
 use tokio::sync::RwLock;
 
 use crate::types::{
-    ClientId, ConfirmationCode, DomainPrefix, Group, GroupName, PasswordResetCode, RefreshToken,
-    User, UserId, UserPool, UserPoolClient, UserPoolDomain, UserPoolId,
+    AuthorizationCode, BrandingId, ClientId, ConfirmationCode, DomainPrefix, Group, GroupName,
+    ManagedLoginBranding, PasswordResetCode, RefreshToken, User, UserId, UserPool, UserPoolClient,
+    UserPoolDomain, UserPoolId,
 };
 
 #[derive(Debug, Clone)]
@@ -23,9 +24,13 @@ struct StorageInner {
     user_pool_clients: HashMap<ClientId, UserPoolClient>,
     user_pool_domains: HashMap<DomainPrefix, UserPoolDomain>,
     user_pool_id_to_domain: HashMap<UserPoolId, DomainPrefix>,
+    managed_login_brandings: HashMap<BrandingId, ManagedLoginBranding>,
+    user_pool_brandings: HashMap<UserPoolId, BrandingId>,
+    client_brandings: HashMap<ClientId, BrandingId>,
     users: HashMap<UserId, User>,
     confirmation_codes: HashMap<UserId, ConfirmationCode>,
     refresh_tokens: HashMap<String, RefreshToken>,
+    authorization_codes: HashMap<String, AuthorizationCode>,
     username_index: HashMap<(UserPoolId, String), UserId>,
     groups: HashMap<(UserPoolId, GroupName), Group>,
     user_groups: HashMap<UserId, Vec<GroupName>>,
@@ -361,6 +366,107 @@ impl Storage {
     pub async fn delete_password_reset_code(&self, user_id: &UserId) {
         let mut inner = self.inner.write().await;
         inner.password_reset_codes.remove(user_id);
+    }
+
+    // ==================== Authorization Code Operations ====================
+
+    pub async fn save_authorization_code(&self, code: AuthorizationCode) {
+        let mut inner = self.inner.write().await;
+        inner.authorization_codes.insert(code.code.clone(), code);
+    }
+
+    pub async fn get_authorization_code(&self, code: &str) -> Option<AuthorizationCode> {
+        let inner = self.inner.read().await;
+        inner.authorization_codes.get(code).cloned()
+    }
+
+    pub async fn delete_authorization_code(&self, code: &str) -> Option<AuthorizationCode> {
+        let mut inner = self.inner.write().await;
+        inner.authorization_codes.remove(code)
+    }
+
+    // ==================== Managed Login Branding Operations ====================
+
+    pub async fn create_managed_login_branding(
+        &self,
+        branding: ManagedLoginBranding,
+    ) -> ManagedLoginBranding {
+        let mut inner = self.inner.write().await;
+
+        // Index by user pool
+        inner
+            .user_pool_brandings
+            .insert(branding.user_pool_id.clone(), branding.branding_id.clone());
+
+        // Index by client if specified
+        if let Some(ref client_id) = branding.client_id {
+            inner
+                .client_brandings
+                .insert(client_id.clone(), branding.branding_id.clone());
+        }
+
+        inner
+            .managed_login_brandings
+            .insert(branding.branding_id.clone(), branding.clone());
+        branding
+    }
+
+    pub async fn get_managed_login_branding(
+        &self,
+        branding_id: &BrandingId,
+    ) -> Option<ManagedLoginBranding> {
+        let inner = self.inner.read().await;
+        inner.managed_login_brandings.get(branding_id).cloned()
+    }
+
+    pub async fn get_managed_login_branding_by_user_pool(
+        &self,
+        user_pool_id: &UserPoolId,
+    ) -> Option<ManagedLoginBranding> {
+        let inner = self.inner.read().await;
+        let branding_id = inner.user_pool_brandings.get(user_pool_id)?;
+        inner.managed_login_brandings.get(branding_id).cloned()
+    }
+
+    pub async fn get_managed_login_branding_by_client(
+        &self,
+        client_id: &ClientId,
+    ) -> Option<ManagedLoginBranding> {
+        let inner = self.inner.read().await;
+        let branding_id = inner.client_brandings.get(client_id)?;
+        inner.managed_login_brandings.get(branding_id).cloned()
+    }
+
+    pub async fn update_managed_login_branding(
+        &self,
+        branding: ManagedLoginBranding,
+    ) -> Option<ManagedLoginBranding> {
+        let mut inner = self.inner.write().await;
+        if let std::collections::hash_map::Entry::Occupied(mut e) = inner
+            .managed_login_brandings
+            .entry(branding.branding_id.clone())
+        {
+            e.insert(branding.clone());
+            Some(branding)
+        } else {
+            None
+        }
+    }
+
+    pub async fn delete_managed_login_branding(
+        &self,
+        branding_id: &BrandingId,
+    ) -> Option<ManagedLoginBranding> {
+        let mut inner = self.inner.write().await;
+        if let Some(branding) = inner.managed_login_brandings.remove(branding_id) {
+            inner.user_pool_brandings.remove(&branding.user_pool_id);
+            if let Some(ref client_id) = branding.client_id {
+                inner.client_brandings.remove(client_id);
+            }
+            Some(branding)
+        } else {
+            None
+        }
     }
 }
 

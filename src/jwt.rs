@@ -85,17 +85,21 @@ pub struct IdTokenClaims {
     pub token_use: String,
 
     // Cognito-specific claims
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none", default)]
     pub email: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none", default)]
     pub email_verified: Option<bool>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none", default)]
     pub phone_number: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none", default)]
     pub phone_number_verified: Option<bool>,
     #[serde(rename = "cognito:username")]
     pub cognito_username: String,
-    #[serde(rename = "cognito:groups", skip_serializing_if = "Vec::is_empty")]
+    #[serde(
+        rename = "cognito:groups",
+        skip_serializing_if = "Vec::is_empty",
+        default
+    )]
     pub cognito_groups: Vec<String>,
 }
 
@@ -112,7 +116,11 @@ pub struct AccessTokenClaims {
     pub client_id: String,
 
     // Cognito-specific claims
-    #[serde(rename = "cognito:groups", skip_serializing_if = "Vec::is_empty")]
+    #[serde(
+        rename = "cognito:groups",
+        skip_serializing_if = "Vec::is_empty",
+        default
+    )]
     pub cognito_groups: Vec<String>,
     pub scope: String,
     pub username: String,

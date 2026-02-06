@@ -4,7 +4,7 @@ Based on [Amazon Cognito User Pools API Reference](https://docs.aws.amazon.com/c
 
 ## cognito-idp
 
-34% implemented (41/119)
+39% implemented (47/119)
 
 ### Admin Operations
 - [x] AdminAddUserToGroup
@@ -70,7 +70,7 @@ Based on [Amazon Cognito User Pools API Reference](https://docs.aws.amazon.com/c
 - [x] GlobalSignOut
 - [x] InitiateAuth
 - [x] ResendConfirmationCode
-- [ ] RespondToAuthChallenge
+- [x] RespondToAuthChallenge
 - [ ] RevokeToken
 - [x] SignUp
 - [ ] GetUserAttributeVerificationCode
@@ -128,11 +128,11 @@ Based on [Amazon Cognito User Pools API Reference](https://docs.aws.amazon.com/c
 - [ ] StartWebAuthnRegistration
 
 ### Managed Login Branding Operations
-- [ ] CreateManagedLoginBranding
-- [ ] DeleteManagedLoginBranding
-- [ ] DescribeManagedLoginBranding
-- [ ] DescribeManagedLoginBrandingByClient
-- [ ] UpdateManagedLoginBranding
+- [x] CreateManagedLoginBranding
+- [x] DeleteManagedLoginBranding
+- [x] DescribeManagedLoginBranding
+- [x] DescribeManagedLoginBrandingByClient
+- [x] UpdateManagedLoginBranding
 
 ### Terms Operations
 - [ ] CreateTerms
