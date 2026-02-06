@@ -3,7 +3,7 @@
 //! <https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_DescribeManagedLoginBrandingByClient.html>
 
 use serde::Deserialize;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use super::create_managed_login_branding::build_branding_response;
 use crate::{
@@ -45,9 +45,7 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
         .or(storage
             .get_managed_login_branding_by_user_pool(&req.user_pool_id)
             .await)
-        .ok_or_else(|| {
-            AppError::InvalidParameter("No managed login branding found".to_string())
-        })?;
+        .ok_or_else(|| AppError::InvalidParameter("No managed login branding found".to_string()))?;
 
     Ok(json!({
         "ManagedLoginBranding": build_branding_response(&branding)

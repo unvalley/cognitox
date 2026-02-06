@@ -3,7 +3,7 @@
 //! <https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_DescribeManagedLoginBranding.html>
 
 use serde::Deserialize;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use super::create_managed_login_branding::build_branding_response;
 use crate::{

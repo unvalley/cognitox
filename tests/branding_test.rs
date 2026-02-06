@@ -41,9 +41,11 @@ async fn test_create_managed_login_branding() {
         .await;
 
     assert_eq!(status, StatusCode::OK);
-    assert!(body["ManagedLoginBranding"]["ManagedLoginBrandingId"]
-        .as_str()
-        .is_some());
+    assert!(
+        body["ManagedLoginBranding"]["ManagedLoginBrandingId"]
+            .as_str()
+            .is_some()
+    );
     assert_eq!(body["ManagedLoginBranding"]["UserPoolId"], user_pool_id);
     assert_eq!(
         body["ManagedLoginBranding"]["UseCognitoProvidedValues"],
