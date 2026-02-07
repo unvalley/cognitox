@@ -174,5 +174,6 @@ demo-setup:
     echo ""
     echo "Demo setup complete!"
     echo ""
-    echo "Rust UI:   http://localhost:9229/login?response_type=code&client_id=$CLIENT_ID&redirect_uri=http://localhost:3000/callback&scope=openid"
-    echo "Svelte UI: http://localhost:9229/ui/?response_type=code&client_id=$CLIENT_ID&redirect_uri=http://localhost:3000/callback&scope=openid"
+    echo "Hosted UI (Rust):   http://localhost:9229/login?response_type=code&client_id=$CLIENT_ID&redirect_uri=http://localhost:3000/callback&scope=openid"
+    echo "Hosted UI (Svelte): http://localhost:9229/ui/?response_type=code&client_id=$CLIENT_ID&redirect_uri=http://localhost:3000/callback&scope=openid"
+    echo "Admin Console:      http://localhost:9229/admin/"

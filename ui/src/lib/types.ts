@@ -31,3 +31,60 @@ export interface AppState {
   success?: string
   username?: string
 }
+
+// Admin UI Types
+export interface UserPool {
+  Id: string
+  Name: string
+  CreationDate: string
+  LastModifiedDate: string
+  Status?: string
+  Domain?: string
+  CustomDomain?: string
+  MfaConfiguration?: string
+}
+
+export interface User {
+  Username: string
+  UserStatus: string
+  Enabled: boolean
+  UserCreateDate: string
+  UserLastModifiedDate: string
+  Attributes: UserAttribute[]
+}
+
+export interface UserAttribute {
+  Name: string
+  Value: string
+}
+
+export interface UserPoolClient {
+  ClientId: string
+  ClientName: string
+  UserPoolId: string
+  CreationDate?: string
+  LastModifiedDate?: string
+  AllowedOAuthFlows?: string[]
+  AllowedOAuthScopes?: string[]
+  CallbackURLs?: string[]
+  LogoutURLs?: string[]
+  ExplicitAuthFlows?: string[]
+}
+
+export interface ManagedLoginBranding {
+  ManagedLoginBrandingId: string
+  UserPoolId: string
+  UseCognitoProvidedValues?: boolean
+  Settings?: Record<string, unknown>
+  Assets?: Record<string, unknown>
+}
+
+export type AdminPage =
+  | 'dashboard'
+  | 'user-pools'
+  | 'user-pool-detail'
+  | 'users'
+  | 'user-detail'
+  | 'clients'
+  | 'client-detail'
+  | 'branding'
