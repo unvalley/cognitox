@@ -1,0 +1,178 @@
+# Cognitox - AWS Cognito Emulator
+# Run `just --list` to see all available commands
+
+set dotenv-load
+
+# Default recipe - show available commands
+default:
+    @just --list
+
+# =============================================================================
+# Development
+# =============================================================================
+
+# Run the server in development mode
+dev:
+    cargo run
+
+# Run the server with auto-reload (requires cargo-watch)
+watch:
+    cargo watch -x run
+
+# Run the Svelte UI dev server (hot reload)
+ui-dev:
+    cd ui && npm run dev
+
+# Run both servers in parallel (requires tmux or run in separate terminals)
+dev-all:
+    @echo "Run these commands in separate terminals:"
+    @echo "  Terminal 1: just dev"
+    @echo "  Terminal 2: just ui-dev"
+
+# =============================================================================
+# Build
+# =============================================================================
+
+# Build the Rust server (debug)
+build:
+    cargo build
+
+# Build the Rust server (release)
+build-release:
+    cargo build --release
+
+# Build the Svelte UI
+ui-build:
+    cd ui && npm run build
+
+# Build everything (Rust + UI)
+build-all: ui-build build
+
+# Build everything for release
+build-all-release: ui-build build-release
+
+# =============================================================================
+# Test
+# =============================================================================
+
+# Run all Rust tests
+test:
+    cargo test
+
+# Run tests with output
+test-verbose:
+    cargo test -- --nocapture
+
+# Run a specific test
+test-one NAME:
+    cargo test {{NAME}}
+
+# Run Svelte type checking
+ui-check:
+    cd ui && npm run check
+
+# Run all checks (Rust tests + UI type check)
+check-all: test ui-check
+
+# =============================================================================
+# Lint & Format
+# =============================================================================
+
+# Run clippy linter
+lint:
+    cargo clippy -- -D warnings
+
+# Format Rust code
+fmt:
+    cargo fmt
+
+# Check formatting without modifying
+fmt-check:
+    cargo fmt -- --check
+
+# =============================================================================
+# UI
+# =============================================================================
+
+# Install UI dependencies
+ui-install:
+    cd ui && npm install
+
+# Clean UI build artifacts
+ui-clean:
+    rm -rf ui/dist ui/node_modules
+
+# Preview production UI build
+ui-preview:
+    cd ui && npm run preview
+
+# =============================================================================
+# Clean
+# =============================================================================
+
+# Clean Rust build artifacts
+clean:
+    cargo clean
+
+# Clean everything (Rust + UI)
+clean-all: clean ui-clean
+
+# =============================================================================
+# Docker
+# =============================================================================
+
+# Build Docker image
+docker-build:
+    docker build -t cognitox .
+
+# Run Docker container
+docker-run:
+    docker run -p 9229:9229 cognitox
+
+# =============================================================================
+# Setup
+# =============================================================================
+
+# Initial project setup
+setup: ui-install
+    @echo "Setup complete!"
+    @echo ""
+    @echo "To start development:"
+    @echo "  just dev        # Start Rust server"
+    @echo "  just ui-dev     # Start Svelte dev server (in another terminal)"
+    @echo ""
+    @echo "To build for production:"
+    @echo "  just build-all-release"
+
+# =============================================================================
+# Demo
+# =============================================================================
+
+# Create a demo user pool and client (requires running server)
+demo-setup:
+    #!/usr/bin/env bash
+    set -e
+
+    echo "Creating demo user pool..."
+    POOL_RESPONSE=$(curl -s -X POST http://localhost:9229/ \
+        -H "Content-Type: application/x-amz-json-1.1" \
+        -H "X-Amz-Target: AWSCognitoIdentityProviderService.CreateUserPool" \
+        -d '{"PoolName": "demo-pool"}')
+
+    POOL_ID=$(echo $POOL_RESPONSE | grep -o '"Id":"[^"]*"' | cut -d'"' -f4)
+    echo "Created user pool: $POOL_ID"
+
+    echo "Creating user pool client..."
+    CLIENT_RESPONSE=$(curl -s -X POST http://localhost:9229/ \
+        -H "Content-Type: application/x-amz-json-1.1" \
+        -H "X-Amz-Target: AWSCognitoIdentityProviderService.CreateUserPoolClient" \
+        -d "{\"UserPoolId\": \"$POOL_ID\", \"ClientName\": \"demo-client\", \"CallbackURLs\": [\"http://localhost:3000/callback\"], \"AllowedOAuthFlows\": [\"code\"], \"AllowedOAuthScopes\": [\"openid\", \"email\", \"profile\"]}")
+
+    CLIENT_ID=$(echo $CLIENT_RESPONSE | grep -o '"ClientId":"[^"]*"' | cut -d'"' -f4)
+    echo "Created client: $CLIENT_ID"
+
+    echo ""
+    echo "Demo setup complete!"
+    echo ""
+    echo "Rust UI:   http://localhost:9229/login?response_type=code&client_id=$CLIENT_ID&redirect_uri=http://localhost:3000/callback&scope=openid"
+    echo "Svelte UI: http://localhost:9229/ui/?response_type=code&client_id=$CLIENT_ID&redirect_uri=http://localhost:3000/callback&scope=openid"
