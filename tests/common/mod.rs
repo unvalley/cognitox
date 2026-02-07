@@ -41,6 +41,22 @@ impl TestResponse {
     }
 }
 
+/// Async response wrapper for reqwest-like API
+pub struct AsyncResponse {
+    status: StatusCode,
+    body: Vec<u8>,
+}
+
+impl AsyncResponse {
+    pub fn status(&self) -> StatusCode {
+        self.status
+    }
+
+    pub async fn json<T: serde::de::DeserializeOwned>(self) -> Result<T, serde_json::Error> {
+        serde_json::from_slice(&self.body)
+    }
+}
+
 impl TestClient {
     pub fn new() -> Self {
         Self {
@@ -48,7 +64,45 @@ impl TestClient {
         }
     }
 
-    /// Make a Cognito API request
+    /// Make a Cognito API request and return just the JSON body (for success cases)
+    pub async fn cognito_request(&self, target: &str, body: Value) -> Value {
+        let (status, json) = self.request(target, body).await;
+        assert!(
+            status.is_success(),
+            "Expected success, got {}: {:?}",
+            status,
+            json
+        );
+        json
+    }
+
+    /// Make a Cognito API request and return the raw response (for error case testing)
+    pub async fn cognito_request_raw(&self, target: &str, body: Value) -> AsyncResponse {
+        let app = api::create_router(self.storage.clone());
+
+        let request = Request::builder()
+            .method("POST")
+            .uri("/")
+            .header("content-type", "application/x-amz-json-1.1")
+            .header(
+                "x-amz-target",
+                format!("AWSCognitoIdentityProviderService.{}", target),
+            )
+            .body(Body::from(serde_json::to_string(&body).unwrap()))
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+        let status = response.status();
+
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap()
+            .to_vec();
+
+        AsyncResponse { status, body }
+    }
+
+    /// Make a Cognito API request (legacy method)
     pub async fn request(&self, target: &str, body: Value) -> (StatusCode, Value) {
         let app = api::create_router(self.storage.clone());
 
