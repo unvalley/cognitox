@@ -9,13 +9,15 @@ use serde_json::{Value, json};
 use crate::{
     error::{AppError, Result},
     storage::Storage,
-    types::UserStatus,
+    types::{ClientId, UserStatus},
 };
+
+use super::helpers::normalize_confirmation_code;
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "PascalCase")]
 struct Request {
-    client_id: String,
+    client_id: ClientId,
     username: String,
     confirmation_code: String,
 }
@@ -39,7 +41,10 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
         .await
         .ok_or(AppError::InvalidConfirmationCode)?;
 
-    if confirmation.code != req.confirmation_code {
+    // Normalize codes for comparison (removes dashes, converts to uppercase)
+    if normalize_confirmation_code(&confirmation.code)
+        != normalize_confirmation_code(&req.confirmation_code)
+    {
         return Err(AppError::InvalidConfirmationCode);
     }
 

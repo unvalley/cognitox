@@ -9,12 +9,13 @@ use serde_json::Value;
 
 use crate::error::{AppError, Result};
 use crate::storage::Storage;
+use crate::types::ClientId;
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "PascalCase")]
 struct Request {
     #[allow(dead_code)]
-    client_id: String,
+    client_id: ClientId,
     challenge_name: String,
     #[allow(dead_code)]
     challenge_responses: Option<HashMap<String, String>>,

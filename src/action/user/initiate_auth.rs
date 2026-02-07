@@ -13,7 +13,7 @@ use crate::{
     error::{AppError, Result},
     jwt::{generate_access_token, generate_id_token},
     storage::Storage,
-    types::{RefreshToken, UserStatus},
+    types::{ClientId, RefreshToken, UserStatus},
 };
 
 use super::helpers::verify_password;
@@ -21,7 +21,7 @@ use super::helpers::verify_password;
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "PascalCase")]
 struct Request {
-    client_id: String,
+    client_id: ClientId,
     auth_flow: String,
     auth_parameters: Option<HashMap<String, String>>,
 }
@@ -72,12 +72,15 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
             // Generate JWT tokens
             let access_token = generate_access_token(
                 &user,
-                &req.client_id,
+                req.client_id.as_str(),
                 &client.user_pool_id,
                 &groups,
                 &client.allowed_oauth_scopes,
-            );
-            let id_token = generate_id_token(&user, &req.client_id, &client.user_pool_id, &groups);
+            )
+            .map_err(AppError::Internal)?;
+            let id_token =
+                generate_id_token(&user, req.client_id.as_str(), &client.user_pool_id, &groups)
+                    .map_err(AppError::Internal)?;
 
             // Generate refresh token (UUID-based, stored in database)
             let refresh_token = Uuid::new_v4().to_string();
@@ -134,12 +137,15 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
             // Generate new JWT tokens
             let access_token = generate_access_token(
                 &user,
-                &req.client_id,
+                req.client_id.as_str(),
                 &client.user_pool_id,
                 &groups,
                 &client.allowed_oauth_scopes,
-            );
-            let id_token = generate_id_token(&user, &req.client_id, &client.user_pool_id, &groups);
+            )
+            .map_err(AppError::Internal)?;
+            let id_token =
+                generate_id_token(&user, req.client_id.as_str(), &client.user_pool_id, &groups)
+                    .map_err(AppError::Internal)?;
 
             Ok(json!({
                 "AuthenticationResult": {

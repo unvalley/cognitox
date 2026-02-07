@@ -9,7 +9,7 @@ use serde_json::{Value, json};
 use crate::{
     error::{AppError, Result},
     storage::Storage,
-    types::PasswordResetCode,
+    types::{ClientId, PasswordResetCode},
 };
 
 use super::helpers::{generate_confirmation_code, mask_email};
@@ -17,7 +17,7 @@ use super::helpers::{generate_confirmation_code, mask_email};
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "PascalCase")]
 struct Request {
-    client_id: String,
+    client_id: ClientId,
     username: String,
 }
 

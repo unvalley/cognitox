@@ -42,7 +42,7 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
         .await
         .ok_or(AppError::UserNotFound)?;
 
-    user.password_hash = hash_password(&req.password);
+    user.password_hash = hash_password(&req.password).map_err(AppError::Internal)?;
     user.last_modified_date = Utc::now();
 
     if req.permanent {

@@ -10,7 +10,7 @@ use uuid::Uuid;
 use crate::{
     error::{AppError, Result},
     storage::Storage,
-    types::{ConfirmationCode, User, UserAttribute, UserStatus},
+    types::{ClientId, ConfirmationCode, User, UserAttribute, UserStatus},
     validation::{validate_email, validate_password, validate_username},
 };
 
@@ -19,7 +19,7 @@ use super::helpers::{generate_confirmation_code, hash_password, mask_email};
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "PascalCase")]
 struct Request {
-    client_id: String,
+    client_id: ClientId,
     username: String,
     password: String,
     user_attributes: Option<Vec<UserAttribute>>,
@@ -72,7 +72,7 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
         username: req.username.clone(),
         email: email.clone(),
         phone_number: None,
-        password_hash: hash_password(&req.password),
+        password_hash: hash_password(&req.password).map_err(AppError::Internal)?,
         enabled: true,
         user_status: UserStatus::Unconfirmed,
         attributes: req.user_attributes.unwrap_or_default(),

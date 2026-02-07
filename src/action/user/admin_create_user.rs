@@ -77,7 +77,7 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
         username: req.username.clone(),
         email,
         phone_number: None,
-        password_hash: hash_password(&password),
+        password_hash: hash_password(&password).map_err(AppError::Internal)?,
         enabled: true,
         user_status: UserStatus::ForceChangePassword,
         attributes: req.user_attributes.unwrap_or_default(),

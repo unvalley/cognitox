@@ -9,15 +9,16 @@ use serde_json::{Value, json};
 use crate::{
     error::{AppError, Result},
     storage::Storage,
+    types::ClientId,
     validation::validate_password,
 };
 
-use super::helpers::hash_password;
+use super::helpers::{hash_password, normalize_confirmation_code};
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "PascalCase")]
 struct Request {
-    client_id: String,
+    client_id: ClientId,
     username: String,
     confirmation_code: String,
     password: String,
@@ -45,7 +46,10 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
         .await
         .ok_or(AppError::InvalidConfirmationCode)?;
 
-    if reset_code.code != req.confirmation_code {
+    // Normalize codes for comparison (removes dashes, converts to uppercase)
+    if normalize_confirmation_code(&reset_code.code)
+        != normalize_confirmation_code(&req.confirmation_code)
+    {
         return Err(AppError::InvalidConfirmationCode);
     }
 
@@ -54,7 +58,7 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
         return Err(AppError::ExpiredCode);
     }
 
-    user.password_hash = hash_password(&req.password);
+    user.password_hash = hash_password(&req.password).map_err(AppError::Internal)?;
     user.last_modified_date = Utc::now();
 
     storage.update_user(user.clone()).await;
