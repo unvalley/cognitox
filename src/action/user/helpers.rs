@@ -67,6 +67,5 @@ pub fn mask_email(email: &str) -> String {
 /// Returns the user ID if the token is valid, or an error message if validation fails
 pub fn verify_and_extract_user_id(token: &str) -> Result<Uuid, String> {
     let token_data = jwt::verify_access_token(token)?;
-    Uuid::parse_str(&token_data.claims.sub)
-        .map_err(|e| format!("Invalid user ID in token: {}", e))
+    Uuid::parse_str(&token_data.claims.sub).map_err(|e| format!("Invalid user ID in token: {}", e))
 }

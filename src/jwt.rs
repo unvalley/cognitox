@@ -156,7 +156,8 @@ pub fn generate_id_token(
     let mut header = Header::new(Algorithm::RS256);
     header.kid = Some(keys.key_id.clone());
 
-    encode(&header, &claims, &keys.encoding_key).map_err(|e| format!("Failed to encode ID token: {}", e))
+    encode(&header, &claims, &keys.encoding_key)
+        .map_err(|e| format!("Failed to encode ID token: {}", e))
 }
 
 /// Generate Access Token
@@ -193,7 +194,8 @@ pub fn generate_access_token(
     let mut header = Header::new(Algorithm::RS256);
     header.kid = Some(keys.key_id.clone());
 
-    encode(&header, &claims, &keys.encoding_key).map_err(|e| format!("Failed to encode access token: {}", e))
+    encode(&header, &claims, &keys.encoding_key)
+        .map_err(|e| format!("Failed to encode access token: {}", e))
 }
 
 /// Verify and decode an access token
