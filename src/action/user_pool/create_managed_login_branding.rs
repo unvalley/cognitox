@@ -11,7 +11,8 @@ use crate::{
     error::{AppError, Result},
     storage::Storage,
     types::{
-        BrandingAssets, BrandingColorSettings, BrandingSettings, ManagedLoginBranding, UserPoolId,
+        BrandingAssets, BrandingColorSettings, BrandingSettings, ClientId, ManagedLoginBranding,
+        UserPoolId,
     },
 };
 
@@ -19,7 +20,7 @@ use crate::{
 #[serde(rename_all = "PascalCase")]
 struct Request {
     user_pool_id: UserPoolId,
-    client_id: Option<String>,
+    client_id: Option<ClientId>,
     use_cognito_provided_values: Option<bool>,
     settings: Option<SettingsInput>,
     assets: Option<AssetsInput>,

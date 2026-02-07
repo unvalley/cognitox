@@ -8,7 +8,7 @@ use serde_json::{Value, json};
 use crate::{
     error::{AppError, Result},
     storage::Storage,
-    types::UserPoolId,
+    types::{ClientId, UserPoolId},
 };
 
 #[derive(Debug, Deserialize)]
@@ -16,7 +16,7 @@ use crate::{
 struct Request {
     #[allow(dead_code)]
     user_pool_id: UserPoolId,
-    client_id: String,
+    client_id: ClientId,
 }
 
 pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {

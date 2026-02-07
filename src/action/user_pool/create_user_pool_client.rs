@@ -10,7 +10,7 @@ use uuid::Uuid;
 use crate::{
     error::{AppError, Result},
     storage::Storage,
-    types::{TokenValidityUnits, UserPoolClient, UserPoolId},
+    types::{ClientId, TokenValidityUnits, UserPoolClient, UserPoolId},
     validation::{validate_callback_url, validate_client_name},
 };
 
@@ -80,7 +80,7 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
         .ok_or(AppError::UserPoolNotFound)?;
 
     let now = Utc::now();
-    let client_id = Uuid::new_v4().to_string().replace("-", "")[..26].to_string();
+    let client_id = ClientId::generate();
     let client_secret = if req.generate_secret.unwrap_or(false) {
         Some(Uuid::new_v4().to_string())
     } else {

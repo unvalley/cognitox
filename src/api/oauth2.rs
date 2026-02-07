@@ -19,7 +19,7 @@ use uuid::Uuid;
 use crate::{
     jwt::{generate_access_token, generate_id_token, verify_access_token},
     storage::Storage,
-    types::{AuthorizationCode, RefreshToken, UserStatus},
+    types::{AuthorizationCode, ClientId, RefreshToken, UserStatus},
 };
 
 use super::super::action::user::helpers::verify_password;
@@ -104,9 +104,15 @@ pub async fn authorize(
     State(storage): State<Storage>,
     Query(params): Query<AuthorizeParams>,
 ) -> Result<impl IntoResponse, OAuthError> {
+    // Parse and validate client_id
+    let parsed_client_id = ClientId::new(&params.client_id).map_err(|_| OAuthError {
+        error: "invalid_client".to_string(),
+        error_description: Some("Invalid client ID format".to_string()),
+    })?;
+
     // Validate client
     let client = storage
-        .get_user_pool_client(&params.client_id)
+        .get_user_pool_client(&parsed_client_id)
         .await
         .ok_or_else(|| OAuthError {
             error: "invalid_client".to_string(),
@@ -180,7 +186,7 @@ pub async fn authorize(
                 let auth_code = AuthorizationCode {
                     code: code.clone(),
                     user_id: user.id,
-                    client_id: params.client_id.clone(),
+                    client_id: parsed_client_id.clone(),
                     redirect_uri: params.redirect_uri.clone(),
                     scope: scopes,
                     nonce: params.nonce.clone(),
@@ -255,7 +261,11 @@ pub async fn authorize(
                     &client.user_pool_id,
                     &groups,
                     &scopes,
-                );
+                )
+                .map_err(|e| OAuthError {
+                    error: "server_error".to_string(),
+                    error_description: Some(e),
+                })?;
 
                 let mut redirect_url = format!(
                     "{}#access_token={}&token_type=Bearer&expires_in=3600",
@@ -264,7 +274,11 @@ pub async fn authorize(
 
                 if scopes.contains(&"openid".to_string()) {
                     let id_token =
-                        generate_id_token(&user, &params.client_id, &client.user_pool_id, &groups);
+                        generate_id_token(&user, &params.client_id, &client.user_pool_id, &groups)
+                            .map_err(|e| OAuthError {
+                                error: "server_error".to_string(),
+                                error_description: Some(e),
+                            })?;
                     redirect_url.push_str(&format!("&id_token={}", id_token));
                 }
 
@@ -305,9 +319,15 @@ pub async fn token(
                 error_description: Some("Missing code parameter".to_string()),
             })?;
 
-            let client_id = req.client_id.as_ref().ok_or_else(|| OAuthError {
+            let client_id_str = req.client_id.as_ref().ok_or_else(|| OAuthError {
                 error: "invalid_request".to_string(),
                 error_description: Some("Missing client_id parameter".to_string()),
+            })?;
+
+            // Parse client_id
+            let client_id = ClientId::new(client_id_str).map_err(|_| OAuthError {
+                error: "invalid_client".to_string(),
+                error_description: Some("Invalid client ID format".to_string()),
             })?;
 
             // Get and validate authorization code
@@ -328,7 +348,7 @@ pub async fn token(
             }
 
             // Validate client_id
-            if &auth_code.client_id != client_id {
+            if auth_code.client_id != client_id {
                 return Err(OAuthError {
                     error: "invalid_grant".to_string(),
                     error_description: Some("Client ID mismatch".to_string()),
@@ -381,7 +401,7 @@ pub async fn token(
 
             // Get client and user
             let client = storage
-                .get_user_pool_client(client_id)
+                .get_user_pool_client(&client_id)
                 .await
                 .ok_or_else(|| OAuthError {
                     error: "invalid_client".to_string(),
@@ -416,19 +436,24 @@ pub async fn token(
             // Generate tokens
             let access_token = generate_access_token(
                 &user,
-                client_id,
+                client_id.as_str(),
                 &client.user_pool_id,
                 &groups,
                 &auth_code.scope,
-            );
+            )
+            .map_err(|e| OAuthError {
+                error: "server_error".to_string(),
+                error_description: Some(e),
+            })?;
 
             let id_token = if auth_code.scope.contains(&"openid".to_string()) {
-                Some(generate_id_token(
-                    &user,
-                    client_id,
-                    &client.user_pool_id,
-                    &groups,
-                ))
+                Some(
+                    generate_id_token(&user, client_id.as_str(), &client.user_pool_id, &groups)
+                        .map_err(|e| OAuthError {
+                            error: "server_error".to_string(),
+                            error_description: Some(e),
+                        })?,
+                )
             } else {
                 None
             };
@@ -500,19 +525,29 @@ pub async fn token(
 
             let access_token = generate_access_token(
                 &user,
-                &stored_token.client_id,
+                stored_token.client_id.as_str(),
                 &client.user_pool_id,
                 &groups,
                 &scopes,
-            );
+            )
+            .map_err(|e| OAuthError {
+                error: "server_error".to_string(),
+                error_description: Some(e),
+            })?;
 
             let id_token = if scopes.contains(&"openid".to_string()) {
-                Some(generate_id_token(
-                    &user,
-                    &stored_token.client_id,
-                    &client.user_pool_id,
-                    &groups,
-                ))
+                Some(
+                    generate_id_token(
+                        &user,
+                        stored_token.client_id.as_str(),
+                        &client.user_pool_id,
+                        &groups,
+                    )
+                    .map_err(|e| OAuthError {
+                        error: "server_error".to_string(),
+                        error_description: Some(e),
+                    })?,
+                )
             } else {
                 None
             };
@@ -527,9 +562,15 @@ pub async fn token(
             }))
         }
         "client_credentials" => {
-            let client_id = req.client_id.as_ref().ok_or_else(|| OAuthError {
+            let client_id_str = req.client_id.as_ref().ok_or_else(|| OAuthError {
                 error: "invalid_request".to_string(),
                 error_description: Some("Missing client_id".to_string()),
+            })?;
+
+            // Parse client_id
+            let client_id = ClientId::new(client_id_str).map_err(|_| OAuthError {
+                error: "invalid_client".to_string(),
+                error_description: Some("Invalid client ID format".to_string()),
             })?;
 
             let client_secret = req.client_secret.as_ref().ok_or_else(|| OAuthError {
@@ -538,7 +579,7 @@ pub async fn token(
             })?;
 
             let client = storage
-                .get_user_pool_client(client_id)
+                .get_user_pool_client(&client_id)
                 .await
                 .ok_or_else(|| OAuthError {
                     error: "invalid_client".to_string(),

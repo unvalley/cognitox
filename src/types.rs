@@ -147,8 +147,137 @@ impl fmt::Display for UserPoolIdError {
 
 impl std::error::Error for UserPoolIdError {}
 
-/// User Pool Client ID
-pub type ClientId = String;
+/// User Pool Client ID with validation
+///
+/// Format: `[\w+-]+` (alphanumeric, underscore, plus sign, hyphen)
+/// Length: 1-128 characters
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(try_from = "String", into = "String")]
+pub struct ClientId(String);
+
+impl ClientId {
+    /// Minimum length for ClientId
+    pub const MIN_LENGTH: usize = 1;
+
+    /// Maximum length for ClientId
+    pub const MAX_LENGTH: usize = 128;
+
+    /// Create a new ClientId with validation
+    pub fn new(value: impl Into<String>) -> Result<Self, ClientIdError> {
+        let value = value.into();
+        Self::validate(&value)?;
+        Ok(Self(value))
+    }
+
+    /// Generate a new random ClientId
+    /// Format: 26 lowercase alphanumeric characters
+    pub fn generate() -> Self {
+        use rand::Rng;
+        let mut rng = rand::thread_rng();
+        let id: String = (0..26)
+            .map(|_| {
+                let idx = rng.gen_range(0..36);
+                if idx < 10 {
+                    (b'0' + idx) as char
+                } else {
+                    (b'a' + idx - 10) as char
+                }
+            })
+            .collect();
+        Self(id)
+    }
+
+    /// Get the inner string value
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+
+    /// Validate the ClientId format
+    fn validate(value: &str) -> Result<(), ClientIdError> {
+        if value.is_empty() {
+            return Err(ClientIdError::Empty);
+        }
+        if value.len() > Self::MAX_LENGTH {
+            return Err(ClientIdError::TooLong(value.len()));
+        }
+
+        // Pattern: [\w+-]+ (alphanumeric, underscore, plus sign, hyphen)
+        if !value
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '+' || c == '-')
+        {
+            return Err(ClientIdError::InvalidFormat);
+        }
+
+        Ok(())
+    }
+}
+
+impl fmt::Display for ClientId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl FromStr for ClientId {
+    type Err = ClientIdError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Self::new(s)
+    }
+}
+
+impl TryFrom<String> for ClientId {
+    type Error = ClientIdError;
+
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        Self::new(value)
+    }
+}
+
+impl From<ClientId> for String {
+    fn from(id: ClientId) -> Self {
+        id.0
+    }
+}
+
+impl AsRef<str> for ClientId {
+    fn as_ref(&self) -> &str {
+        &self.0
+    }
+}
+
+/// Error type for ClientId validation
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ClientIdError {
+    Empty,
+    TooLong(usize),
+    InvalidFormat,
+}
+
+impl fmt::Display for ClientIdError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ClientIdError::Empty => write!(f, "ClientId cannot be empty"),
+            ClientIdError::TooLong(len) => {
+                write!(
+                    f,
+                    "ClientId exceeds maximum length of {} (got {})",
+                    ClientId::MAX_LENGTH,
+                    len
+                )
+            }
+            ClientIdError::InvalidFormat => {
+                write!(
+                    f,
+                    "ClientId must contain only alphanumeric characters, underscores, or plus signs"
+                )
+            }
+        }
+    }
+}
+
+impl std::error::Error for ClientIdError {}
 
 /// User's unique identifier
 pub type UserId = Uuid;

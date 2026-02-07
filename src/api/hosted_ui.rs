@@ -18,9 +18,11 @@ use tera::{Context, Tera};
 use uuid::Uuid;
 
 use crate::{
-    action::user::helpers::{hash_password, verify_password},
+    action::user::helpers::{
+        generate_confirmation_code, hash_password, normalize_confirmation_code, verify_password,
+    },
     storage::Storage,
-    types::{AuthorizationCode, ConfirmationCode, User, UserStatus},
+    types::{AuthorizationCode, ClientId, ConfirmationCode, User, UserStatus},
 };
 
 /// Common OAuth parameters passed through the UI flow
@@ -119,11 +121,15 @@ async fn get_branding(storage: &Storage, client_id: &str) -> BrandingContext {
         css_url: None,
     };
 
-    let client_id_string = client_id.to_string();
+    // Parse client_id string to ClientId
+    let parsed_client_id = match ClientId::new(client_id) {
+        Ok(id) => id,
+        Err(_) => return ctx, // Return default branding if client_id is invalid
+    };
 
     // Try to get client-specific branding first
     if let Some(branding) = storage
-        .get_managed_login_branding_by_client(&client_id_string)
+        .get_managed_login_branding_by_client(&parsed_client_id)
         .await
     {
         if let Some(settings) = &branding.settings {
@@ -158,7 +164,7 @@ async fn get_branding(storage: &Storage, client_id: &str) -> BrandingContext {
             ctx.logo_url = assets.logo_url.clone();
             ctx.css_url = assets.css_url.clone();
         }
-    } else if let Some(client) = storage.get_user_pool_client(&client_id_string).await {
+    } else if let Some(client) = storage.get_user_pool_client(&parsed_client_id).await {
         // Try pool-level branding
         if let Some(branding) = storage
             .get_managed_login_branding_by_user_pool(&client.user_pool_id)
@@ -668,8 +674,19 @@ pub async fn login_submit(State(storage): State<Storage>, Form(form): Form<Login
     let branding = get_branding(&storage, &form.oauth.client_id).await;
     let tera = create_tera();
 
+    // Parse client_id
+    let parsed_client_id = match ClientId::new(&form.oauth.client_id) {
+        Ok(id) => id,
+        Err(_) => {
+            let mut ctx = create_template_context(&branding, &form.oauth);
+            ctx.insert("oauth_query", &build_oauth_query(&form.oauth));
+            ctx.insert("error", &Some("Invalid client".to_string()));
+            return render_template(&tera, "login", &ctx);
+        }
+    };
+
     // Validate client
-    let client = match storage.get_user_pool_client(&form.oauth.client_id).await {
+    let client = match storage.get_user_pool_client(&parsed_client_id).await {
         Some(c) => c,
         None => {
             let mut ctx = create_template_context(&branding, &form.oauth);
@@ -735,7 +752,7 @@ pub async fn login_submit(State(storage): State<Storage>, Form(form): Form<Login
     let auth_code = AuthorizationCode {
         code: code.clone(),
         user_id: user.id,
-        client_id: form.oauth.client_id.clone(),
+        client_id: parsed_client_id,
         redirect_uri: form.oauth.redirect_uri.clone(),
         scope: scopes,
         nonce: form.oauth.nonce.clone(),
@@ -778,6 +795,17 @@ pub async fn signup_submit(
     let branding = get_branding(&storage, &form.oauth.client_id).await;
     let tera = create_tera();
 
+    // Parse client_id
+    let parsed_client_id = match ClientId::new(&form.oauth.client_id) {
+        Ok(id) => id,
+        Err(_) => {
+            let mut ctx = create_template_context(&branding, &form.oauth);
+            ctx.insert("oauth_query", &build_oauth_query(&form.oauth));
+            ctx.insert("error", &Some("Invalid client".to_string()));
+            return render_template(&tera, "signup", &ctx);
+        }
+    };
+
     // Validate passwords match
     if form.password != form.password_confirm {
         let mut ctx = create_template_context(&branding, &form.oauth);
@@ -787,7 +815,7 @@ pub async fn signup_submit(
     }
 
     // Validate client
-    let client = match storage.get_user_pool_client(&form.oauth.client_id).await {
+    let client = match storage.get_user_pool_client(&parsed_client_id).await {
         Some(c) => c,
         None => {
             let mut ctx = create_template_context(&branding, &form.oauth);
@@ -812,13 +840,24 @@ pub async fn signup_submit(
     // Create user
     let now = Utc::now();
     let user_id = Uuid::new_v4();
-    let code = format!("{:06}", rand::random::<u32>() % 1_000_000);
+    let code = generate_confirmation_code();
+
+    let password_hash = match hash_password(&form.password) {
+        Ok(hash) => hash,
+        Err(e) => {
+            tracing::error!("Failed to hash password: {}", e);
+            let mut ctx = create_template_context(&branding, &form.oauth);
+            ctx.insert("oauth_query", &build_oauth_query(&form.oauth));
+            ctx.insert("error", &Some("Internal error".to_string()));
+            return render_template(&tera, "signup", &ctx);
+        }
+    };
 
     let user = User {
         id: user_id,
         user_pool_id: client.user_pool_id.clone(),
         username: form.username.clone(),
-        password_hash: hash_password(&form.password),
+        password_hash,
         email: Some(form.email.clone()),
         phone_number: None,
         user_status: UserStatus::Unconfirmed,
@@ -887,8 +926,21 @@ pub async fn confirm_submit(
     let branding = get_branding(&storage, &form.oauth.client_id).await;
     let tera = create_tera();
 
+    // Parse client_id
+    let parsed_client_id = match ClientId::new(&form.oauth.client_id) {
+        Ok(id) => id,
+        Err(_) => {
+            let mut ctx = create_template_context(&branding, &form.oauth);
+            ctx.insert("oauth_query", &build_oauth_query(&form.oauth));
+            ctx.insert("username", &form.username);
+            ctx.insert("error", &Some("Invalid client".to_string()));
+            ctx.insert("success", &None::<String>);
+            return render_template(&tera, "confirm", &ctx);
+        }
+    };
+
     // Validate client
-    let client = match storage.get_user_pool_client(&form.oauth.client_id).await {
+    let client = match storage.get_user_pool_client(&parsed_client_id).await {
         Some(c) => c,
         None => {
             let mut ctx = create_template_context(&branding, &form.oauth);
@@ -916,11 +968,12 @@ pub async fn confirm_submit(
         }
     };
 
-    // Verify confirmation code
+    // Verify confirmation code (normalize to ignore dashes and case)
     let stored_code = storage.get_confirmation_code(&user.id).await;
-    let code_valid = stored_code
-        .as_ref()
-        .is_some_and(|c| c.code == form.code && c.expires_at > Utc::now());
+    let code_valid = stored_code.as_ref().is_some_and(|c| {
+        normalize_confirmation_code(&c.code) == normalize_confirmation_code(&form.code)
+            && c.expires_at > Utc::now()
+    });
 
     if !code_valid {
         let mut ctx = create_template_context(&branding, &form.oauth);
@@ -962,8 +1015,19 @@ pub async fn forgot_password_submit(
     let branding = get_branding(&storage, &form.oauth.client_id).await;
     let tera = create_tera();
 
+    // Parse client_id
+    let parsed_client_id = match ClientId::new(&form.oauth.client_id) {
+        Ok(id) => id,
+        Err(_) => {
+            let mut ctx = create_template_context(&branding, &form.oauth);
+            ctx.insert("oauth_query", &build_oauth_query(&form.oauth));
+            ctx.insert("error", &Some("Invalid client".to_string()));
+            return render_template(&tera, "forgot_password", &ctx);
+        }
+    };
+
     // Validate client
-    let client = match storage.get_user_pool_client(&form.oauth.client_id).await {
+    let client = match storage.get_user_pool_client(&parsed_client_id).await {
         Some(c) => c,
         None => {
             let mut ctx = create_template_context(&branding, &form.oauth);
@@ -979,7 +1043,7 @@ pub async fn forgot_password_submit(
         .await
     {
         // Generate reset code
-        let reset_code = format!("{:06}", rand::random::<u32>() % 1_000_000);
+        let reset_code = generate_confirmation_code();
         let confirmation = ConfirmationCode {
             user_id: user.id,
             code: reset_code.clone(),
@@ -1036,6 +1100,18 @@ pub async fn reset_password_submit(
     let branding = get_branding(&storage, &form.oauth.client_id).await;
     let tera = create_tera();
 
+    // Parse client_id
+    let parsed_client_id = match ClientId::new(&form.oauth.client_id) {
+        Ok(id) => id,
+        Err(_) => {
+            let mut ctx = create_template_context(&branding, &form.oauth);
+            ctx.insert("oauth_query", &build_oauth_query(&form.oauth));
+            ctx.insert("username", &form.username);
+            ctx.insert("error", &Some("Invalid client".to_string()));
+            return render_template(&tera, "reset_password", &ctx);
+        }
+    };
+
     // Validate passwords match
     if form.new_password != form.new_password_confirm {
         let mut ctx = create_template_context(&branding, &form.oauth);
@@ -1046,7 +1122,7 @@ pub async fn reset_password_submit(
     }
 
     // Validate client
-    let client = match storage.get_user_pool_client(&form.oauth.client_id).await {
+    let client = match storage.get_user_pool_client(&parsed_client_id).await {
         Some(c) => c,
         None => {
             let mut ctx = create_template_context(&branding, &form.oauth);
@@ -1072,11 +1148,12 @@ pub async fn reset_password_submit(
         }
     };
 
-    // Verify reset code
+    // Verify reset code (normalize to ignore dashes and case)
     let stored_code = storage.get_confirmation_code(&user.id).await;
-    let code_valid = stored_code
-        .as_ref()
-        .is_some_and(|c| c.code == form.code && c.expires_at > Utc::now());
+    let code_valid = stored_code.as_ref().is_some_and(|c| {
+        normalize_confirmation_code(&c.code) == normalize_confirmation_code(&form.code)
+            && c.expires_at > Utc::now()
+    });
 
     if !code_valid {
         let mut ctx = create_template_context(&branding, &form.oauth);
@@ -1087,9 +1164,18 @@ pub async fn reset_password_submit(
     }
 
     // Update password
-    storage
-        .set_user_password(&user.id, &hash_password(&form.new_password))
-        .await;
+    let password_hash = match hash_password(&form.new_password) {
+        Ok(hash) => hash,
+        Err(e) => {
+            tracing::error!("Failed to hash password: {}", e);
+            let mut ctx = create_template_context(&branding, &form.oauth);
+            ctx.insert("oauth_query", &build_oauth_query(&form.oauth));
+            ctx.insert("username", &form.username);
+            ctx.insert("error", &Some("Internal error".to_string()));
+            return render_template(&tera, "reset_password", &ctx);
+        }
+    };
+    storage.set_user_password(&user.id, &password_hash).await;
 
     // Clear confirmation code
     storage.delete_confirmation_code(&user.id).await;
