@@ -649,3 +649,46 @@ async fn test_describe_user_pool_id_too_long() {
     let body: serde_json::Value = response.json().await.unwrap();
     assert_eq!(body["__type"], "InvalidParameterException");
 }
+
+// =============================================================================
+// UpdateUserPoolClient validation tests
+// =============================================================================
+
+#[tokio::test]
+async fn test_update_user_pool_client_invalid_callback_url() {
+    let client = TestClient::new();
+
+    let pool_response = client
+        .cognito_request("CreateUserPool", json!({"PoolName": "test-pool"}))
+        .await;
+    let pool_id = pool_response["UserPool"]["Id"].as_str().unwrap();
+
+    let client_response = client
+        .cognito_request(
+            "CreateUserPoolClient",
+            json!({
+                "UserPoolId": pool_id,
+                "ClientName": "test-client"
+            }),
+        )
+        .await;
+    let client_id = client_response["UserPoolClient"]["ClientId"]
+        .as_str()
+        .unwrap();
+
+    // Try to update client with invalid callback URL
+    let response = client
+        .cognito_request_raw(
+            "UpdateUserPoolClient",
+            json!({
+                "UserPoolId": pool_id,
+                "ClientId": client_id,
+                "CallbackURLs": ["not-a-valid-url"]
+            }),
+        )
+        .await;
+
+    assert_eq!(response.status(), 400);
+    let body: serde_json::Value = response.json().await.unwrap();
+    assert_eq!(body["__type"], "InvalidParameterException");
+}

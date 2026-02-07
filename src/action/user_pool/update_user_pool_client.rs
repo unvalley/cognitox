@@ -10,14 +10,15 @@ use super::create_user_pool_client::build_client_response;
 use crate::{
     error::{AppError, Result},
     storage::Storage,
-    types::{TokenValidityUnits, UserPoolId},
+    types::{ClientId, TokenValidityUnits, UserPoolId},
+    validation::{validate_callback_url, validate_client_name},
 };
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "PascalCase")]
 struct Request {
     user_pool_id: UserPoolId,
-    client_id: String,
+    client_id: ClientId,
     client_name: Option<String>,
 
     // OAuth configuration
@@ -55,6 +56,25 @@ struct TokenValidityUnitsInput {
 pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
     let req: Request = serde_json::from_value(body)
         .map_err(|e| AppError::InvalidParameter(format!("Invalid request: {}", e)))?;
+
+    // Validate client name if provided
+    if let Some(ref name) = req.client_name {
+        validate_client_name(name)?;
+    }
+
+    // Validate callback URLs if provided
+    if let Some(ref urls) = req.callback_u_r_ls {
+        for url in urls {
+            validate_callback_url(url)?;
+        }
+    }
+
+    // Validate logout URLs if provided
+    if let Some(ref urls) = req.logout_u_r_ls {
+        for url in urls {
+            validate_callback_url(url)?;
+        }
+    }
 
     storage
         .get_user_pool(&req.user_pool_id)
