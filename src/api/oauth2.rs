@@ -22,7 +22,7 @@ use crate::{
     types::{AuthorizationCode, RefreshToken, UserStatus},
 };
 
-use super::super::action::user::helpers::hash_password;
+use super::super::action::user::helpers::verify_password;
 
 /// Authorization endpoint query parameters
 #[derive(Debug, Deserialize)]
@@ -153,6 +153,14 @@ pub async fn authorize(
                         error_description: Some("Invalid credentials".to_string()),
                     })?;
 
+                // Check if user is enabled
+                if !user.enabled {
+                    return Err(OAuthError {
+                        error: "access_denied".to_string(),
+                        error_description: Some("User is disabled".to_string()),
+                    });
+                }
+
                 if user.user_status != UserStatus::Confirmed {
                     return Err(OAuthError {
                         error: "access_denied".to_string(),
@@ -160,7 +168,7 @@ pub async fn authorize(
                     });
                 }
 
-                if user.password_hash != hash_password(password) {
+                if !verify_password(password, &user.password_hash) {
                     return Err(OAuthError {
                         error: "access_denied".to_string(),
                         error_description: Some("Invalid credentials".to_string()),
@@ -225,7 +233,15 @@ pub async fn authorize(
                         error_description: Some("Invalid credentials".to_string()),
                     })?;
 
-                if user.password_hash != hash_password(password) {
+                // Check if user is enabled
+                if !user.enabled {
+                    return Err(OAuthError {
+                        error: "access_denied".to_string(),
+                        error_description: Some("User is disabled".to_string()),
+                    });
+                }
+
+                if !verify_password(password, &user.password_hash) {
                     return Err(OAuthError {
                         error: "access_denied".to_string(),
                         error_description: Some("Invalid credentials".to_string()),

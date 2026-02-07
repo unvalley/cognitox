@@ -40,6 +40,9 @@ pub enum AppError {
     #[error("User not confirmed")]
     UserNotConfirmed,
 
+    #[error("User is disabled")]
+    UserDisabled,
+
     #[error("Group not found")]
     GroupNotFound,
 
@@ -92,6 +95,7 @@ impl IntoResponse for AppError {
             AppError::InvalidAccessToken => (StatusCode::UNAUTHORIZED, "NotAuthorizedException"),
             AppError::InvalidRefreshToken => (StatusCode::UNAUTHORIZED, "NotAuthorizedException"),
             AppError::UserNotConfirmed => (StatusCode::BAD_REQUEST, "UserNotConfirmedException"),
+            AppError::UserDisabled => (StatusCode::BAD_REQUEST, "UserDisabledException"),
             AppError::GroupNotFound => (StatusCode::BAD_REQUEST, "ResourceNotFoundException"),
             AppError::GroupAlreadyExists => (StatusCode::BAD_REQUEST, "GroupExistsException"),
             AppError::ExpiredCode => (StatusCode::BAD_REQUEST, "ExpiredCodeException"),

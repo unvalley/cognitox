@@ -16,7 +16,7 @@ use crate::{
     types::{RefreshToken, UserStatus},
 };
 
-use super::helpers::hash_password;
+use super::helpers::verify_password;
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "PascalCase")]
@@ -53,11 +53,16 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
                 .await
                 .ok_or(AppError::UserNotFound)?;
 
+            // Check if user is enabled
+            if !user.enabled {
+                return Err(AppError::UserDisabled);
+            }
+
             if user.user_status != UserStatus::Confirmed {
                 return Err(AppError::UserNotConfirmed);
             }
 
-            if user.password_hash != hash_password(password) {
+            if !verify_password(password, &user.password_hash) {
                 return Err(AppError::InvalidPassword);
             }
 
@@ -117,6 +122,11 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
                 .get_user(&stored_token.user_id)
                 .await
                 .ok_or(AppError::UserNotFound)?;
+
+            // Check if user is enabled (user could be disabled after getting refresh token)
+            if !user.enabled {
+                return Err(AppError::UserDisabled);
+            }
 
             // Get user groups
             let groups = storage.get_groups_for_user(&user.id).await;

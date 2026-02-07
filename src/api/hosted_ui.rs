@@ -18,7 +18,7 @@ use tera::{Context, Tera};
 use uuid::Uuid;
 
 use crate::{
-    action::user::helpers::hash_password,
+    action::user::helpers::{hash_password, verify_password},
     storage::Storage,
     types::{AuthorizationCode, ConfirmationCode, User, UserStatus},
 };
@@ -693,6 +693,14 @@ pub async fn login_submit(State(storage): State<Storage>, Form(form): Form<Login
         }
     };
 
+    // Check if user is enabled
+    if !user.enabled {
+        let mut ctx = create_template_context(&branding, &form.oauth);
+        ctx.insert("oauth_query", &build_oauth_query(&form.oauth));
+        ctx.insert("error", &Some("This account has been disabled".to_string()));
+        return render_template(&tera, "login", &ctx);
+    }
+
     // Check user status
     if user.user_status != UserStatus::Confirmed {
         // Redirect to confirmation page
@@ -706,7 +714,7 @@ pub async fn login_submit(State(storage): State<Storage>, Form(form): Form<Login
     }
 
     // Verify password
-    if user.password_hash != hash_password(&form.password) {
+    if !verify_password(&form.password, &user.password_hash) {
         let mut ctx = create_template_context(&branding, &form.oauth);
         ctx.insert("oauth_query", &build_oauth_query(&form.oauth));
         ctx.insert("error", &Some("Invalid username or password".to_string()));
