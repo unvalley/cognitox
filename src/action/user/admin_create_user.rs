@@ -11,6 +11,7 @@ use crate::{
     error::{AppError, Result},
     storage::Storage,
     types::{User, UserAttribute, UserStatus},
+    validation::{validate_email, validate_password, validate_username},
 };
 
 use super::helpers::hash_password;
@@ -27,6 +28,21 @@ struct Request {
 pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
     let req: Request = serde_json::from_value(body)
         .map_err(|e| AppError::Internal(format!("Invalid request: {}", e)))?;
+
+    // Validate input
+    validate_username(&req.username)?;
+    if let Some(password) = &req.temporary_password {
+        validate_password(password)?;
+    }
+
+    // Validate email if provided
+    if let Some(attrs) = &req.user_attributes {
+        if let Some(email_attr) = attrs.iter().find(|a| a.name == "email") {
+            if let Some(email) = &email_attr.value {
+                validate_email(email)?;
+            }
+        }
+    }
 
     storage
         .get_user_pool(&req.user_pool_id)

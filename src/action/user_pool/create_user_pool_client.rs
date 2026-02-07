@@ -11,6 +11,7 @@ use crate::{
     error::{AppError, Result},
     storage::Storage,
     types::{TokenValidityUnits, UserPoolClient},
+    validation::{validate_callback_url, validate_client_name},
 };
 
 #[derive(Debug, Deserialize)]
@@ -55,6 +56,23 @@ struct TokenValidityUnitsInput {
 pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
     let req: Request = serde_json::from_value(body)
         .map_err(|e| AppError::InvalidParameter(format!("Invalid request: {}", e)))?;
+
+    // Validate input
+    validate_client_name(&req.client_name)?;
+
+    // Validate callback URLs if provided
+    if let Some(urls) = &req.callback_u_r_ls {
+        for url in urls {
+            validate_callback_url(url)?;
+        }
+    }
+
+    // Validate logout URLs if provided
+    if let Some(urls) = &req.logout_u_r_ls {
+        for url in urls {
+            validate_callback_url(url)?;
+        }
+    }
 
     storage
         .get_user_pool(&req.user_pool_id)

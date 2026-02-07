@@ -9,6 +9,7 @@ use serde_json::{Value, json};
 use crate::{
     error::{AppError, Result},
     storage::Storage,
+    validation::validate_password,
 };
 
 use super::helpers::hash_password;
@@ -25,6 +26,9 @@ struct Request {
 pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
     let req: Request = serde_json::from_value(body)
         .map_err(|e| AppError::Internal(format!("Invalid request: {}", e)))?;
+
+    // Validate new password
+    validate_password(&req.password)?;
 
     let client = storage
         .get_user_pool_client(&req.client_id)

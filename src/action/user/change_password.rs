@@ -9,9 +9,10 @@ use serde_json::{Value, json};
 use crate::{
     error::{AppError, Result},
     storage::Storage,
+    validation::validate_password,
 };
 
-use super::helpers::{extract_user_id_from_token, hash_password};
+use super::helpers::{extract_user_id_from_token, hash_password, verify_password};
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "PascalCase")]
@@ -25,6 +26,9 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
     let req: Request = serde_json::from_value(body)
         .map_err(|e| AppError::Internal(format!("Invalid request: {}", e)))?;
 
+    // Validate new password
+    validate_password(&req.proposed_password)?;
+
     let user_id =
         extract_user_id_from_token(&req.access_token).ok_or(AppError::InvalidAccessToken)?;
 
@@ -33,8 +37,7 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
         .await
         .ok_or(AppError::UserNotFound)?;
 
-    let previous_hash = hash_password(&req.previous_password);
-    if user.password_hash != previous_hash {
+    if !verify_password(&req.previous_password, &user.password_hash) {
         return Err(AppError::InvalidPassword);
     }
 

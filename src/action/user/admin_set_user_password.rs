@@ -10,6 +10,7 @@ use crate::{
     error::{AppError, Result},
     storage::Storage,
     types::UserStatus,
+    validation::validate_password,
 };
 
 use super::helpers::hash_password;
@@ -27,6 +28,9 @@ struct Request {
 pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
     let req: Request = serde_json::from_value(body)
         .map_err(|e| AppError::Internal(format!("Invalid request: {}", e)))?;
+
+    // Validate input
+    validate_password(&req.password)?;
 
     storage
         .get_user_pool(&req.user_pool_id)

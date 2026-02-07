@@ -11,6 +11,7 @@ use crate::{
     error::{AppError, Result},
     storage::Storage,
     types::UserPool,
+    validation::validate_pool_name,
 };
 
 #[derive(Debug, Deserialize)]
@@ -22,6 +23,9 @@ struct Request {
 pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
     let req: Request = serde_json::from_value(body)
         .map_err(|e| AppError::Internal(format!("Invalid request: {}", e)))?;
+
+    // Validate input
+    validate_pool_name(&req.pool_name)?;
 
     let now = Utc::now();
     let pool_id = format!(
