@@ -5,12 +5,11 @@
 use chrono::Utc;
 use serde::Deserialize;
 use serde_json::{Value, json};
-use uuid::Uuid;
 
 use crate::{
     error::{AppError, Result},
     storage::Storage,
-    types::UserPool,
+    types::{UserPool, UserPoolId},
     validation::validate_pool_name,
 };
 
@@ -22,16 +21,13 @@ struct Request {
 
 pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
     let req: Request = serde_json::from_value(body)
-        .map_err(|e| AppError::Internal(format!("Invalid request: {}", e)))?;
+        .map_err(|e| AppError::InvalidParameter(format!("Invalid request: {}", e)))?;
 
     // Validate input
     validate_pool_name(&req.pool_name)?;
 
     let now = Utc::now();
-    let pool_id = format!(
-        "local_{}",
-        &Uuid::new_v4().to_string().replace("-", "")[..9]
-    );
+    let pool_id = UserPoolId::new_local();
 
     let pool = UserPool {
         id: pool_id,

@@ -4,6 +4,7 @@
 //! to match AWS Cognito's validation rules.
 
 use crate::error::{AppError, Result};
+use crate::types::UserPoolId;
 
 /// Minimum password length (AWS default is 6)
 const MIN_PASSWORD_LENGTH: usize = 6;
@@ -200,6 +201,13 @@ pub fn validate_group_name(name: &str) -> Result<()> {
     }
 
     Ok(())
+}
+
+/// Parse and validate a UserPoolId from a string
+///
+/// Returns InvalidParameter error if the format is invalid
+pub fn parse_user_pool_id(value: &str) -> Result<UserPoolId> {
+    UserPoolId::new(value).map_err(|e| AppError::InvalidParameter(e.to_string()))
 }
 
 #[cfg(test)]

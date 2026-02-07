@@ -10,13 +10,13 @@ use super::create_user_pool_client::build_client_response;
 use crate::{
     error::{AppError, Result},
     storage::Storage,
-    types::TokenValidityUnits,
+    types::{TokenValidityUnits, UserPoolId},
 };
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "PascalCase")]
 struct Request {
-    user_pool_id: String,
+    user_pool_id: UserPoolId,
     client_id: String,
     client_name: Option<String>,
 

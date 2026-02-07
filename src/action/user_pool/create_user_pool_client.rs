@@ -10,14 +10,14 @@ use uuid::Uuid;
 use crate::{
     error::{AppError, Result},
     storage::Storage,
-    types::{TokenValidityUnits, UserPoolClient},
+    types::{TokenValidityUnits, UserPoolClient, UserPoolId},
     validation::{validate_callback_url, validate_client_name},
 };
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "PascalCase")]
 struct Request {
-    user_pool_id: String,
+    user_pool_id: UserPoolId,
     client_name: String,
     generate_secret: Option<bool>,
 

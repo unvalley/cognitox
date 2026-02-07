@@ -10,7 +10,7 @@ use uuid::Uuid;
 use crate::{
     error::{AppError, Result},
     storage::Storage,
-    types::{User, UserAttribute, UserStatus},
+    types::{User, UserAttribute, UserPoolId, UserStatus},
     validation::{validate_email, validate_password, validate_username},
 };
 
@@ -19,7 +19,7 @@ use super::helpers::hash_password;
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "PascalCase")]
 struct Request {
-    user_pool_id: String,
+    user_pool_id: UserPoolId,
     username: String,
     temporary_password: Option<String>,
     user_attributes: Option<Vec<UserAttribute>>,
@@ -27,7 +27,7 @@ struct Request {
 
 pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
     let req: Request = serde_json::from_value(body)
-        .map_err(|e| AppError::Internal(format!("Invalid request: {}", e)))?;
+        .map_err(|e| AppError::InvalidParameter(format!("Invalid request: {}", e)))?;
 
     // Validate input
     validate_username(&req.username)?;
@@ -36,12 +36,13 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
     }
 
     // Validate email if provided
-    if let Some(attrs) = &req.user_attributes {
-        if let Some(email_attr) = attrs.iter().find(|a| a.name == "email") {
-            if let Some(email) = &email_attr.value {
-                validate_email(email)?;
-            }
-        }
+    if let Some(email) = req
+        .user_attributes
+        .as_ref()
+        .and_then(|attrs| attrs.iter().find(|a| a.name == "email"))
+        .and_then(|a| a.value.as_ref())
+    {
+        validate_email(email)?;
     }
 
     storage

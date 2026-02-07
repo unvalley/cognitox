@@ -9,14 +9,14 @@ use serde_json::{Value, json};
 use crate::{
     error::{AppError, Result},
     storage::Storage,
-    types::Group,
+    types::{Group, UserPoolId},
     validation::validate_group_name,
 };
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "PascalCase")]
 struct Request {
-    user_pool_id: String,
+    user_pool_id: UserPoolId,
     group_name: String,
     description: Option<String>,
     role_arn: Option<String>,
@@ -25,7 +25,7 @@ struct Request {
 
 pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
     let req: Request = serde_json::from_value(body)
-        .map_err(|e| AppError::Internal(format!("Invalid request: {}", e)))?;
+        .map_err(|e| AppError::InvalidParameter(format!("Invalid request: {}", e)))?;
 
     // Validate input
     validate_group_name(&req.group_name)?;

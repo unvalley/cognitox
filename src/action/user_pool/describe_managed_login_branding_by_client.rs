@@ -9,13 +9,14 @@ use super::create_managed_login_branding::build_branding_response;
 use crate::{
     error::{AppError, Result},
     storage::Storage,
+    types::UserPoolId,
 };
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "PascalCase")]
 struct Request {
     client_id: String,
-    user_pool_id: String,
+    user_pool_id: UserPoolId,
 }
 
 pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {

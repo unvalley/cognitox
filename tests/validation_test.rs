@@ -30,7 +30,9 @@ async fn test_sign_up_empty_username() {
             }),
         )
         .await;
-    let client_id = client_response["UserPoolClient"]["ClientId"].as_str().unwrap();
+    let client_id = client_response["UserPoolClient"]["ClientId"]
+        .as_str()
+        .unwrap();
 
     // Try to sign up with empty username
     let response = client
@@ -67,7 +69,9 @@ async fn test_sign_up_username_with_spaces() {
             }),
         )
         .await;
-    let client_id = client_response["UserPoolClient"]["ClientId"].as_str().unwrap();
+    let client_id = client_response["UserPoolClient"]["ClientId"]
+        .as_str()
+        .unwrap();
 
     // Try to sign up with username containing spaces
     let response = client
@@ -108,7 +112,9 @@ async fn test_sign_up_password_too_short() {
             }),
         )
         .await;
-    let client_id = client_response["UserPoolClient"]["ClientId"].as_str().unwrap();
+    let client_id = client_response["UserPoolClient"]["ClientId"]
+        .as_str()
+        .unwrap();
 
     // Try to sign up with password that's too short (less than 6 chars)
     let response = client
@@ -146,7 +152,9 @@ async fn test_change_password_new_password_too_short() {
             }),
         )
         .await;
-    let client_id = client_response["UserPoolClient"]["ClientId"].as_str().unwrap();
+    let client_id = client_response["UserPoolClient"]["ClientId"]
+        .as_str()
+        .unwrap();
 
     // Sign up and confirm user
     client
@@ -227,7 +235,9 @@ async fn test_sign_up_invalid_email() {
             }),
         )
         .await;
-    let client_id = client_response["UserPoolClient"]["ClientId"].as_str().unwrap();
+    let client_id = client_response["UserPoolClient"]["ClientId"]
+        .as_str()
+        .unwrap();
 
     // Try to sign up with invalid email
     let response = client
@@ -272,7 +282,9 @@ async fn test_initiate_auth_disabled_user() {
             }),
         )
         .await;
-    let client_id = client_response["UserPoolClient"]["ClientId"].as_str().unwrap();
+    let client_id = client_response["UserPoolClient"]["ClientId"]
+        .as_str()
+        .unwrap();
 
     // Sign up and confirm user
     client
@@ -346,7 +358,9 @@ async fn test_refresh_token_disabled_user() {
             }),
         )
         .await;
-    let client_id = client_response["UserPoolClient"]["ClientId"].as_str().unwrap();
+    let client_id = client_response["UserPoolClient"]["ClientId"]
+        .as_str()
+        .unwrap();
 
     // Sign up and confirm user
     client
@@ -441,7 +455,9 @@ async fn test_refresh_token_after_global_signout() {
             }),
         )
         .await;
-    let client_id = client_response["UserPoolClient"]["ClientId"].as_str().unwrap();
+    let client_id = client_response["UserPoolClient"]["ClientId"]
+        .as_str()
+        .unwrap();
 
     // Sign up and confirm user
     client
@@ -581,6 +597,50 @@ async fn test_create_group_empty_name() {
             json!({
                 "UserPoolId": pool_id,
                 "GroupName": ""
+            }),
+        )
+        .await;
+
+    assert_eq!(response.status(), 400);
+    let body: serde_json::Value = response.json().await.unwrap();
+    assert_eq!(body["__type"], "InvalidParameterException");
+}
+
+// =============================================================================
+// UserPoolId format validation tests
+// =============================================================================
+
+#[tokio::test]
+async fn test_describe_user_pool_invalid_id_format() {
+    let client = TestClient::new();
+
+    // UserPoolId must match pattern [\w-]+_[0-9a-zA-Z]+
+    // "invalid" doesn't have underscore separator
+    let response = client
+        .cognito_request_raw(
+            "DescribeUserPool",
+            json!({
+                "UserPoolId": "invalid"
+            }),
+        )
+        .await;
+
+    assert_eq!(response.status(), 400);
+    let body: serde_json::Value = response.json().await.unwrap();
+    assert_eq!(body["__type"], "InvalidParameterException");
+}
+
+#[tokio::test]
+async fn test_describe_user_pool_id_too_long() {
+    let client = TestClient::new();
+
+    // UserPoolId max length is 55 characters
+    let long_id = format!("local_{}", "a".repeat(50));
+    let response = client
+        .cognito_request_raw(
+            "DescribeUserPool",
+            json!({
+                "UserPoolId": long_id
             }),
         )
         .await;

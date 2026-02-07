@@ -8,14 +8,14 @@ use serde_json::{Value, json};
 use crate::{
     error::{AppError, Result},
     storage::Storage,
-    types::CustomDomainConfig,
+    types::{CustomDomainConfig, UserPoolId},
 };
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "PascalCase")]
 struct Request {
     domain: String,
-    user_pool_id: String,
+    user_pool_id: UserPoolId,
     custom_domain_config: Option<CustomDomainConfigInput>,
     managed_login_version: Option<i32>,
 }

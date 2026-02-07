@@ -10,14 +10,14 @@ use super::create_managed_login_branding::build_branding_response;
 use crate::{
     error::{AppError, Result},
     storage::Storage,
-    types::{BrandingAssets, BrandingColorSettings, BrandingSettings},
+    types::{BrandingAssets, BrandingColorSettings, BrandingSettings, UserPoolId},
 };
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "PascalCase")]
 struct Request {
     managed_login_branding_id: String,
-    user_pool_id: String,
+    user_pool_id: UserPoolId,
     use_cognito_provided_values: Option<bool>,
     settings: Option<SettingsInput>,
     assets: Option<AssetsInput>,

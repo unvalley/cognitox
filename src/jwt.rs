@@ -260,9 +260,10 @@ mod tests {
 
     #[test]
     fn test_jwt_generation_and_verification() {
+        let user_pool_id = UserPoolId::new("local_test123").unwrap();
         let user = User {
             id: uuid::Uuid::new_v4(),
-            user_pool_id: "local_test123".to_string(),
+            user_pool_id: user_pool_id.clone(),
             username: "testuser".to_string(),
             email: Some("test@example.com".to_string()),
             phone_number: None,
@@ -275,7 +276,6 @@ mod tests {
         };
 
         let client_id = "test_client_id";
-        let user_pool_id = "local_test123".to_string();
         let groups = vec!["admin".to_string()];
 
         let access_token = generate_access_token(&user, client_id, &user_pool_id, &groups, &[]);

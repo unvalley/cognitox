@@ -27,19 +27,20 @@ struct Request {
 
 pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
     let req: Request = serde_json::from_value(body)
-        .map_err(|e| AppError::Internal(format!("Invalid request: {}", e)))?;
+        .map_err(|e| AppError::InvalidParameter(format!("Invalid request: {}", e)))?;
 
     // Validate input
     validate_username(&req.username)?;
     validate_password(&req.password)?;
 
     // Validate email if provided
-    if let Some(attrs) = &req.user_attributes {
-        if let Some(email_attr) = attrs.iter().find(|a| a.name == "email") {
-            if let Some(email) = &email_attr.value {
-                validate_email(email)?;
-            }
-        }
+    if let Some(email) = req
+        .user_attributes
+        .as_ref()
+        .and_then(|attrs| attrs.iter().find(|a| a.name == "email"))
+        .and_then(|a| a.value.as_ref())
+    {
+        validate_email(email)?;
     }
 
     let client = storage

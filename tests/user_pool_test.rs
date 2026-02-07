@@ -63,8 +63,12 @@ async fn test_describe_user_pool() {
 async fn test_describe_user_pool_not_found() {
     let client = TestClient::new();
 
+    // Use a valid UserPoolId format that doesn't exist
     let (status, body) = client
-        .request("DescribeUserPool", json!({ "UserPoolId": "nonexistent" }))
+        .request(
+            "DescribeUserPool",
+            json!({ "UserPoolId": "local_nonexistent123" }),
+        )
         .await;
 
     assert_eq!(status, StatusCode::BAD_REQUEST);

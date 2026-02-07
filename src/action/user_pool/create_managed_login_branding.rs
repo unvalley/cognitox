@@ -10,13 +10,15 @@ use uuid::Uuid;
 use crate::{
     error::{AppError, Result},
     storage::Storage,
-    types::{BrandingAssets, BrandingColorSettings, BrandingSettings, ManagedLoginBranding},
+    types::{
+        BrandingAssets, BrandingColorSettings, BrandingSettings, ManagedLoginBranding, UserPoolId,
+    },
 };
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "PascalCase")]
 struct Request {
-    user_pool_id: String,
+    user_pool_id: UserPoolId,
     client_id: Option<String>,
     use_cognito_provided_values: Option<bool>,
     settings: Option<SettingsInput>,
