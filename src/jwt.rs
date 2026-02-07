@@ -132,7 +132,7 @@ pub fn generate_id_token(
     client_id: &str,
     user_pool_id: &UserPoolId,
     groups: &[String],
-) -> String {
+) -> Result<String, String> {
     let keys = get_jwt_keys();
     let now = Utc::now();
     let auth_time = now.timestamp();
@@ -156,7 +156,7 @@ pub fn generate_id_token(
     let mut header = Header::new(Algorithm::RS256);
     header.kid = Some(keys.key_id.clone());
 
-    encode(&header, &claims, &keys.encoding_key).expect("Failed to encode ID token")
+    encode(&header, &claims, &keys.encoding_key).map_err(|e| format!("Failed to encode ID token: {}", e))
 }
 
 /// Generate Access Token
@@ -166,7 +166,7 @@ pub fn generate_access_token(
     user_pool_id: &UserPoolId,
     groups: &[String],
     scopes: &[String],
-) -> String {
+) -> Result<String, String> {
     let keys = get_jwt_keys();
     let now = Utc::now();
     let auth_time = now.timestamp();
@@ -193,7 +193,7 @@ pub fn generate_access_token(
     let mut header = Header::new(Algorithm::RS256);
     header.kid = Some(keys.key_id.clone());
 
-    encode(&header, &claims, &keys.encoding_key).expect("Failed to encode access token")
+    encode(&header, &claims, &keys.encoding_key).map_err(|e| format!("Failed to encode access token: {}", e))
 }
 
 /// Verify and decode an access token
@@ -278,8 +278,10 @@ mod tests {
         let client_id = "test_client_id";
         let groups = vec!["admin".to_string()];
 
-        let access_token = generate_access_token(&user, client_id, &user_pool_id, &groups, &[]);
-        let id_token = generate_id_token(&user, client_id, &user_pool_id, &groups);
+        let access_token = generate_access_token(&user, client_id, &user_pool_id, &groups, &[])
+            .expect("Failed to generate access token");
+        let id_token = generate_id_token(&user, client_id, &user_pool_id, &groups)
+            .expect("Failed to generate ID token");
 
         // Verify tokens
         let access_result = verify_access_token(&access_token);
