@@ -218,6 +218,26 @@ impl Storage {
             .collect()
     }
 
+    /// Confirm a user by updating their status to Confirmed
+    pub async fn confirm_user(&self, user_id: &UserId) {
+        let mut inner = self.inner.write().await;
+        if let Some(user) = inner.users.get_mut(user_id) {
+            user.user_status = crate::types::UserStatus::Confirmed;
+            user.last_modified_date = chrono::Utc::now();
+        }
+        // Also remove the confirmation code
+        inner.confirmation_codes.remove(user_id);
+    }
+
+    /// Set the password for a user
+    pub async fn set_user_password(&self, user_id: &UserId, password_hash: &str) {
+        let mut inner = self.inner.write().await;
+        if let Some(user) = inner.users.get_mut(user_id) {
+            user.password_hash = password_hash.to_string();
+            user.last_modified_date = chrono::Utc::now();
+        }
+    }
+
     // ==================== Confirmation Code Operations ====================
 
     pub async fn save_confirmation_code(&self, code: ConfirmationCode) {

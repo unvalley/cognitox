@@ -28,6 +28,14 @@ impl TestResponse {
         &self.headers
     }
 
+    pub fn body(&self) -> &[u8] {
+        &self.body
+    }
+
+    pub fn body_string(&self) -> String {
+        String::from_utf8_lossy(&self.body).to_string()
+    }
+
     pub async fn json<T: serde::de::DeserializeOwned>(self) -> Result<T, serde_json::Error> {
         serde_json::from_slice(&self.body)
     }

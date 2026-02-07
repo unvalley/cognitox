@@ -9,7 +9,7 @@ license = "MIT"
 # Web framework
 axum = { version = "0.8", features = ["macros"] }
 tower = "0.5"
-tower-http = { version = "0.6", features = ["cors", "trace"] }
+tower-http = { version = "0.6", features = ["cors", "trace", "fs"] }
 
 # Async runtime
 tokio = { version = "1", features = ["full"] }
@@ -44,6 +44,12 @@ chrono = { version = "0.4", features = ["serde"] }
 
 # Config
 dotenvy = "0.15"
+
+# Templates
+tera = "1"
+
+# URL encoding
+urlencoding = "2"
 
 [dev-dependencies]
 tokio-test = "0.4"
