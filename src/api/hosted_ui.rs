@@ -122,7 +122,10 @@ async fn get_branding(storage: &Storage, client_id: &str) -> BrandingContext {
     let client_id_string = client_id.to_string();
 
     // Try to get client-specific branding first
-    if let Some(branding) = storage.get_managed_login_branding_by_client(&client_id_string).await {
+    if let Some(branding) = storage
+        .get_managed_login_branding_by_client(&client_id_string)
+        .await
+    {
         if let Some(settings) = &branding.settings {
             if let Some(title) = &settings.page_title {
                 ctx.page_title = title.clone();
@@ -598,7 +601,10 @@ fn create_tera() -> Tera {
 /// Build OAuth query string for links
 fn build_oauth_query(oauth: &OAuthParams) -> String {
     let mut params = vec![
-        format!("response_type={}", urlencoding::encode(&oauth.response_type)),
+        format!(
+            "response_type={}",
+            urlencoding::encode(&oauth.response_type)
+        ),
         format!("client_id={}", urlencoding::encode(&oauth.client_id)),
         format!("redirect_uri={}", urlencoding::encode(&oauth.redirect_uri)),
         format!(
@@ -632,7 +638,11 @@ fn render_template(tera: &Tera, template: &str, ctx: &Context) -> Response {
         Ok(html) => Html(html).into_response(),
         Err(e) => {
             tracing::error!("Template error: {}", e);
-            (StatusCode::INTERNAL_SERVER_ERROR, "Template rendering error").into_response()
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Template rendering error",
+            )
+                .into_response()
         }
     }
 }
@@ -654,10 +664,7 @@ pub async fn login_page(
 }
 
 /// POST /login - Process login
-pub async fn login_submit(
-    State(storage): State<Storage>,
-    Form(form): Form<LoginForm>,
-) -> Response {
+pub async fn login_submit(State(storage): State<Storage>, Form(form): Form<LoginForm>) -> Response {
     let branding = get_branding(&storage, &form.oauth.client_id).await;
     let tera = create_tera();
 
@@ -732,11 +739,7 @@ pub async fn login_submit(
 
     // Build redirect URL
     let mut redirect_url = form.oauth.redirect_uri.clone();
-    redirect_url.push_str(if redirect_url.contains('?') {
-        "&"
-    } else {
-        "?"
-    });
+    redirect_url.push_str(if redirect_url.contains('?') { "&" } else { "?" });
     redirect_url.push_str(&format!("code={}", code));
     if let Some(state) = &form.oauth.state {
         redirect_url.push_str(&format!("&state={}", urlencoding::encode(state)));
