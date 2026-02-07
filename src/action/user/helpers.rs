@@ -1,9 +1,11 @@
 //! Shared helper functions for user domain
 
-use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 use crate::jwt;
+
+/// Default bcrypt cost factor (4 for fast testing, use 12+ in production)
+const BCRYPT_COST: u32 = 4;
 
 pub fn generate_confirmation_code() -> String {
     use rand::Rng;
@@ -11,10 +13,14 @@ pub fn generate_confirmation_code() -> String {
     format!("{:06}", rng.gen_range(0..1000000))
 }
 
+/// Hash password using bcrypt with automatic salt generation
 pub fn hash_password(password: &str) -> String {
-    let mut hasher = Sha256::new();
-    hasher.update(password.as_bytes());
-    format!("{:x}", hasher.finalize())
+    bcrypt::hash(password, BCRYPT_COST).expect("Failed to hash password")
+}
+
+/// Verify password against bcrypt hash
+pub fn verify_password(password: &str, hash: &str) -> bool {
+    bcrypt::verify(password, hash).unwrap_or(false)
 }
 
 pub fn mask_email(email: &str) -> String {

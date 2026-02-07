@@ -31,6 +31,7 @@ srp = "0.6"
 sha2 = "0.10"
 hmac = "0.12"
 rand = "0.8"
+bcrypt = "0.16"
 
 # Error handling
 thiserror = "2"
