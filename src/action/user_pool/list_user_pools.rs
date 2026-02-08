@@ -42,3 +42,62 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
         "UserPools": user_pools
     }))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::action::user_pool::create_user_pool;
+    use serde_json::json;
+
+    #[tokio::test]
+    async fn test_list_user_pools_empty() {
+        let storage = Storage::new();
+
+        let result = handler(&storage, json!({})).await;
+
+        assert!(result.is_ok());
+        let body = result.unwrap();
+        assert_eq!(body["UserPools"].as_array().unwrap().len(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_list_user_pools_success() {
+        let storage = Storage::new();
+
+        // Create some user pools
+        create_user_pool::handler(&storage, json!({"PoolName": "pool-1"}))
+            .await
+            .unwrap();
+        create_user_pool::handler(&storage, json!({"PoolName": "pool-2"}))
+            .await
+            .unwrap();
+
+        let result = handler(&storage, json!({})).await;
+
+        assert!(result.is_ok());
+        let body = result.unwrap();
+        assert_eq!(body["UserPools"].as_array().unwrap().len(), 2);
+    }
+
+    #[tokio::test]
+    async fn test_list_user_pools_with_max_results() {
+        let storage = Storage::new();
+
+        // Create three user pools
+        create_user_pool::handler(&storage, json!({"PoolName": "pool-1"}))
+            .await
+            .unwrap();
+        create_user_pool::handler(&storage, json!({"PoolName": "pool-2"}))
+            .await
+            .unwrap();
+        create_user_pool::handler(&storage, json!({"PoolName": "pool-3"}))
+            .await
+            .unwrap();
+
+        let result = handler(&storage, json!({"MaxResults": 2})).await;
+
+        assert!(result.is_ok());
+        let body = result.unwrap();
+        assert_eq!(body["UserPools"].as_array().unwrap().len(), 2);
+    }
+}

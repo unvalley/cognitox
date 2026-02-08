@@ -48,3 +48,89 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
 
     Ok(json!({}))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::action::user_pool::{create_managed_login_branding, create_user_pool};
+    use serde_json::json;
+
+    #[tokio::test]
+    async fn test_delete_managed_login_branding_success() {
+        let storage = Storage::new();
+
+        let pool = create_user_pool::handler(&storage, json!({"PoolName": "test"}))
+            .await
+            .unwrap();
+        let pool_id = pool["UserPool"]["Id"].as_str().unwrap();
+
+        let branding = create_managed_login_branding::handler(
+            &storage,
+            json!({
+                "UserPoolId": pool_id
+            }),
+        )
+        .await
+        .unwrap();
+        let branding_id = branding["ManagedLoginBranding"]["ManagedLoginBrandingId"]
+            .as_str()
+            .unwrap();
+
+        let result = handler(
+            &storage,
+            json!({
+                "UserPoolId": pool_id,
+                "ManagedLoginBrandingId": branding_id
+            }),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(result, json!({}));
+
+        // Verify branding is deleted
+        assert!(
+            storage
+                .get_managed_login_branding(&branding_id.to_string())
+                .await
+                .is_none()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_delete_managed_login_branding_not_found() {
+        let storage = Storage::new();
+
+        let pool = create_user_pool::handler(&storage, json!({"PoolName": "test"}))
+            .await
+            .unwrap();
+        let pool_id = pool["UserPool"]["Id"].as_str().unwrap();
+
+        let result = handler(
+            &storage,
+            json!({
+                "UserPoolId": pool_id,
+                "ManagedLoginBrandingId": "nonexistent-branding-id"
+            }),
+        )
+        .await;
+
+        assert!(matches!(result, Err(AppError::InvalidParameter(_))));
+    }
+
+    #[tokio::test]
+    async fn test_delete_managed_login_branding_user_pool_not_found() {
+        let storage = Storage::new();
+
+        let result = handler(
+            &storage,
+            json!({
+                "UserPoolId": "us-east-1_nonexistent",
+                "ManagedLoginBrandingId": "some-branding-id"
+            }),
+        )
+        .await;
+
+        assert!(matches!(result, Err(AppError::UserPoolNotFound)));
+    }
+}

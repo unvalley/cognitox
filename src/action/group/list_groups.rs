@@ -56,3 +56,90 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
         "Groups": groups_json
     }))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::action::group::create_group;
+    use crate::action::user_pool::create_user_pool;
+    use serde_json::json;
+
+    #[tokio::test]
+    async fn test_list_groups_empty() {
+        let storage = Storage::new();
+
+        let pool = create_user_pool::handler(&storage, json!({"PoolName": "test-pool"}))
+            .await
+            .unwrap();
+        let pool_id = pool["UserPool"]["Id"].as_str().unwrap();
+
+        let result = handler(
+            &storage,
+            json!({
+                "UserPoolId": pool_id
+            }),
+        )
+        .await;
+
+        assert!(result.is_ok());
+        let body = result.unwrap();
+        assert_eq!(body["Groups"].as_array().unwrap().len(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_list_groups_multiple() {
+        let storage = Storage::new();
+
+        let pool = create_user_pool::handler(&storage, json!({"PoolName": "test-pool"}))
+            .await
+            .unwrap();
+        let pool_id = pool["UserPool"]["Id"].as_str().unwrap();
+
+        create_group::handler(
+            &storage,
+            json!({
+                "UserPoolId": pool_id,
+                "GroupName": "admins"
+            }),
+        )
+        .await
+        .unwrap();
+
+        create_group::handler(
+            &storage,
+            json!({
+                "UserPoolId": pool_id,
+                "GroupName": "users"
+            }),
+        )
+        .await
+        .unwrap();
+
+        let result = handler(
+            &storage,
+            json!({
+                "UserPoolId": pool_id
+            }),
+        )
+        .await;
+
+        assert!(result.is_ok());
+        let body = result.unwrap();
+        assert_eq!(body["Groups"].as_array().unwrap().len(), 2);
+    }
+
+    #[tokio::test]
+    async fn test_list_groups_pool_not_found() {
+        let storage = Storage::new();
+
+        let result = handler(
+            &storage,
+            json!({
+                "UserPoolId": "local_nonexistent"
+            }),
+        )
+        .await;
+
+        assert!(result.is_err());
+    }
+}

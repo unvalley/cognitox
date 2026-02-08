@@ -34,3 +34,90 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
 
     Ok(json!({}))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::action::group::{create_group, get_group};
+    use crate::action::user_pool::create_user_pool;
+    use serde_json::json;
+
+    #[tokio::test]
+    async fn test_delete_group_success() {
+        let storage = Storage::new();
+
+        let pool = create_user_pool::handler(&storage, json!({"PoolName": "test-pool"}))
+            .await
+            .unwrap();
+        let pool_id = pool["UserPool"]["Id"].as_str().unwrap();
+
+        create_group::handler(
+            &storage,
+            json!({
+                "UserPoolId": pool_id,
+                "GroupName": "admins"
+            }),
+        )
+        .await
+        .unwrap();
+
+        let result = handler(
+            &storage,
+            json!({
+                "UserPoolId": pool_id,
+                "GroupName": "admins"
+            }),
+        )
+        .await;
+
+        assert!(result.is_ok());
+
+        // Verify group is deleted by trying to get it
+        let get_result = get_group::handler(
+            &storage,
+            json!({
+                "UserPoolId": pool_id,
+                "GroupName": "admins"
+            }),
+        )
+        .await;
+        assert!(get_result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_delete_group_not_found() {
+        let storage = Storage::new();
+
+        let pool = create_user_pool::handler(&storage, json!({"PoolName": "test-pool"}))
+            .await
+            .unwrap();
+        let pool_id = pool["UserPool"]["Id"].as_str().unwrap();
+
+        let result = handler(
+            &storage,
+            json!({
+                "UserPoolId": pool_id,
+                "GroupName": "nonexistent"
+            }),
+        )
+        .await;
+
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_delete_group_pool_not_found() {
+        let storage = Storage::new();
+
+        let result = handler(
+            &storage,
+            json!({
+                "UserPoolId": "local_nonexistent",
+                "GroupName": "admins"
+            }),
+        )
+        .await;
+
+        assert!(result.is_err());
+    }
+}

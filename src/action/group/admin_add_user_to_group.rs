@@ -42,3 +42,120 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
 
     Ok(json!({}))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::action::group::create_group;
+    use crate::action::user::admin_create_user;
+    use crate::action::user_pool::create_user_pool;
+    use serde_json::json;
+
+    #[tokio::test]
+    async fn test_admin_add_user_to_group_success() {
+        let storage = Storage::new();
+
+        let pool = create_user_pool::handler(&storage, json!({"PoolName": "test-pool"}))
+            .await
+            .unwrap();
+        let pool_id = pool["UserPool"]["Id"].as_str().unwrap();
+
+        create_group::handler(
+            &storage,
+            json!({
+                "UserPoolId": pool_id,
+                "GroupName": "admins"
+            }),
+        )
+        .await
+        .unwrap();
+
+        admin_create_user::handler(
+            &storage,
+            json!({
+                "UserPoolId": pool_id,
+                "Username": "testuser",
+                "TemporaryPassword": "TempPass123!"
+            }),
+        )
+        .await
+        .unwrap();
+
+        let result = handler(
+            &storage,
+            json!({
+                "UserPoolId": pool_id,
+                "Username": "testuser",
+                "GroupName": "admins"
+            }),
+        )
+        .await;
+
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_admin_add_user_to_group_user_not_found() {
+        let storage = Storage::new();
+
+        let pool = create_user_pool::handler(&storage, json!({"PoolName": "test-pool"}))
+            .await
+            .unwrap();
+        let pool_id = pool["UserPool"]["Id"].as_str().unwrap();
+
+        create_group::handler(
+            &storage,
+            json!({
+                "UserPoolId": pool_id,
+                "GroupName": "admins"
+            }),
+        )
+        .await
+        .unwrap();
+
+        let result = handler(
+            &storage,
+            json!({
+                "UserPoolId": pool_id,
+                "Username": "nonexistent",
+                "GroupName": "admins"
+            }),
+        )
+        .await;
+
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_admin_add_user_to_group_group_not_found() {
+        let storage = Storage::new();
+
+        let pool = create_user_pool::handler(&storage, json!({"PoolName": "test-pool"}))
+            .await
+            .unwrap();
+        let pool_id = pool["UserPool"]["Id"].as_str().unwrap();
+
+        admin_create_user::handler(
+            &storage,
+            json!({
+                "UserPoolId": pool_id,
+                "Username": "testuser",
+                "TemporaryPassword": "TempPass123!"
+            }),
+        )
+        .await
+        .unwrap();
+
+        let result = handler(
+            &storage,
+            json!({
+                "UserPoolId": pool_id,
+                "Username": "testuser",
+                "GroupName": "nonexistent"
+            }),
+        )
+        .await;
+
+        assert!(result.is_err());
+    }
+}

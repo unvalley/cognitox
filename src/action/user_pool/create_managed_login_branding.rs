@@ -202,3 +202,142 @@ pub fn build_branding_response(branding: &ManagedLoginBranding) -> Value {
 
     response
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::action::user_pool::{create_user_pool, create_user_pool_client};
+    use serde_json::json;
+
+    #[tokio::test]
+    async fn test_create_managed_login_branding_success() {
+        let storage = Storage::new();
+
+        let pool = create_user_pool::handler(&storage, json!({"PoolName": "test"}))
+            .await
+            .unwrap();
+        let pool_id = pool["UserPool"]["Id"].as_str().unwrap();
+
+        let result = handler(
+            &storage,
+            json!({
+                "UserPoolId": pool_id,
+                "UseCognitoProvidedValues": true
+            }),
+        )
+        .await
+        .unwrap();
+
+        assert!(
+            result["ManagedLoginBranding"]["ManagedLoginBrandingId"]
+                .as_str()
+                .is_some()
+        );
+        assert_eq!(result["ManagedLoginBranding"]["UserPoolId"], pool_id);
+        assert_eq!(
+            result["ManagedLoginBranding"]["UseCognitoProvidedValues"],
+            true
+        );
+    }
+
+    #[tokio::test]
+    async fn test_create_managed_login_branding_with_settings_and_assets() {
+        let storage = Storage::new();
+
+        let pool = create_user_pool::handler(&storage, json!({"PoolName": "test"}))
+            .await
+            .unwrap();
+        let pool_id = pool["UserPool"]["Id"].as_str().unwrap();
+
+        let client = create_user_pool_client::handler(
+            &storage,
+            json!({
+                "UserPoolId": pool_id,
+                "ClientName": "test"
+            }),
+        )
+        .await
+        .unwrap();
+        let client_id = client["UserPoolClient"]["ClientId"].as_str().unwrap();
+
+        let result = handler(
+            &storage,
+            json!({
+                "UserPoolId": pool_id,
+                "ClientId": client_id,
+                "Settings": {
+                    "Colors": {
+                        "BackgroundColor": "#ffffff",
+                        "PrimaryColor": "#0066cc"
+                    },
+                    "PageTitle": "My App"
+                },
+                "Assets": {
+                    "LogoUrl": "https://example.com/logo.png"
+                }
+            }),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            result["ManagedLoginBranding"]["Settings"]["Colors"]["BackgroundColor"],
+            "#ffffff"
+        );
+        assert_eq!(
+            result["ManagedLoginBranding"]["Settings"]["PageTitle"],
+            "My App"
+        );
+        assert_eq!(
+            result["ManagedLoginBranding"]["Assets"]["LogoUrl"],
+            "https://example.com/logo.png"
+        );
+        assert_eq!(result["ManagedLoginBranding"]["ClientId"], client_id);
+    }
+
+    #[tokio::test]
+    async fn test_create_managed_login_branding_user_pool_not_found() {
+        let storage = Storage::new();
+
+        let result = handler(
+            &storage,
+            json!({
+                "UserPoolId": "us-east-1_nonexistent"
+            }),
+        )
+        .await;
+
+        assert!(matches!(result, Err(AppError::UserPoolNotFound)));
+    }
+
+    #[tokio::test]
+    async fn test_create_managed_login_branding_duplicate() {
+        let storage = Storage::new();
+
+        let pool = create_user_pool::handler(&storage, json!({"PoolName": "test"}))
+            .await
+            .unwrap();
+        let pool_id = pool["UserPool"]["Id"].as_str().unwrap();
+
+        // Create first branding
+        handler(
+            &storage,
+            json!({
+                "UserPoolId": pool_id
+            }),
+        )
+        .await
+        .unwrap();
+
+        // Try to create second branding for same pool
+        let result = handler(
+            &storage,
+            json!({
+                "UserPoolId": pool_id
+            }),
+        )
+        .await;
+
+        assert!(matches!(result, Err(AppError::InvalidParameter(_))));
+    }
+}

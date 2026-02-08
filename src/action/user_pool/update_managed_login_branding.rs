@@ -121,3 +121,134 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
         "ManagedLoginBranding": build_branding_response(&updated)
     }))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::action::user_pool::{create_managed_login_branding, create_user_pool};
+    use serde_json::json;
+
+    #[tokio::test]
+    async fn test_update_managed_login_branding_success() {
+        let storage = Storage::new();
+
+        let pool = create_user_pool::handler(&storage, json!({"PoolName": "test"}))
+            .await
+            .unwrap();
+        let pool_id = pool["UserPool"]["Id"].as_str().unwrap();
+
+        let branding = create_managed_login_branding::handler(
+            &storage,
+            json!({
+                "UserPoolId": pool_id,
+                "Settings": {
+                    "PageTitle": "Original Title"
+                }
+            }),
+        )
+        .await
+        .unwrap();
+        let branding_id = branding["ManagedLoginBranding"]["ManagedLoginBrandingId"]
+            .as_str()
+            .unwrap();
+
+        let result = handler(
+            &storage,
+            json!({
+                "UserPoolId": pool_id,
+                "ManagedLoginBrandingId": branding_id,
+                "Settings": {
+                    "PageTitle": "Updated Title",
+                    "Colors": {
+                        "PrimaryColor": "#ff0000"
+                    }
+                }
+            }),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            result["ManagedLoginBranding"]["Settings"]["PageTitle"],
+            "Updated Title"
+        );
+        assert_eq!(
+            result["ManagedLoginBranding"]["Settings"]["Colors"]["PrimaryColor"],
+            "#ff0000"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_update_managed_login_branding_not_found() {
+        let storage = Storage::new();
+
+        let pool = create_user_pool::handler(&storage, json!({"PoolName": "test"}))
+            .await
+            .unwrap();
+        let pool_id = pool["UserPool"]["Id"].as_str().unwrap();
+
+        let result = handler(
+            &storage,
+            json!({
+                "UserPoolId": pool_id,
+                "ManagedLoginBrandingId": "nonexistent-branding-id",
+                "Settings": {
+                    "PageTitle": "Test"
+                }
+            }),
+        )
+        .await;
+
+        assert!(matches!(result, Err(AppError::InvalidParameter(_))));
+    }
+
+    #[tokio::test]
+    async fn test_update_managed_login_branding_assets() {
+        let storage = Storage::new();
+
+        let pool = create_user_pool::handler(&storage, json!({"PoolName": "test"}))
+            .await
+            .unwrap();
+        let pool_id = pool["UserPool"]["Id"].as_str().unwrap();
+
+        let branding = create_managed_login_branding::handler(
+            &storage,
+            json!({
+                "UserPoolId": pool_id
+            }),
+        )
+        .await
+        .unwrap();
+        let branding_id = branding["ManagedLoginBranding"]["ManagedLoginBrandingId"]
+            .as_str()
+            .unwrap();
+
+        let result = handler(
+            &storage,
+            json!({
+                "UserPoolId": pool_id,
+                "ManagedLoginBrandingId": branding_id,
+                "UseCognitoProvidedValues": false,
+                "Assets": {
+                    "LogoUrl": "https://example.com/new-logo.png",
+                    "FaviconUrl": "https://example.com/favicon.ico"
+                }
+            }),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            result["ManagedLoginBranding"]["UseCognitoProvidedValues"],
+            false
+        );
+        assert_eq!(
+            result["ManagedLoginBranding"]["Assets"]["LogoUrl"],
+            "https://example.com/new-logo.png"
+        );
+        assert_eq!(
+            result["ManagedLoginBranding"]["Assets"]["FaviconUrl"],
+            "https://example.com/favicon.ico"
+        );
+    }
+}

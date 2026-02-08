@@ -47,3 +47,39 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
         }
     }))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[tokio::test]
+    async fn test_create_user_pool_success() {
+        let storage = Storage::new();
+
+        let result = handler(&storage, json!({"PoolName": "test-pool"})).await;
+
+        assert!(result.is_ok());
+        let body = result.unwrap();
+        assert!(body["UserPool"]["Id"].as_str().is_some());
+        assert_eq!(body["UserPool"]["Name"], "test-pool");
+    }
+
+    #[tokio::test]
+    async fn test_create_user_pool_empty_name() {
+        let storage = Storage::new();
+
+        let result = handler(&storage, json!({"PoolName": ""})).await;
+
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_create_user_pool_missing_name() {
+        let storage = Storage::new();
+
+        let result = handler(&storage, json!({})).await;
+
+        assert!(result.is_err());
+    }
+}

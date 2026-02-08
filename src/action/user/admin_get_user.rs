@@ -41,3 +41,82 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
         }).collect::<Vec<_>>()
     }))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::action::user::admin_create_user;
+    use crate::action::user_pool::create_user_pool;
+    use serde_json::json;
+
+    #[tokio::test]
+    async fn test_admin_get_user_success() {
+        let storage = Storage::new();
+
+        let pool = create_user_pool::handler(&storage, json!({"PoolName": "test"}))
+            .await
+            .unwrap();
+        let pool_id = pool["UserPool"]["Id"].as_str().unwrap();
+
+        // Create a user first
+        admin_create_user::handler(
+            &storage,
+            json!({
+                "UserPoolId": pool_id,
+                "Username": "testuser",
+                "UserAttributes": [
+                    {"Name": "email", "Value": "test@example.com"}
+                ]
+            }),
+        )
+        .await
+        .unwrap();
+
+        // Get the user
+        let result = handler(
+            &storage,
+            json!({
+                "UserPoolId": pool_id,
+                "Username": "testuser"
+            }),
+        )
+        .await;
+
+        assert!(result.is_ok());
+        let body = result.unwrap();
+        assert_eq!(body["Username"], "testuser");
+        assert_eq!(body["Enabled"], true);
+        assert_eq!(body["UserStatus"], "FORCE_CHANGE_PASSWORD");
+    }
+
+    #[tokio::test]
+    async fn test_admin_get_user_not_found() {
+        let storage = Storage::new();
+
+        let pool = create_user_pool::handler(&storage, json!({"PoolName": "test"}))
+            .await
+            .unwrap();
+        let pool_id = pool["UserPool"]["Id"].as_str().unwrap();
+
+        let result = handler(
+            &storage,
+            json!({
+                "UserPoolId": pool_id,
+                "Username": "nonexistent"
+            }),
+        )
+        .await;
+
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), AppError::UserNotFound));
+    }
+
+    #[tokio::test]
+    async fn test_admin_get_user_invalid_request() {
+        let storage = Storage::new();
+
+        let result = handler(&storage, json!({})).await;
+
+        assert!(result.is_err());
+    }
+}

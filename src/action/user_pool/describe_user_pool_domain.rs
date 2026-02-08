@@ -73,3 +73,91 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::action::user_pool::{create_user_pool, create_user_pool_domain};
+    use serde_json::json;
+
+    #[tokio::test]
+    async fn test_describe_user_pool_domain_success() {
+        let storage = Storage::new();
+
+        let pool = create_user_pool::handler(&storage, json!({"PoolName": "test-pool"}))
+            .await
+            .unwrap();
+        let pool_id = pool["UserPool"]["Id"].as_str().unwrap();
+
+        // Create a domain
+        create_user_pool_domain::handler(
+            &storage,
+            json!({
+                "Domain": "test-domain",
+                "UserPoolId": pool_id
+            }),
+        )
+        .await
+        .unwrap();
+
+        // Describe the domain
+        let result = handler(&storage, json!({"Domain": "test-domain"})).await;
+
+        assert!(result.is_ok());
+        let body = result.unwrap();
+        assert_eq!(body["DomainDescription"]["Domain"], "test-domain");
+        assert_eq!(body["DomainDescription"]["UserPoolId"], pool_id);
+        assert_eq!(body["DomainDescription"]["Status"], "ACTIVE");
+    }
+
+    #[tokio::test]
+    async fn test_describe_user_pool_domain_not_found() {
+        let storage = Storage::new();
+
+        // AWS returns empty DomainDescription for non-existent domains
+        let result = handler(&storage, json!({"Domain": "nonexistent"})).await;
+
+        assert!(result.is_ok());
+        let body = result.unwrap();
+        assert_eq!(body["DomainDescription"], json!({}));
+    }
+
+    #[tokio::test]
+    async fn test_describe_user_pool_domain_with_custom_config() {
+        let storage = Storage::new();
+
+        let pool = create_user_pool::handler(&storage, json!({"PoolName": "test-pool"}))
+            .await
+            .unwrap();
+        let pool_id = pool["UserPool"]["Id"].as_str().unwrap();
+
+        // Create a domain with custom config
+        create_user_pool_domain::handler(
+            &storage,
+            json!({
+                "Domain": "custom-domain",
+                "UserPoolId": pool_id,
+                "CustomDomainConfig": {
+                    "CertificateArn": "arn:aws:acm:us-east-1:123456789:certificate/abc"
+                }
+            }),
+        )
+        .await
+        .unwrap();
+
+        let result = handler(&storage, json!({"Domain": "custom-domain"})).await;
+
+        assert!(result.is_ok());
+        let body = result.unwrap();
+        assert!(
+            body["DomainDescription"]["CloudFrontDistribution"]
+                .as_str()
+                .is_some()
+        );
+        assert!(
+            body["DomainDescription"]["CustomDomainConfig"]["CertificateArn"]
+                .as_str()
+                .is_some()
+        );
+    }
+}

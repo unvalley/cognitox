@@ -101,3 +101,118 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
 
     Ok(response)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::action::user_pool::create_user_pool;
+    use serde_json::json;
+
+    #[tokio::test]
+    async fn test_create_user_pool_domain_success() {
+        let storage = Storage::new();
+
+        let pool = create_user_pool::handler(&storage, json!({"PoolName": "test-pool"}))
+            .await
+            .unwrap();
+        let pool_id = pool["UserPool"]["Id"].as_str().unwrap();
+
+        let result = handler(
+            &storage,
+            json!({
+                "Domain": "test-domain",
+                "UserPoolId": pool_id
+            }),
+        )
+        .await;
+
+        assert!(result.is_ok());
+        // Standard domains don't return CloudFrontDomain
+        assert_eq!(result.unwrap(), json!({}));
+
+        // Verify domain was created
+        let domain_prefix: String = "test-domain".to_string();
+        assert!(storage.get_user_pool_domain(&domain_prefix).await.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_create_user_pool_domain_with_custom_config() {
+        let storage = Storage::new();
+
+        let pool = create_user_pool::handler(&storage, json!({"PoolName": "test-pool"}))
+            .await
+            .unwrap();
+        let pool_id = pool["UserPool"]["Id"].as_str().unwrap();
+
+        let result = handler(
+            &storage,
+            json!({
+                "Domain": "custom-domain",
+                "UserPoolId": pool_id,
+                "CustomDomainConfig": {
+                    "CertificateArn": "arn:aws:acm:us-east-1:123456789:certificate/abc"
+                }
+            }),
+        )
+        .await;
+
+        assert!(result.is_ok());
+        let body = result.unwrap();
+        // Custom domains return CloudFrontDomain
+        assert!(body["CloudFrontDomain"].as_str().is_some());
+    }
+
+    #[tokio::test]
+    async fn test_create_user_pool_domain_pool_not_found() {
+        let storage = Storage::new();
+
+        let result = handler(
+            &storage,
+            json!({
+                "Domain": "test-domain",
+                "UserPoolId": "local_nonexistent123"
+            }),
+        )
+        .await;
+
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_create_user_pool_domain_already_exists() {
+        let storage = Storage::new();
+
+        let pool = create_user_pool::handler(&storage, json!({"PoolName": "test-pool"}))
+            .await
+            .unwrap();
+        let pool_id = pool["UserPool"]["Id"].as_str().unwrap();
+
+        // Create first domain
+        handler(
+            &storage,
+            json!({
+                "Domain": "test-domain",
+                "UserPoolId": pool_id
+            }),
+        )
+        .await
+        .unwrap();
+
+        // Create another pool and try to use same domain
+        let pool2 = create_user_pool::handler(&storage, json!({"PoolName": "test-pool-2"}))
+            .await
+            .unwrap();
+        let pool_id2 = pool2["UserPool"]["Id"].as_str().unwrap();
+
+        let result = handler(
+            &storage,
+            json!({
+                "Domain": "test-domain",
+                "UserPoolId": pool_id2
+            }),
+        )
+        .await;
+
+        assert!(result.is_err());
+    }
+}

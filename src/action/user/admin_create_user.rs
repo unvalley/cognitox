@@ -103,3 +103,90 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
         }
     }))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::action::user_pool::create_user_pool;
+    use serde_json::json;
+
+    #[tokio::test]
+    async fn test_admin_create_user_success() {
+        let storage = Storage::new();
+
+        let pool = create_user_pool::handler(&storage, json!({"PoolName": "test"}))
+            .await
+            .unwrap();
+        let pool_id = pool["UserPool"]["Id"].as_str().unwrap();
+
+        let result = handler(
+            &storage,
+            json!({
+                "UserPoolId": pool_id,
+                "Username": "testuser",
+                "TemporaryPassword": "TempPass123!",
+                "UserAttributes": [
+                    {"Name": "email", "Value": "test@example.com"}
+                ]
+            }),
+        )
+        .await;
+
+        assert!(result.is_ok());
+        let body = result.unwrap();
+        assert_eq!(body["User"]["Username"], "testuser");
+        assert_eq!(body["User"]["Enabled"], true);
+        assert_eq!(body["User"]["UserStatus"], "FORCE_CHANGE_PASSWORD");
+    }
+
+    #[tokio::test]
+    async fn test_admin_create_user_pool_not_found() {
+        let storage = Storage::new();
+
+        let result = handler(
+            &storage,
+            json!({
+                "UserPoolId": "local_nonexistent",
+                "Username": "testuser"
+            }),
+        )
+        .await;
+
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), AppError::UserPoolNotFound));
+    }
+
+    #[tokio::test]
+    async fn test_admin_create_user_already_exists() {
+        let storage = Storage::new();
+
+        let pool = create_user_pool::handler(&storage, json!({"PoolName": "test"}))
+            .await
+            .unwrap();
+        let pool_id = pool["UserPool"]["Id"].as_str().unwrap();
+
+        // Create first user
+        handler(
+            &storage,
+            json!({
+                "UserPoolId": pool_id,
+                "Username": "testuser"
+            }),
+        )
+        .await
+        .unwrap();
+
+        // Try to create same user again
+        let result = handler(
+            &storage,
+            json!({
+                "UserPoolId": pool_id,
+                "Username": "testuser"
+            }),
+        )
+        .await;
+
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), AppError::UserAlreadyExists));
+    }
+}

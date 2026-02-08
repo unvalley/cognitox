@@ -43,3 +43,98 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
         "UserPoolClients": user_pool_clients
     }))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::action::user_pool::{create_user_pool, create_user_pool_client};
+    use serde_json::json;
+
+    #[tokio::test]
+    async fn test_list_user_pool_clients_empty() {
+        let storage = Storage::new();
+
+        let pool = create_user_pool::handler(&storage, json!({"PoolName": "test-pool"}))
+            .await
+            .unwrap();
+        let pool_id = pool["UserPool"]["Id"].as_str().unwrap();
+
+        let result = handler(&storage, json!({"UserPoolId": pool_id})).await;
+
+        assert!(result.is_ok());
+        let body = result.unwrap();
+        assert_eq!(body["UserPoolClients"].as_array().unwrap().len(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_list_user_pool_clients_success() {
+        let storage = Storage::new();
+
+        let pool = create_user_pool::handler(&storage, json!({"PoolName": "test-pool"}))
+            .await
+            .unwrap();
+        let pool_id = pool["UserPool"]["Id"].as_str().unwrap();
+
+        // Create some clients
+        create_user_pool_client::handler(
+            &storage,
+            json!({
+                "UserPoolId": pool_id,
+                "ClientName": "client-1"
+            }),
+        )
+        .await
+        .unwrap();
+        create_user_pool_client::handler(
+            &storage,
+            json!({
+                "UserPoolId": pool_id,
+                "ClientName": "client-2"
+            }),
+        )
+        .await
+        .unwrap();
+
+        let result = handler(&storage, json!({"UserPoolId": pool_id})).await;
+
+        assert!(result.is_ok());
+        let body = result.unwrap();
+        assert_eq!(body["UserPoolClients"].as_array().unwrap().len(), 2);
+    }
+
+    #[tokio::test]
+    async fn test_list_user_pool_clients_with_max_results() {
+        let storage = Storage::new();
+
+        let pool = create_user_pool::handler(&storage, json!({"PoolName": "test-pool"}))
+            .await
+            .unwrap();
+        let pool_id = pool["UserPool"]["Id"].as_str().unwrap();
+
+        // Create three clients
+        for i in 1..=3 {
+            create_user_pool_client::handler(
+                &storage,
+                json!({
+                    "UserPoolId": pool_id,
+                    "ClientName": format!("client-{}", i)
+                }),
+            )
+            .await
+            .unwrap();
+        }
+
+        let result = handler(
+            &storage,
+            json!({
+                "UserPoolId": pool_id,
+                "MaxResults": 2
+            }),
+        )
+        .await;
+
+        assert!(result.is_ok());
+        let body = result.unwrap();
+        assert_eq!(body["UserPoolClients"].as_array().unwrap().len(), 2);
+    }
+}

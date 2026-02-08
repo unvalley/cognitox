@@ -212,3 +212,77 @@ pub fn build_client_response(client: &UserPoolClient) -> Value {
 
     response
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::action::user_pool::create_user_pool;
+    use serde_json::json;
+
+    #[tokio::test]
+    async fn test_create_user_pool_client_success() {
+        let storage = Storage::new();
+
+        // Create a user pool first
+        let pool = create_user_pool::handler(&storage, json!({"PoolName": "test-pool"}))
+            .await
+            .unwrap();
+        let pool_id = pool["UserPool"]["Id"].as_str().unwrap();
+
+        // Create a client
+        let result = handler(
+            &storage,
+            json!({
+                "UserPoolId": pool_id,
+                "ClientName": "test-client"
+            }),
+        )
+        .await;
+
+        assert!(result.is_ok());
+        let body = result.unwrap();
+        assert!(body["UserPoolClient"]["ClientId"].as_str().is_some());
+        assert_eq!(body["UserPoolClient"]["ClientName"], "test-client");
+        assert_eq!(body["UserPoolClient"]["UserPoolId"], pool_id);
+    }
+
+    #[tokio::test]
+    async fn test_create_user_pool_client_with_secret() {
+        let storage = Storage::new();
+
+        let pool = create_user_pool::handler(&storage, json!({"PoolName": "test-pool"}))
+            .await
+            .unwrap();
+        let pool_id = pool["UserPool"]["Id"].as_str().unwrap();
+
+        let result = handler(
+            &storage,
+            json!({
+                "UserPoolId": pool_id,
+                "ClientName": "test-client",
+                "GenerateSecret": true
+            }),
+        )
+        .await;
+
+        assert!(result.is_ok());
+        let body = result.unwrap();
+        assert!(body["UserPoolClient"]["ClientSecret"].as_str().is_some());
+    }
+
+    #[tokio::test]
+    async fn test_create_user_pool_client_pool_not_found() {
+        let storage = Storage::new();
+
+        let result = handler(
+            &storage,
+            json!({
+                "UserPoolId": "local_nonexistent123",
+                "ClientName": "test-client"
+            }),
+        )
+        .await;
+
+        assert!(result.is_err());
+    }
+}

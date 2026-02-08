@@ -46,3 +46,117 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
         "ManagedLoginBranding": build_branding_response(&branding)
     }))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::action::user_pool::{create_managed_login_branding, create_user_pool};
+    use serde_json::json;
+
+    #[tokio::test]
+    async fn test_describe_managed_login_branding_success() {
+        let storage = Storage::new();
+
+        let pool = create_user_pool::handler(&storage, json!({"PoolName": "test"}))
+            .await
+            .unwrap();
+        let pool_id = pool["UserPool"]["Id"].as_str().unwrap();
+
+        let branding = create_managed_login_branding::handler(
+            &storage,
+            json!({
+                "UserPoolId": pool_id,
+                "Settings": {
+                    "PageTitle": "Test App"
+                }
+            }),
+        )
+        .await
+        .unwrap();
+        let branding_id = branding["ManagedLoginBranding"]["ManagedLoginBrandingId"]
+            .as_str()
+            .unwrap();
+
+        let result = handler(
+            &storage,
+            json!({
+                "UserPoolId": pool_id,
+                "ManagedLoginBrandingId": branding_id
+            }),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            result["ManagedLoginBranding"]["ManagedLoginBrandingId"],
+            branding_id
+        );
+        assert_eq!(result["ManagedLoginBranding"]["UserPoolId"], pool_id);
+        assert_eq!(
+            result["ManagedLoginBranding"]["Settings"]["PageTitle"],
+            "Test App"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_describe_managed_login_branding_not_found() {
+        let storage = Storage::new();
+
+        let pool = create_user_pool::handler(&storage, json!({"PoolName": "test"}))
+            .await
+            .unwrap();
+        let pool_id = pool["UserPool"]["Id"].as_str().unwrap();
+
+        let result = handler(
+            &storage,
+            json!({
+                "UserPoolId": pool_id,
+                "ManagedLoginBrandingId": "nonexistent-branding-id"
+            }),
+        )
+        .await;
+
+        assert!(matches!(result, Err(AppError::InvalidParameter(_))));
+    }
+
+    #[tokio::test]
+    async fn test_describe_managed_login_branding_wrong_user_pool() {
+        let storage = Storage::new();
+
+        // Create two user pools
+        let pool1 = create_user_pool::handler(&storage, json!({"PoolName": "test1"}))
+            .await
+            .unwrap();
+        let pool1_id = pool1["UserPool"]["Id"].as_str().unwrap();
+
+        let pool2 = create_user_pool::handler(&storage, json!({"PoolName": "test2"}))
+            .await
+            .unwrap();
+        let pool2_id = pool2["UserPool"]["Id"].as_str().unwrap();
+
+        // Create branding for pool1
+        let branding = create_managed_login_branding::handler(
+            &storage,
+            json!({
+                "UserPoolId": pool1_id
+            }),
+        )
+        .await
+        .unwrap();
+        let branding_id = branding["ManagedLoginBranding"]["ManagedLoginBrandingId"]
+            .as_str()
+            .unwrap();
+
+        // Try to describe with pool2
+        let result = handler(
+            &storage,
+            json!({
+                "UserPoolId": pool2_id,
+                "ManagedLoginBrandingId": branding_id
+            }),
+        )
+        .await;
+
+        assert!(matches!(result, Err(AppError::InvalidParameter(_))));
+    }
+}

@@ -30,3 +30,69 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
 
     Ok(json!({}))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::action::user_pool::{create_user_pool, create_user_pool_client};
+    use serde_json::json;
+
+    #[tokio::test]
+    async fn test_delete_user_pool_client_success() {
+        let storage = Storage::new();
+
+        // Create a user pool and client first
+        let pool = create_user_pool::handler(&storage, json!({"PoolName": "test-pool"}))
+            .await
+            .unwrap();
+        let pool_id = pool["UserPool"]["Id"].as_str().unwrap();
+
+        let client = create_user_pool_client::handler(
+            &storage,
+            json!({
+                "UserPoolId": pool_id,
+                "ClientName": "test-client"
+            }),
+        )
+        .await
+        .unwrap();
+        let client_id = client["UserPoolClient"]["ClientId"].as_str().unwrap();
+
+        // Delete the client
+        let result = handler(
+            &storage,
+            json!({
+                "UserPoolId": pool_id,
+                "ClientId": client_id
+            }),
+        )
+        .await;
+
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), json!({}));
+
+        // Verify it's deleted
+        assert!(
+            storage
+                .get_user_pool_client(&client_id.parse().unwrap())
+                .await
+                .is_none()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_delete_user_pool_client_not_found() {
+        let storage = Storage::new();
+
+        let result = handler(
+            &storage,
+            json!({
+                "UserPoolId": "local_pool123",
+                "ClientId": "nonexistent123456789012345"
+            }),
+        )
+        .await;
+
+        assert!(result.is_err());
+    }
+}
