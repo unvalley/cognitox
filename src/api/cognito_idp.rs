@@ -174,6 +174,9 @@ async fn dispatch_action(
         SetUserSettings => user::set_user_settings::handler(storage, body).await,
         AdminSetUserSettings => user::admin_set_user_settings::handler(storage, body).await,
 
+        // User Import Actions
+        GetCSVHeader => user_pool::get_csv_header::handler(storage, body).await,
+
         // Tagging Actions
         ListTagsForResource => user_pool::list_tags_for_resource::handler(storage, body).await,
         TagResource => user_pool::tag_resource::handler(storage, body).await,
@@ -426,6 +429,8 @@ impl Action {
                 // User Settings Actions
                 | Self::SetUserSettings
                 | Self::AdminSetUserSettings
+                // User Import Actions
+                | Self::GetCSVHeader
                 // Tagging Actions
                 | Self::ListTagsForResource
                 | Self::TagResource

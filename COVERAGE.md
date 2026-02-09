@@ -4,7 +4,7 @@ Based on [Amazon Cognito User Pools API Reference](https://docs.aws.amazon.com/c
 
 ## cognito-idp
 
-59% implemented (70/119)
+60% implemented (71/119)
 
 ### Admin Operations
 - [x] AdminAddUserToGroup ([spec](https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_AdminAddUserToGroup.html), [cognitox](src/action/group/admin_add_user_to_group.rs))
@@ -116,7 +116,7 @@ Based on [Amazon Cognito User Pools API Reference](https://docs.aws.amazon.com/c
 ### User Import Operations
 - [ ] CreateUserImportJob ([spec](https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_CreateUserImportJob.html))
 - [ ] DescribeUserImportJob ([spec](https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_DescribeUserImportJob.html))
-- [ ] GetCSVHeader ([spec](https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_GetCSVHeader.html))
+- [x] GetCSVHeader ([spec](https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_GetCSVHeader.html), [cognitox](src/action/user_pool/get_csv_header.rs))
 - [ ] ListUserImportJobs ([spec](https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_ListUserImportJobs.html))
 - [ ] StartUserImportJob ([spec](https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_StartUserImportJob.html))
 - [ ] StopUserImportJob ([spec](https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_StopUserImportJob.html))

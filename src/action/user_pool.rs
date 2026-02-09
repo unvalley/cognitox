@@ -12,6 +12,7 @@ pub mod describe_managed_login_branding_by_client;
 pub mod describe_user_pool;
 pub mod describe_user_pool_client;
 pub mod describe_user_pool_domain;
+pub mod get_csv_header;
 pub mod get_signing_certificate;
 pub mod get_user_pool_mfa_config;
 pub mod list_tags_for_resource;
