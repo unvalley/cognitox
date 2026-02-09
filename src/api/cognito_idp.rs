@@ -167,6 +167,8 @@ async fn dispatch_action(
         AdminSetUserMFAPreference => {
             user::admin_set_user_mfa_preference::handler(storage, body).await
         }
+        GetUserPoolMfaConfig => user_pool::get_user_pool_mfa_config::handler(storage, body).await,
+        SetUserPoolMfaConfig => user_pool::set_user_pool_mfa_config::handler(storage, body).await,
 
         // Not implemented operations
         op => {
@@ -410,6 +412,8 @@ impl Action {
                 // MFA Actions
                 | Self::SetUserMFAPreference
                 | Self::AdminSetUserMFAPreference
+                | Self::GetUserPoolMfaConfig
+                | Self::SetUserPoolMfaConfig
         )
     }
 
