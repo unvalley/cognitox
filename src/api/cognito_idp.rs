@@ -170,6 +170,11 @@ async fn dispatch_action(
         GetUserPoolMfaConfig => user_pool::get_user_pool_mfa_config::handler(storage, body).await,
         SetUserPoolMfaConfig => user_pool::set_user_pool_mfa_config::handler(storage, body).await,
 
+        // Tagging Actions
+        ListTagsForResource => user_pool::list_tags_for_resource::handler(storage, body).await,
+        TagResource => user_pool::tag_resource::handler(storage, body).await,
+        UntagResource => user_pool::untag_resource::handler(storage, body).await,
+
         // Not implemented operations
         op => {
             warn!("Operation not implemented: {:?}", op);
@@ -414,6 +419,10 @@ impl Action {
                 | Self::AdminSetUserMFAPreference
                 | Self::GetUserPoolMfaConfig
                 | Self::SetUserPoolMfaConfig
+                // Tagging Actions
+                | Self::ListTagsForResource
+                | Self::TagResource
+                | Self::UntagResource
         )
     }
 
