@@ -164,6 +164,9 @@ async fn dispatch_action(
 
         // MFA Actions
         SetUserMFAPreference => user::set_user_mfa_preference::handler(storage, body).await,
+        AdminSetUserMFAPreference => {
+            user::admin_set_user_mfa_preference::handler(storage, body).await
+        }
 
         // Not implemented operations
         op => {
@@ -406,6 +409,7 @@ impl Action {
                 | Self::GetSigningCertificate
                 // MFA Actions
                 | Self::SetUserMFAPreference
+                | Self::AdminSetUserMFAPreference
         )
     }
 
