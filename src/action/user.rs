@@ -26,6 +26,7 @@ pub mod list_users;
 pub mod resend_confirmation_code;
 pub mod respond_to_auth_challenge;
 pub mod revoke_token;
+pub mod set_user_mfa_preference;
 pub mod sign_up;
 pub mod update_user_attributes;
 pub mod verify_user_attribute;
