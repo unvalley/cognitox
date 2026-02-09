@@ -34,8 +34,16 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
     if let Some(ref client_secret) = client.client_secret {
         match &req.client_secret {
             Some(provided_secret) if provided_secret == client_secret => {}
-            Some(_) => return Err(AppError::InvalidParameter("Invalid client secret".to_string())),
-            None => return Err(AppError::InvalidParameter("Client secret required".to_string())),
+            Some(_) => {
+                return Err(AppError::InvalidParameter(
+                    "Invalid client secret".to_string(),
+                ));
+            }
+            None => {
+                return Err(AppError::InvalidParameter(
+                    "Client secret required".to_string(),
+                ));
+            }
         }
     }
 
