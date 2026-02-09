@@ -125,6 +125,7 @@ async fn dispatch_action(
         GetUserAttributeVerificationCode => {
             user::get_user_attribute_verification_code::handler(storage, body).await
         }
+        VerifyUserAttribute => user::verify_user_attribute::handler(storage, body).await,
 
         // Admin Actions
         AdminConfirmSignUp => user::admin_confirm_sign_up::handler(storage, body).await,
@@ -369,6 +370,7 @@ impl Action {
                 | Self::GlobalSignOut
                 | Self::RevokeToken
                 | Self::GetUserAttributeVerificationCode
+                | Self::VerifyUserAttribute
                 // Admin Actions
                 | Self::AdminConfirmSignUp
                 | Self::AdminCreateUser

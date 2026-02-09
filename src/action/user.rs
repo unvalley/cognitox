@@ -28,3 +28,4 @@ pub mod respond_to_auth_challenge;
 pub mod revoke_token;
 pub mod sign_up;
 pub mod update_user_attributes;
+pub mod verify_user_attribute;
