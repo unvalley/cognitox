@@ -7,6 +7,7 @@ pub mod admin_delete_user_attributes;
 pub mod admin_disable_user;
 pub mod admin_enable_user;
 pub mod admin_get_user;
+pub mod admin_initiate_auth;
 pub mod admin_set_user_password;
 pub mod admin_update_user_attributes;
 pub mod change_password;
