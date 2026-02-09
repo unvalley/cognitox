@@ -119,6 +119,7 @@ async fn dispatch_action(
         ForgotPassword => user::forgot_password::handler(storage, body).await,
         ConfirmForgotPassword => user::confirm_forgot_password::handler(storage, body).await,
         GlobalSignOut => user::global_sign_out::handler(storage, body).await,
+        RevokeToken => user::revoke_token::handler(storage, body).await,
 
         // Admin Actions
         AdminConfirmSignUp => user::admin_confirm_sign_up::handler(storage, body).await,
@@ -353,6 +354,7 @@ impl Action {
                 | Self::ForgotPassword
                 | Self::ConfirmForgotPassword
                 | Self::GlobalSignOut
+                | Self::RevokeToken
                 // Admin Actions
                 | Self::AdminConfirmSignUp
                 | Self::AdminCreateUser

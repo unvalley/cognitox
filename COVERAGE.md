@@ -4,7 +4,7 @@ Based on [Amazon Cognito User Pools API Reference](https://docs.aws.amazon.com/c
 
 ## cognito-idp
 
-42% implemented (50/119)
+43% implemented (51/119)
 
 ### Admin Operations
 - [x] AdminAddUserToGroup ([spec](https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_AdminAddUserToGroup.html), [cognitox](src/action/group/admin_add_user_to_group.rs))
@@ -71,7 +71,7 @@ Based on [Amazon Cognito User Pools API Reference](https://docs.aws.amazon.com/c
 - [x] InitiateAuth ([spec](https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_InitiateAuth.html), [cognitox](src/action/user/initiate_auth.rs))
 - [x] ResendConfirmationCode ([spec](https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_ResendConfirmationCode.html), [cognitox](src/action/user/resend_confirmation_code.rs))
 - [x] RespondToAuthChallenge ([spec](https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_RespondToAuthChallenge.html), [cognitox](src/action/user/respond_to_auth_challenge.rs))
-- [ ] RevokeToken ([spec](https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_RevokeToken.html))
+- [x] RevokeToken ([spec](https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_RevokeToken.html), [cognitox](src/action/user/revoke_token.rs))
 - [x] SignUp ([spec](https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_SignUp.html), [cognitox](src/action/user/sign_up.rs))
 - [ ] GetUserAttributeVerificationCode ([spec](https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_GetUserAttributeVerificationCode.html))
 
