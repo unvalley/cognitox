@@ -4,7 +4,7 @@ Based on [Amazon Cognito User Pools API Reference](https://docs.aws.amazon.com/c
 
 ## cognito-idp
 
-48% implemented (57/119)
+49% implemented (58/119)
 
 ### Admin Operations
 - [x] AdminAddUserToGroup ([spec](https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_AdminAddUserToGroup.html), [cognitox](src/action/group/admin_add_user_to_group.rs))
@@ -73,7 +73,7 @@ Based on [Amazon Cognito User Pools API Reference](https://docs.aws.amazon.com/c
 - [x] RespondToAuthChallenge ([spec](https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_RespondToAuthChallenge.html), [cognitox](src/action/user/respond_to_auth_challenge.rs))
 - [x] RevokeToken ([spec](https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_RevokeToken.html), [cognitox](src/action/user/revoke_token.rs))
 - [x] SignUp ([spec](https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_SignUp.html), [cognitox](src/action/user/sign_up.rs))
-- [ ] GetUserAttributeVerificationCode ([spec](https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_GetUserAttributeVerificationCode.html))
+- [x] GetUserAttributeVerificationCode ([spec](https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_GetUserAttributeVerificationCode.html), [cognitox](src/action/user/get_user_attribute_verification_code.rs))
 
 ### MFA Operations
 - [ ] AssociateSoftwareToken ([spec](https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_AssociateSoftwareToken.html))

@@ -19,6 +19,7 @@ pub mod delete_user;
 pub mod delete_user_attributes;
 pub mod forgot_password;
 pub mod get_user;
+pub mod get_user_attribute_verification_code;
 pub mod global_sign_out;
 pub mod initiate_auth;
 pub mod list_users;
