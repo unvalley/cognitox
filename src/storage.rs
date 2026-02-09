@@ -67,6 +67,18 @@ impl Storage {
         inner.user_pools.values().cloned().collect()
     }
 
+    pub async fn update_user_pool(&self, pool: UserPool) -> Option<UserPool> {
+        let mut inner = self.inner.write().await;
+        if let std::collections::hash_map::Entry::Occupied(mut e) =
+            inner.user_pools.entry(pool.id.clone())
+        {
+            e.insert(pool.clone());
+            Some(pool)
+        } else {
+            None
+        }
+    }
+
     // ==================== User Pool Client Operations ====================
 
     pub async fn create_user_pool_client(&self, client: UserPoolClient) -> UserPoolClient {

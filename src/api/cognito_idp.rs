@@ -70,6 +70,7 @@ async fn dispatch_action(
         DeleteUserPool => user_pool::delete_user_pool::handler(storage, body).await,
         DescribeUserPool => user_pool::describe_user_pool::handler(storage, body).await,
         ListUserPools => user_pool::list_user_pools::handler(storage, body).await,
+        UpdateUserPool => user_pool::update_user_pool::handler(storage, body).await,
 
         // User Pool Client Actions
         CreateUserPoolClient => user_pool::create_user_pool_client::handler(storage, body).await,
@@ -317,6 +318,7 @@ impl Action {
                 | Self::DeleteUserPool
                 | Self::DescribeUserPool
                 | Self::ListUserPools
+                | Self::UpdateUserPool
                 // User Pool Client Actions
                 | Self::CreateUserPoolClient
                 | Self::DeleteUserPoolClient
