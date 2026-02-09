@@ -15,6 +15,7 @@ pub mod change_password;
 pub mod confirm_forgot_password;
 pub mod confirm_sign_up;
 pub mod delete_user;
+pub mod delete_user_attributes;
 pub mod forgot_password;
 pub mod get_user;
 pub mod global_sign_out;
