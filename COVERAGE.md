@@ -4,14 +4,14 @@ Based on [Amazon Cognito User Pools API Reference](https://docs.aws.amazon.com/c
 
 ## cognito-idp
 
-43% implemented (51/119)
+44% implemented (52/119)
 
 ### Admin Operations
 - [x] AdminAddUserToGroup ([spec](https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_AdminAddUserToGroup.html), [cognitox](src/action/group/admin_add_user_to_group.rs))
 - [x] AdminConfirmSignUp ([spec](https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_AdminConfirmSignUp.html), [cognitox](src/action/user/admin_confirm_sign_up.rs))
 - [x] AdminCreateUser ([spec](https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_AdminCreateUser.html), [cognitox](src/action/user/admin_create_user.rs))
 - [x] AdminDeleteUser ([spec](https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_AdminDeleteUser.html), [cognitox](src/action/user/admin_delete_user.rs))
-- [ ] AdminDeleteUserAttributes ([spec](https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_AdminDeleteUserAttributes.html))
+- [x] AdminDeleteUserAttributes ([spec](https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_AdminDeleteUserAttributes.html), [cognitox](src/action/user/admin_delete_user_attributes.rs))
 - [ ] AdminDisableProviderForUser ([spec](https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_AdminDisableProviderForUser.html))
 - [x] AdminDisableUser ([spec](https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_AdminDisableUser.html), [cognitox](src/action/user/admin_disable_user.rs))
 - [x] AdminEnableUser ([spec](https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_AdminEnableUser.html), [cognitox](src/action/user/admin_enable_user.rs))

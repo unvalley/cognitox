@@ -125,6 +125,9 @@ async fn dispatch_action(
         AdminConfirmSignUp => user::admin_confirm_sign_up::handler(storage, body).await,
         AdminCreateUser => user::admin_create_user::handler(storage, body).await,
         AdminDeleteUser => user::admin_delete_user::handler(storage, body).await,
+        AdminDeleteUserAttributes => {
+            user::admin_delete_user_attributes::handler(storage, body).await
+        }
         AdminDisableUser => user::admin_disable_user::handler(storage, body).await,
         AdminEnableUser => user::admin_enable_user::handler(storage, body).await,
         AdminGetUser => user::admin_get_user::handler(storage, body).await,
@@ -359,6 +362,7 @@ impl Action {
                 | Self::AdminConfirmSignUp
                 | Self::AdminCreateUser
                 | Self::AdminDeleteUser
+                | Self::AdminDeleteUserAttributes
                 | Self::AdminDisableUser
                 | Self::AdminEnableUser
                 | Self::AdminGetUser

@@ -3,6 +3,7 @@ pub(crate) mod helpers;
 pub mod admin_confirm_sign_up;
 pub mod admin_create_user;
 pub mod admin_delete_user;
+pub mod admin_delete_user_attributes;
 pub mod admin_disable_user;
 pub mod admin_enable_user;
 pub mod admin_get_user;
