@@ -12,6 +12,7 @@ pub mod describe_managed_login_branding_by_client;
 pub mod describe_user_pool;
 pub mod describe_user_pool_client;
 pub mod describe_user_pool_domain;
+pub mod get_signing_certificate;
 pub mod list_user_pool_clients;
 pub mod list_user_pools;
 pub mod update_managed_login_branding;

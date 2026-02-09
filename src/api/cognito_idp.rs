@@ -160,6 +160,7 @@ async fn dispatch_action(
 
         // Other Actions
         AddCustomAttributes => user_pool::add_custom_attributes::handler(storage, body).await,
+        GetSigningCertificate => user_pool::get_signing_certificate::handler(storage, body).await,
 
         // Not implemented operations
         op => {
@@ -399,6 +400,7 @@ impl Action {
                 | Self::UpdateGroup
                 // Other Actions
                 | Self::AddCustomAttributes
+                | Self::GetSigningCertificate
         )
     }
 
