@@ -68,3 +68,12 @@ Tests use `tower::ServiceExt::oneshot` to test handlers directly without startin
 ## Implementation Coverage
 
 See `COVERAGE.md` for the list of implemented/unimplemented Cognito operations (currently 17/119 = 14%).
+
+## Git Workflow
+
+**Before committing:**
+1. Run `cargo fmt` to format the code
+2. Run `cargo clippy -- -D warnings` to check for lint errors
+3. Run `cargo test` to ensure all tests pass
+
+**Important:** Commit your changes but **DO NOT push**. The user will review and push manually.
