@@ -139,6 +139,7 @@ async fn dispatch_action(
         AdminUpdateUserAttributes => {
             user::admin_update_user_attributes::handler(storage, body).await
         }
+        AdminUserGlobalSignOut => user::admin_user_global_sign_out::handler(storage, body).await,
         AdminAddUserToGroup => group::admin_add_user_to_group::handler(storage, body).await,
         AdminRemoveUserFromGroup => {
             group::admin_remove_user_from_group::handler(storage, body).await
@@ -376,6 +377,7 @@ impl Action {
                 | Self::AdminResetUserPassword
                 | Self::AdminSetUserPassword
                 | Self::AdminUpdateUserAttributes
+                | Self::AdminUserGlobalSignOut
                 | Self::AdminAddUserToGroup
                 | Self::AdminRemoveUserFromGroup
                 | Self::AdminListGroupsForUser

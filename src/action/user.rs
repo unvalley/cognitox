@@ -11,6 +11,7 @@ pub mod admin_initiate_auth;
 pub mod admin_reset_user_password;
 pub mod admin_set_user_password;
 pub mod admin_update_user_attributes;
+pub mod admin_user_global_sign_out;
 pub mod change_password;
 pub mod confirm_forgot_password;
 pub mod confirm_sign_up;

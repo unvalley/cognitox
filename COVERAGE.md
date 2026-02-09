@@ -4,7 +4,7 @@ Based on [Amazon Cognito User Pools API Reference](https://docs.aws.amazon.com/c
 
 ## cognito-idp
 
-47% implemented (56/119)
+48% implemented (57/119)
 
 ### Admin Operations
 - [x] AdminAddUserToGroup ([spec](https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_AdminAddUserToGroup.html), [cognitox](src/action/group/admin_add_user_to_group.rs))
@@ -32,7 +32,7 @@ Based on [Amazon Cognito User Pools API Reference](https://docs.aws.amazon.com/c
 - [ ] AdminUpdateAuthEventFeedback ([spec](https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_AdminUpdateAuthEventFeedback.html))
 - [ ] AdminUpdateDeviceStatus ([spec](https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_AdminUpdateDeviceStatus.html))
 - [x] AdminUpdateUserAttributes ([spec](https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_AdminUpdateUserAttributes.html), [cognitox](src/action/user/admin_update_user_attributes.rs))
-- [ ] AdminUserGlobalSignOut ([spec](https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_AdminUserGlobalSignOut.html))
+- [x] AdminUserGlobalSignOut ([spec](https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_AdminUserGlobalSignOut.html), [cognitox](src/action/user/admin_user_global_sign_out.rs))
 
 ### User Pool Operations
 - [x] CreateUserPool ([spec](https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_CreateUserPool.html), [cognitox](src/action/user_pool/create_user_pool.rs))
