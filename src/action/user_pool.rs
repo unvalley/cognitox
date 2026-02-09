@@ -1,3 +1,4 @@
+pub mod add_custom_attributes;
 pub mod create_managed_login_branding;
 pub mod create_user_pool;
 pub mod create_user_pool_client;

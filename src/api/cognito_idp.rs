@@ -158,6 +158,9 @@ async fn dispatch_action(
         ListUsersInGroup => group::list_users_in_group::handler(storage, body).await,
         UpdateGroup => group::update_group::handler(storage, body).await,
 
+        // Other Actions
+        AddCustomAttributes => user_pool::add_custom_attributes::handler(storage, body).await,
+
         // Not implemented operations
         op => {
             warn!("Operation not implemented: {:?}", op);
@@ -394,6 +397,8 @@ impl Action {
                 | Self::ListGroups
                 | Self::ListUsersInGroup
                 | Self::UpdateGroup
+                // Other Actions
+                | Self::AddCustomAttributes
         )
     }
 
