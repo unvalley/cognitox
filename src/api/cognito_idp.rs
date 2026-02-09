@@ -128,6 +128,9 @@ async fn dispatch_action(
         AdminEnableUser => user::admin_enable_user::handler(storage, body).await,
         AdminGetUser => user::admin_get_user::handler(storage, body).await,
         AdminSetUserPassword => user::admin_set_user_password::handler(storage, body).await,
+        AdminUpdateUserAttributes => {
+            user::admin_update_user_attributes::handler(storage, body).await
+        }
         AdminAddUserToGroup => group::admin_add_user_to_group::handler(storage, body).await,
         AdminRemoveUserFromGroup => {
             group::admin_remove_user_from_group::handler(storage, body).await
@@ -358,6 +361,7 @@ impl Action {
                 | Self::AdminEnableUser
                 | Self::AdminGetUser
                 | Self::AdminSetUserPassword
+                | Self::AdminUpdateUserAttributes
                 | Self::AdminAddUserToGroup
                 | Self::AdminRemoveUserFromGroup
                 | Self::AdminListGroupsForUser
