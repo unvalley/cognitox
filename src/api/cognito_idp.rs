@@ -170,6 +170,10 @@ async fn dispatch_action(
         GetUserPoolMfaConfig => user_pool::get_user_pool_mfa_config::handler(storage, body).await,
         SetUserPoolMfaConfig => user_pool::set_user_pool_mfa_config::handler(storage, body).await,
 
+        // User Settings Actions
+        SetUserSettings => user::set_user_settings::handler(storage, body).await,
+        AdminSetUserSettings => user::admin_set_user_settings::handler(storage, body).await,
+
         // Tagging Actions
         ListTagsForResource => user_pool::list_tags_for_resource::handler(storage, body).await,
         TagResource => user_pool::tag_resource::handler(storage, body).await,
@@ -419,6 +423,9 @@ impl Action {
                 | Self::AdminSetUserMFAPreference
                 | Self::GetUserPoolMfaConfig
                 | Self::SetUserPoolMfaConfig
+                // User Settings Actions
+                | Self::SetUserSettings
+                | Self::AdminSetUserSettings
                 // Tagging Actions
                 | Self::ListTagsForResource
                 | Self::TagResource
