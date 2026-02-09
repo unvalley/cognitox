@@ -24,3 +24,4 @@ pub mod resend_confirmation_code;
 pub mod respond_to_auth_challenge;
 pub mod revoke_token;
 pub mod sign_up;
+pub mod update_user_attributes;

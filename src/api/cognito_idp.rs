@@ -114,6 +114,7 @@ async fn dispatch_action(
         RespondToAuthChallenge => user::respond_to_auth_challenge::handler(storage, body).await,
         GetUser => user::get_user::handler(storage, body).await,
         DeleteUser => user::delete_user::handler(storage, body).await,
+        UpdateUserAttributes => user::update_user_attributes::handler(storage, body).await,
         ListUsers => user::list_users::handler(storage, body).await,
         ChangePassword => user::change_password::handler(storage, body).await,
         ForgotPassword => user::forgot_password::handler(storage, body).await,
@@ -354,6 +355,7 @@ impl Action {
                 | Self::RespondToAuthChallenge
                 | Self::GetUser
                 | Self::DeleteUser
+                | Self::UpdateUserAttributes
                 | Self::ListUsers
                 | Self::ChangePassword
                 | Self::ForgotPassword
