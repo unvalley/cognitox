@@ -6,3 +6,4 @@ pub mod delete_group;
 pub mod get_group;
 pub mod list_groups;
 pub mod list_users_in_group;
+pub mod update_group;

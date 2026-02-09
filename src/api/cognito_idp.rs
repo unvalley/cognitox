@@ -140,6 +140,7 @@ async fn dispatch_action(
         GetGroup => group::get_group::handler(storage, body).await,
         ListGroups => group::list_groups::handler(storage, body).await,
         ListUsersInGroup => group::list_users_in_group::handler(storage, body).await,
+        UpdateGroup => group::update_group::handler(storage, body).await,
 
         // Not implemented operations
         op => {
@@ -366,6 +367,7 @@ impl Action {
                 | Self::GetGroup
                 | Self::ListGroups
                 | Self::ListUsersInGroup
+                | Self::UpdateGroup
         )
     }
 

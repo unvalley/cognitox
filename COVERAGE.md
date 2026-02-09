@@ -4,7 +4,7 @@ Based on [Amazon Cognito User Pools API Reference](https://docs.aws.amazon.com/c
 
 ## cognito-idp
 
-40% implemented (48/119)
+41% implemented (49/119)
 
 ### Admin Operations
 - [x] AdminAddUserToGroup ([spec](https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_AdminAddUserToGroup.html), [cognitox](src/action/group/admin_add_user_to_group.rs))
@@ -96,7 +96,7 @@ Based on [Amazon Cognito User Pools API Reference](https://docs.aws.amazon.com/c
 - [x] GetGroup ([spec](https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_GetGroup.html), [cognitox](src/action/group/get_group.rs))
 - [x] ListGroups ([spec](https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_ListGroups.html), [cognitox](src/action/group/list_groups.rs))
 - [x] ListUsersInGroup ([spec](https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_ListUsersInGroup.html), [cognitox](src/action/group/list_users_in_group.rs))
-- [ ] UpdateGroup ([spec](https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_UpdateGroup.html))
+- [x] UpdateGroup ([spec](https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_UpdateGroup.html), [cognitox](src/action/group/update_group.rs))
 
 ### Identity Provider Operations
 - [ ] CreateIdentityProvider ([spec](https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_CreateIdentityProvider.html))
