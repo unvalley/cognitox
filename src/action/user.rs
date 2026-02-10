@@ -9,6 +9,7 @@ pub mod admin_enable_user;
 pub mod admin_get_user;
 pub mod admin_initiate_auth;
 pub mod admin_reset_user_password;
+pub mod admin_respond_to_auth_challenge;
 pub mod admin_set_user_mfa_preference;
 pub mod admin_set_user_password;
 pub mod admin_set_user_settings;

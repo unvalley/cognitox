@@ -139,6 +139,9 @@ async fn dispatch_action(
         AdminGetUser => user::admin_get_user::handler(storage, body).await,
         AdminInitiateAuth => user::admin_initiate_auth::handler(storage, body).await,
         AdminResetUserPassword => user::admin_reset_user_password::handler(storage, body).await,
+        AdminRespondToAuthChallenge => {
+            user::admin_respond_to_auth_challenge::handler(storage, body).await
+        }
         AdminSetUserPassword => user::admin_set_user_password::handler(storage, body).await,
         AdminUpdateUserAttributes => {
             user::admin_update_user_attributes::handler(storage, body).await
@@ -405,6 +408,7 @@ impl Action {
                 | Self::AdminGetUser
                 | Self::AdminInitiateAuth
                 | Self::AdminResetUserPassword
+                | Self::AdminRespondToAuthChallenge
                 | Self::AdminSetUserPassword
                 | Self::AdminUpdateUserAttributes
                 | Self::AdminUserGlobalSignOut
@@ -637,6 +641,7 @@ mod tests {
         assert!(Action::CreateUserPool.is_implemented());
         assert!(Action::AdminAddUserToGroup.is_implemented());
         assert!(Action::AdminInitiateAuth.is_implemented());
+        assert!(Action::AdminRespondToAuthChallenge.is_implemented());
         assert!(!Action::AdminForgetDevice.is_implemented());
     }
 
