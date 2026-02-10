@@ -136,12 +136,16 @@ async fn dispatch_action(
         }
         AdminDisableUser => user::admin_disable_user::handler(storage, body).await,
         AdminEnableUser => user::admin_enable_user::handler(storage, body).await,
+        AdminForgetDevice => user::admin_forget_device::handler(storage, body).await,
+        AdminGetDevice => user::admin_get_device::handler(storage, body).await,
         AdminGetUser => user::admin_get_user::handler(storage, body).await,
         AdminInitiateAuth => user::admin_initiate_auth::handler(storage, body).await,
+        AdminListDevices => user::admin_list_devices::handler(storage, body).await,
         AdminResetUserPassword => user::admin_reset_user_password::handler(storage, body).await,
         AdminRespondToAuthChallenge => {
             user::admin_respond_to_auth_challenge::handler(storage, body).await
         }
+        AdminUpdateDeviceStatus => user::admin_update_device_status::handler(storage, body).await,
         AdminSetUserPassword => user::admin_set_user_password::handler(storage, body).await,
         AdminUpdateUserAttributes => {
             user::admin_update_user_attributes::handler(storage, body).await
@@ -164,14 +168,23 @@ async fn dispatch_action(
         // Other Actions
         AddCustomAttributes => user_pool::add_custom_attributes::handler(storage, body).await,
         GetSigningCertificate => user_pool::get_signing_certificate::handler(storage, body).await,
+        UpdateAuthEventFeedback => user::update_auth_event_feedback::handler(storage, body).await,
+        UpdateDeviceStatus => user::update_device_status::handler(storage, body).await,
 
         // MFA Actions
         SetUserMFAPreference => user::set_user_mfa_preference::handler(storage, body).await,
         AdminSetUserMFAPreference => {
             user::admin_set_user_mfa_preference::handler(storage, body).await
         }
+        AssociateSoftwareToken => user::associate_software_token::handler(storage, body).await,
+        VerifySoftwareToken => user::verify_software_token::handler(storage, body).await,
         GetUserPoolMfaConfig => user_pool::get_user_pool_mfa_config::handler(storage, body).await,
         SetUserPoolMfaConfig => user_pool::set_user_pool_mfa_config::handler(storage, body).await,
+        GetUserAuthFactors => user::get_user_auth_factors::handler(storage, body).await,
+        ConfirmDevice => user::confirm_device::handler(storage, body).await,
+        ForgetDevice => user::forget_device::handler(storage, body).await,
+        GetDevice => user::get_device::handler(storage, body).await,
+        ListDevices => user::list_devices::handler(storage, body).await,
 
         // User Settings Actions
         SetUserSettings => user::set_user_settings::handler(storage, body).await,
@@ -405,10 +418,14 @@ impl Action {
                 | Self::AdminDeleteUserAttributes
                 | Self::AdminDisableUser
                 | Self::AdminEnableUser
+                | Self::AdminForgetDevice
+                | Self::AdminGetDevice
                 | Self::AdminGetUser
                 | Self::AdminInitiateAuth
+                | Self::AdminListDevices
                 | Self::AdminResetUserPassword
                 | Self::AdminRespondToAuthChallenge
+                | Self::AdminUpdateDeviceStatus
                 | Self::AdminSetUserPassword
                 | Self::AdminUpdateUserAttributes
                 | Self::AdminUserGlobalSignOut
@@ -425,11 +442,21 @@ impl Action {
                 // Other Actions
                 | Self::AddCustomAttributes
                 | Self::GetSigningCertificate
+                | Self::UpdateAuthEventFeedback
+                | Self::UpdateDeviceStatus
                 // MFA Actions
+                | Self::AssociateSoftwareToken
                 | Self::SetUserMFAPreference
+                | Self::VerifySoftwareToken
                 | Self::AdminSetUserMFAPreference
                 | Self::GetUserPoolMfaConfig
                 | Self::SetUserPoolMfaConfig
+                | Self::GetUserAuthFactors
+                // Device Actions
+                | Self::ConfirmDevice
+                | Self::ForgetDevice
+                | Self::GetDevice
+                | Self::ListDevices
                 // User Settings Actions
                 | Self::SetUserSettings
                 | Self::AdminSetUserSettings
@@ -642,7 +669,7 @@ mod tests {
         assert!(Action::AdminAddUserToGroup.is_implemented());
         assert!(Action::AdminInitiateAuth.is_implemented());
         assert!(Action::AdminRespondToAuthChallenge.is_implemented());
-        assert!(!Action::AdminForgetDevice.is_implemented());
+        assert!(Action::AdminForgetDevice.is_implemented());
     }
 
     #[test]
