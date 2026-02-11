@@ -16,6 +16,7 @@ pub mod admin_respond_to_auth_challenge;
 pub mod admin_set_user_mfa_preference;
 pub mod admin_set_user_password;
 pub mod admin_set_user_settings;
+pub mod admin_update_auth_event_feedback;
 pub mod admin_update_device_status;
 pub mod admin_update_user_attributes;
 pub mod admin_user_global_sign_out;

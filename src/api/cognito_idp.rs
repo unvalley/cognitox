@@ -145,6 +145,9 @@ async fn dispatch_action(
         AdminRespondToAuthChallenge => {
             user::admin_respond_to_auth_challenge::handler(storage, body).await
         }
+        AdminUpdateAuthEventFeedback => {
+            user::admin_update_auth_event_feedback::handler(storage, body).await
+        }
         AdminUpdateDeviceStatus => user::admin_update_device_status::handler(storage, body).await,
         AdminSetUserPassword => user::admin_set_user_password::handler(storage, body).await,
         AdminUpdateUserAttributes => {
@@ -164,6 +167,25 @@ async fn dispatch_action(
         ListGroups => group::list_groups::handler(storage, body).await,
         ListUsersInGroup => group::list_users_in_group::handler(storage, body).await,
         UpdateGroup => group::update_group::handler(storage, body).await,
+
+        // Identity Provider Actions
+        CreateIdentityProvider => user_pool::create_identity_provider::handler(storage, body).await,
+        DeleteIdentityProvider => user_pool::delete_identity_provider::handler(storage, body).await,
+        DescribeIdentityProvider => {
+            user_pool::describe_identity_provider::handler(storage, body).await
+        }
+        GetIdentityProviderByIdentifier => {
+            user_pool::get_identity_provider_by_identifier::handler(storage, body).await
+        }
+        ListIdentityProviders => user_pool::list_identity_providers::handler(storage, body).await,
+        UpdateIdentityProvider => user_pool::update_identity_provider::handler(storage, body).await,
+
+        // Resource Server Actions
+        CreateResourceServer => user_pool::create_resource_server::handler(storage, body).await,
+        DeleteResourceServer => user_pool::delete_resource_server::handler(storage, body).await,
+        DescribeResourceServer => user_pool::describe_resource_server::handler(storage, body).await,
+        ListResourceServers => user_pool::list_resource_servers::handler(storage, body).await,
+        UpdateResourceServer => user_pool::update_resource_server::handler(storage, body).await,
 
         // Other Actions
         AddCustomAttributes => user_pool::add_custom_attributes::handler(storage, body).await,
@@ -425,6 +447,7 @@ impl Action {
                 | Self::AdminListDevices
                 | Self::AdminResetUserPassword
                 | Self::AdminRespondToAuthChallenge
+                | Self::AdminUpdateAuthEventFeedback
                 | Self::AdminUpdateDeviceStatus
                 | Self::AdminSetUserPassword
                 | Self::AdminUpdateUserAttributes
@@ -432,6 +455,19 @@ impl Action {
                 | Self::AdminAddUserToGroup
                 | Self::AdminRemoveUserFromGroup
                 | Self::AdminListGroupsForUser
+                // Identity Provider Actions
+                | Self::CreateIdentityProvider
+                | Self::DeleteIdentityProvider
+                | Self::DescribeIdentityProvider
+                | Self::GetIdentityProviderByIdentifier
+                | Self::ListIdentityProviders
+                | Self::UpdateIdentityProvider
+                // Resource Server Actions
+                | Self::CreateResourceServer
+                | Self::DeleteResourceServer
+                | Self::DescribeResourceServer
+                | Self::ListResourceServers
+                | Self::UpdateResourceServer
                 // Group Actions
                 | Self::CreateGroup
                 | Self::DeleteGroup
