@@ -122,6 +122,9 @@ async fn dispatch_action(
         ConfirmForgotPassword => user::confirm_forgot_password::handler(storage, body).await,
         GlobalSignOut => user::global_sign_out::handler(storage, body).await,
         RevokeToken => user::revoke_token::handler(storage, body).await,
+        GetTokensFromRefreshToken => {
+            user::get_tokens_from_refresh_token::handler(storage, body).await
+        }
         GetUserAttributeVerificationCode => {
             user::get_user_attribute_verification_code::handler(storage, body).await
         }
@@ -134,13 +137,20 @@ async fn dispatch_action(
         AdminDeleteUserAttributes => {
             user::admin_delete_user_attributes::handler(storage, body).await
         }
+        AdminDisableProviderForUser => {
+            user::admin_disable_provider_for_user::handler(storage, body).await
+        }
         AdminDisableUser => user::admin_disable_user::handler(storage, body).await,
         AdminEnableUser => user::admin_enable_user::handler(storage, body).await,
         AdminForgetDevice => user::admin_forget_device::handler(storage, body).await,
         AdminGetDevice => user::admin_get_device::handler(storage, body).await,
         AdminGetUser => user::admin_get_user::handler(storage, body).await,
         AdminInitiateAuth => user::admin_initiate_auth::handler(storage, body).await,
+        AdminLinkProviderForUser => {
+            user::admin_link_provider_for_user::handler(storage, body).await
+        }
         AdminListDevices => user::admin_list_devices::handler(storage, body).await,
+        AdminListUserAuthEvents => user::admin_list_user_auth_events::handler(storage, body).await,
         AdminResetUserPassword => user::admin_reset_user_password::handler(storage, body).await,
         AdminRespondToAuthChallenge => {
             user::admin_respond_to_auth_challenge::handler(storage, body).await
@@ -213,18 +223,52 @@ async fn dispatch_action(
         AdminSetUserSettings => user::admin_set_user_settings::handler(storage, body).await,
 
         // User Import Actions
+        CreateUserImportJob => user_pool::create_user_import_job::handler(storage, body).await,
+        DescribeUserImportJob => user_pool::describe_user_import_job::handler(storage, body).await,
         GetCSVHeader => user_pool::get_csv_header::handler(storage, body).await,
+        ListUserImportJobs => user_pool::list_user_import_jobs::handler(storage, body).await,
+        StartUserImportJob => user_pool::start_user_import_job::handler(storage, body).await,
+        StopUserImportJob => user_pool::stop_user_import_job::handler(storage, body).await,
+
+        // WebAuthn Actions
+        CompleteWebAuthnRegistration => {
+            user::complete_webauthn_registration::handler(storage, body).await
+        }
+        DeleteWebAuthnCredential => user::delete_webauthn_credential::handler(storage, body).await,
+        ListWebAuthnCredentials => user::list_webauthn_credentials::handler(storage, body).await,
+        StartWebAuthnRegistration => {
+            user::start_webauthn_registration::handler(storage, body).await
+        }
+
+        // Terms Actions
+        CreateTerms => user_pool::create_terms::handler(storage, body).await,
+        DeleteTerms => user_pool::delete_terms::handler(storage, body).await,
+        DescribeTerms => user_pool::describe_terms::handler(storage, body).await,
+        ListTerms => user_pool::list_terms::handler(storage, body).await,
+        UpdateTerms => user_pool::update_terms::handler(storage, body).await,
+
+        // Risk Configuration Actions
+        DescribeRiskConfiguration => {
+            user_pool::describe_risk_configuration::handler(storage, body).await
+        }
+        SetRiskConfiguration => user_pool::set_risk_configuration::handler(storage, body).await,
+
+        // UI Customization Actions
+        GetUICustomization => user_pool::get_ui_customization::handler(storage, body).await,
+        SetUICustomization => user_pool::set_ui_customization::handler(storage, body).await,
+
+        // Log Configuration Actions
+        GetLogDeliveryConfiguration => {
+            user_pool::get_log_delivery_configuration::handler(storage, body).await
+        }
+        SetLogDeliveryConfiguration => {
+            user_pool::set_log_delivery_configuration::handler(storage, body).await
+        }
 
         // Tagging Actions
         ListTagsForResource => user_pool::list_tags_for_resource::handler(storage, body).await,
         TagResource => user_pool::tag_resource::handler(storage, body).await,
         UntagResource => user_pool::untag_resource::handler(storage, body).await,
-
-        // Not implemented operations
-        op => {
-            warn!("Operation not implemented: {:?}", op);
-            Err(AppError::NotImplemented(format!("{:?}", op)))
-        }
     }
 }
 
@@ -308,6 +352,7 @@ pub enum Action {
     ResendConfirmationCode,
     RespondToAuthChallenge,
     RevokeToken,
+    GetTokensFromRefreshToken,
     SignUp,
     GetUserAttributeVerificationCode,
 
@@ -362,6 +407,13 @@ pub enum Action {
     DeleteWebAuthnCredential,
     ListWebAuthnCredentials,
     StartWebAuthnRegistration,
+
+    // Terms Actions
+    CreateTerms,
+    DeleteTerms,
+    DescribeTerms,
+    ListTerms,
+    UpdateTerms,
 
     // Risk Configuration Actions
     DescribeRiskConfiguration,
@@ -431,6 +483,7 @@ impl Action {
                 | Self::ConfirmForgotPassword
                 | Self::GlobalSignOut
                 | Self::RevokeToken
+                | Self::GetTokensFromRefreshToken
                 | Self::GetUserAttributeVerificationCode
                 | Self::VerifyUserAttribute
                 // Admin Actions
@@ -438,13 +491,16 @@ impl Action {
                 | Self::AdminCreateUser
                 | Self::AdminDeleteUser
                 | Self::AdminDeleteUserAttributes
+                | Self::AdminDisableProviderForUser
                 | Self::AdminDisableUser
                 | Self::AdminEnableUser
                 | Self::AdminForgetDevice
                 | Self::AdminGetDevice
                 | Self::AdminGetUser
                 | Self::AdminInitiateAuth
+                | Self::AdminLinkProviderForUser
                 | Self::AdminListDevices
+                | Self::AdminListUserAuthEvents
                 | Self::AdminResetUserPassword
                 | Self::AdminRespondToAuthChallenge
                 | Self::AdminUpdateAuthEventFeedback
@@ -497,7 +553,32 @@ impl Action {
                 | Self::SetUserSettings
                 | Self::AdminSetUserSettings
                 // User Import Actions
+                | Self::CreateUserImportJob
+                | Self::DescribeUserImportJob
                 | Self::GetCSVHeader
+                | Self::ListUserImportJobs
+                | Self::StartUserImportJob
+                | Self::StopUserImportJob
+                // WebAuthn Actions
+                | Self::CompleteWebAuthnRegistration
+                | Self::DeleteWebAuthnCredential
+                | Self::ListWebAuthnCredentials
+                | Self::StartWebAuthnRegistration
+                // Terms Actions
+                | Self::CreateTerms
+                | Self::DeleteTerms
+                | Self::DescribeTerms
+                | Self::ListTerms
+                | Self::UpdateTerms
+                // Risk Configuration Actions
+                | Self::DescribeRiskConfiguration
+                | Self::SetRiskConfiguration
+                // UI Customization Actions
+                | Self::GetUICustomization
+                | Self::SetUICustomization
+                // Log Configuration Actions
+                | Self::GetLogDeliveryConfiguration
+                | Self::SetLogDeliveryConfiguration
                 // Tagging Actions
                 | Self::ListTagsForResource
                 | Self::TagResource
@@ -597,6 +678,7 @@ impl FromStr for Action {
             "ResendConfirmationCode" => Ok(Self::ResendConfirmationCode),
             "RespondToAuthChallenge" => Ok(Self::RespondToAuthChallenge),
             "RevokeToken" => Ok(Self::RevokeToken),
+            "GetTokensFromRefreshToken" => Ok(Self::GetTokensFromRefreshToken),
             "SignUp" => Ok(Self::SignUp),
             "GetUserAttributeVerificationCode" => Ok(Self::GetUserAttributeVerificationCode),
 
@@ -651,6 +733,13 @@ impl FromStr for Action {
             "DeleteWebAuthnCredential" => Ok(Self::DeleteWebAuthnCredential),
             "ListWebAuthnCredentials" => Ok(Self::ListWebAuthnCredentials),
             "StartWebAuthnRegistration" => Ok(Self::StartWebAuthnRegistration),
+
+            // Terms Actions
+            "CreateTerms" => Ok(Self::CreateTerms),
+            "DeleteTerms" => Ok(Self::DeleteTerms),
+            "DescribeTerms" => Ok(Self::DescribeTerms),
+            "ListTerms" => Ok(Self::ListTerms),
+            "UpdateTerms" => Ok(Self::UpdateTerms),
 
             // Risk Configuration Actions
             "DescribeRiskConfiguration" => Ok(Self::DescribeRiskConfiguration),
