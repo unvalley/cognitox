@@ -22,6 +22,15 @@ pub enum AppError {
     #[error("User pool domain already exists")]
     UserPoolDomainAlreadyExists,
 
+    #[error("User import job not found")]
+    UserImportJobNotFound,
+
+    #[error("Terms document not found")]
+    TermsNotFound,
+
+    #[error("WebAuthn credential not found")]
+    WebAuthnCredentialNotFound,
+
     #[error("User already exists")]
     UserAlreadyExists,
 
@@ -88,6 +97,13 @@ impl IntoResponse for AppError {
             }
             AppError::UserPoolDomainAlreadyExists => {
                 (StatusCode::BAD_REQUEST, "InvalidParameterException")
+            }
+            AppError::UserImportJobNotFound => {
+                (StatusCode::BAD_REQUEST, "ResourceNotFoundException")
+            }
+            AppError::TermsNotFound => (StatusCode::BAD_REQUEST, "ResourceNotFoundException"),
+            AppError::WebAuthnCredentialNotFound => {
+                (StatusCode::BAD_REQUEST, "ResourceNotFoundException")
             }
             AppError::UserAlreadyExists => (StatusCode::BAD_REQUEST, "UsernameExistsException"),
             AppError::InvalidPassword => (StatusCode::BAD_REQUEST, "InvalidPasswordException"),

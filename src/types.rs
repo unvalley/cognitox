@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::fmt;
 use std::str::FromStr;
 
@@ -540,4 +541,74 @@ pub struct BrandingSettings {
     pub sign_in_header: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sign_in_subheader: Option<String>,
+}
+
+/// User import job status
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+pub enum UserImportJobStatus {
+    #[default]
+    Created,
+    Pending,
+    InProgress,
+    Stopping,
+    Expired,
+    Stopped,
+    Failed,
+    Succeeded,
+}
+
+/// User import job metadata
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UserImportJob {
+    pub job_id: String,
+    pub user_pool_id: UserPoolId,
+    pub job_name: String,
+    pub cloud_watch_logs_role_arn: String,
+    pub status: UserImportJobStatus,
+    pub pre_signed_url: Option<String>,
+    pub creation_date: DateTime<Utc>,
+    pub start_date: Option<DateTime<Utc>>,
+    pub completion_date: Option<DateTime<Utc>>,
+    pub completion_message: Option<String>,
+    pub imported_users: i32,
+    pub skipped_users: i32,
+    pub failed_users: i32,
+}
+
+/// Terms document metadata
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TermsDocument {
+    pub terms_id: String,
+    pub user_pool_id: UserPoolId,
+    pub client_id: ClientId,
+    pub terms_name: String,
+    pub terms_source: String,
+    pub enforcement: Option<String>,
+    pub links: HashMap<String, String>,
+    pub creation_date: DateTime<Utc>,
+    pub last_modified_date: DateTime<Utc>,
+}
+
+/// UI customization settings
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UiCustomization {
+    pub user_pool_id: UserPoolId,
+    pub client_id: Option<ClientId>,
+    pub css: Option<String>,
+    pub css_version: String,
+    pub image_url: Option<String>,
+    pub creation_date: DateTime<Utc>,
+    pub last_modified_date: DateTime<Utc>,
+}
+
+/// WebAuthn credential metadata
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WebAuthnCredential {
+    pub credential_id: String,
+    pub friendly_credential_name: Option<String>,
+    pub relying_party_id: Option<String>,
+    pub created_at: DateTime<Utc>,
+    pub authenticator_attachment: Option<String>,
+    pub authenticator_transports: Vec<String>,
 }

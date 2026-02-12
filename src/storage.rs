@@ -5,12 +5,14 @@
 
 use std::{collections::HashMap, sync::Arc};
 
+use serde_json::Value;
 use tokio::sync::RwLock;
 
 use crate::types::{
     AuthorizationCode, BrandingId, ClientId, ConfirmationCode, DomainPrefix, Group, GroupName,
-    ManagedLoginBranding, PasswordResetCode, RefreshToken, User, UserId, UserPool, UserPoolClient,
-    UserPoolDomain, UserPoolId,
+    ManagedLoginBranding, PasswordResetCode, RefreshToken, TermsDocument, UiCustomization, User,
+    UserId, UserImportJob, UserPool, UserPoolClient, UserPoolDomain, UserPoolId,
+    WebAuthnCredential,
 };
 
 #[derive(Debug, Clone)]
@@ -35,6 +37,14 @@ struct StorageInner {
     groups: HashMap<(UserPoolId, GroupName), Group>,
     user_groups: HashMap<UserId, Vec<GroupName>>,
     password_reset_codes: HashMap<UserId, PasswordResetCode>,
+    user_import_jobs: HashMap<String, UserImportJob>,
+    terms_documents: HashMap<String, TermsDocument>,
+    terms_name_index: HashMap<(UserPoolId, ClientId, String), String>,
+    ui_customizations: HashMap<(UserPoolId, Option<ClientId>), UiCustomization>,
+    risk_configurations: HashMap<(UserPoolId, Option<ClientId>), Value>,
+    log_delivery_configurations: HashMap<UserPoolId, Vec<Value>>,
+    webauthn_credentials: HashMap<UserId, Vec<WebAuthnCredential>>,
+    webauthn_registration_challenges: HashMap<UserId, String>,
 }
 
 impl Storage {
@@ -499,6 +509,266 @@ impl Storage {
         } else {
             None
         }
+    }
+
+    // ==================== User Import Job Operations ====================
+
+    pub async fn create_user_import_job(&self, job: UserImportJob) -> UserImportJob {
+        let mut inner = self.inner.write().await;
+        inner
+            .user_import_jobs
+            .insert(job.job_id.clone(), job.clone());
+        job
+    }
+
+    pub async fn get_user_import_job(&self, job_id: &str) -> Option<UserImportJob> {
+        let inner = self.inner.read().await;
+        inner.user_import_jobs.get(job_id).cloned()
+    }
+
+    pub async fn list_user_import_jobs(&self, user_pool_id: &UserPoolId) -> Vec<UserImportJob> {
+        let inner = self.inner.read().await;
+        inner
+            .user_import_jobs
+            .values()
+            .filter(|job| &job.user_pool_id == user_pool_id)
+            .cloned()
+            .collect()
+    }
+
+    pub async fn update_user_import_job(&self, job: UserImportJob) -> Option<UserImportJob> {
+        let mut inner = self.inner.write().await;
+        if let std::collections::hash_map::Entry::Occupied(mut e) =
+            inner.user_import_jobs.entry(job.job_id.clone())
+        {
+            e.insert(job.clone());
+            Some(job)
+        } else {
+            None
+        }
+    }
+
+    // ==================== Terms Operations ====================
+
+    pub async fn create_terms(&self, terms: TermsDocument) -> TermsDocument {
+        let mut inner = self.inner.write().await;
+        inner.terms_name_index.insert(
+            (
+                terms.user_pool_id.clone(),
+                terms.client_id.clone(),
+                terms.terms_name.clone(),
+            ),
+            terms.terms_id.clone(),
+        );
+        inner
+            .terms_documents
+            .insert(terms.terms_id.clone(), terms.clone());
+        terms
+    }
+
+    pub async fn get_terms_by_id(&self, terms_id: &str) -> Option<TermsDocument> {
+        let inner = self.inner.read().await;
+        inner.terms_documents.get(terms_id).cloned()
+    }
+
+    pub async fn get_terms_by_name(
+        &self,
+        user_pool_id: &UserPoolId,
+        client_id: &ClientId,
+        terms_name: &str,
+    ) -> Option<TermsDocument> {
+        let inner = self.inner.read().await;
+        let id = inner.terms_name_index.get(&(
+            user_pool_id.clone(),
+            client_id.clone(),
+            terms_name.to_string(),
+        ))?;
+        inner.terms_documents.get(id).cloned()
+    }
+
+    pub async fn list_terms(&self, user_pool_id: &UserPoolId) -> Vec<TermsDocument> {
+        let inner = self.inner.read().await;
+        inner
+            .terms_documents
+            .values()
+            .filter(|terms| &terms.user_pool_id == user_pool_id)
+            .cloned()
+            .collect()
+    }
+
+    pub async fn update_terms(&self, terms: TermsDocument) -> Option<TermsDocument> {
+        let mut inner = self.inner.write().await;
+        if let std::collections::hash_map::Entry::Occupied(mut e) =
+            inner.terms_documents.entry(terms.terms_id.clone())
+        {
+            e.insert(terms.clone());
+            inner.terms_name_index.insert(
+                (
+                    terms.user_pool_id.clone(),
+                    terms.client_id.clone(),
+                    terms.terms_name.clone(),
+                ),
+                terms.terms_id.clone(),
+            );
+            Some(terms)
+        } else {
+            None
+        }
+    }
+
+    pub async fn delete_terms(
+        &self,
+        user_pool_id: &UserPoolId,
+        terms_id: &str,
+    ) -> Option<TermsDocument> {
+        let mut inner = self.inner.write().await;
+        let terms = inner.terms_documents.get(terms_id)?.clone();
+        if &terms.user_pool_id != user_pool_id {
+            return None;
+        }
+        inner.terms_name_index.remove(&(
+            terms.user_pool_id.clone(),
+            terms.client_id.clone(),
+            terms.terms_name.clone(),
+        ));
+        inner.terms_documents.remove(terms_id)
+    }
+
+    // ==================== UI Customization Operations ====================
+
+    pub async fn set_ui_customization(&self, customization: UiCustomization) -> UiCustomization {
+        let mut inner = self.inner.write().await;
+        inner.ui_customizations.insert(
+            (
+                customization.user_pool_id.clone(),
+                customization.client_id.clone(),
+            ),
+            customization.clone(),
+        );
+        customization
+    }
+
+    pub async fn get_ui_customization(
+        &self,
+        user_pool_id: &UserPoolId,
+        client_id: Option<&ClientId>,
+    ) -> Option<UiCustomization> {
+        let inner = self.inner.read().await;
+        let key = (user_pool_id.clone(), client_id.cloned());
+        if let Some(found) = inner.ui_customizations.get(&key) {
+            return Some(found.clone());
+        }
+        if client_id.is_some() {
+            return inner
+                .ui_customizations
+                .get(&(user_pool_id.clone(), None))
+                .cloned();
+        }
+        None
+    }
+
+    // ==================== Risk Configuration Operations ====================
+
+    pub async fn set_risk_configuration(
+        &self,
+        user_pool_id: &UserPoolId,
+        client_id: Option<&ClientId>,
+        value: Value,
+    ) {
+        let mut inner = self.inner.write().await;
+        inner
+            .risk_configurations
+            .insert((user_pool_id.clone(), client_id.cloned()), value);
+    }
+
+    pub async fn get_risk_configuration(
+        &self,
+        user_pool_id: &UserPoolId,
+        client_id: Option<&ClientId>,
+    ) -> Option<Value> {
+        let inner = self.inner.read().await;
+        let key = (user_pool_id.clone(), client_id.cloned());
+        if let Some(found) = inner.risk_configurations.get(&key) {
+            return Some(found.clone());
+        }
+        if client_id.is_some() {
+            return inner
+                .risk_configurations
+                .get(&(user_pool_id.clone(), None))
+                .cloned();
+        }
+        None
+    }
+
+    // ==================== Log Delivery Configuration Operations ====================
+
+    pub async fn set_log_delivery_configuration(
+        &self,
+        user_pool_id: &UserPoolId,
+        log_configurations: Vec<Value>,
+    ) {
+        let mut inner = self.inner.write().await;
+        inner
+            .log_delivery_configurations
+            .insert(user_pool_id.clone(), log_configurations);
+    }
+
+    pub async fn get_log_delivery_configuration(
+        &self,
+        user_pool_id: &UserPoolId,
+    ) -> Option<Vec<Value>> {
+        let inner = self.inner.read().await;
+        inner.log_delivery_configurations.get(user_pool_id).cloned()
+    }
+
+    // ==================== WebAuthn Operations ====================
+
+    pub async fn save_webauthn_challenge(&self, user_id: &UserId, challenge: String) {
+        let mut inner = self.inner.write().await;
+        inner
+            .webauthn_registration_challenges
+            .insert(*user_id, challenge);
+    }
+
+    pub async fn get_webauthn_challenge(&self, user_id: &UserId) -> Option<String> {
+        let inner = self.inner.read().await;
+        inner.webauthn_registration_challenges.get(user_id).cloned()
+    }
+
+    pub async fn delete_webauthn_challenge(&self, user_id: &UserId) {
+        let mut inner = self.inner.write().await;
+        inner.webauthn_registration_challenges.remove(user_id);
+    }
+
+    pub async fn add_webauthn_credential(
+        &self,
+        user_id: &UserId,
+        credential: WebAuthnCredential,
+    ) -> WebAuthnCredential {
+        let mut inner = self.inner.write().await;
+        let creds = inner.webauthn_credentials.entry(*user_id).or_default();
+        creds.retain(|c| c.credential_id != credential.credential_id);
+        creds.push(credential.clone());
+        credential
+    }
+
+    pub async fn list_webauthn_credentials(&self, user_id: &UserId) -> Vec<WebAuthnCredential> {
+        let inner = self.inner.read().await;
+        inner
+            .webauthn_credentials
+            .get(user_id)
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    pub async fn delete_webauthn_credential(&self, user_id: &UserId, credential_id: &str) -> bool {
+        let mut inner = self.inner.write().await;
+        if let Some(creds) = inner.webauthn_credentials.get_mut(user_id) {
+            let original_len = creds.len();
+            creds.retain(|c| c.credential_id != credential_id);
+            return creds.len() != original_len;
+        }
+        false
     }
 }
 
