@@ -71,6 +71,11 @@ See `COVERAGE.md` for the list of implemented/unimplemented Cognito operations (
 
 ## Git Workflow
 
+**Commit message format:**
+- Use Conventional Commits for all commits.
+- Format: ``type(scope): summary`` (or ``type: summary`` when scope is not needed)
+- Examples: ``feat(user): add ConfirmDevice handler``, ``fix(api): validate access token``, ``docs: update coverage notes``
+
 **Before committing:**
 1. Run `cargo fmt` to format the code
 2. Run `cargo clippy -- -D warnings` to check for lint errors
