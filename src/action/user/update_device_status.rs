@@ -2,6 +2,7 @@
 //!
 //! <https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_UpdateDeviceStatus.html>
 
+use chrono::Utc;
 use serde::Deserialize;
 use serde_json::{Value, json};
 
@@ -16,9 +17,7 @@ use super::helpers::verify_and_extract_user_id;
 #[serde(rename_all = "PascalCase")]
 struct Request {
     access_token: String,
-    #[allow(dead_code)]
     device_key: String,
-    #[allow(dead_code)]
     device_remembered_status: Option<String>,
 }
 
@@ -34,13 +33,37 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
         .await
         .ok_or(AppError::UserNotFound)?;
 
+    let status = req
+        .device_remembered_status
+        .ok_or_else(|| {
+            AppError::InvalidParameter("DeviceRememberedStatus is required".to_string())
+        })?
+        .to_lowercase();
+    if status != "remembered" && status != "not_remembered" {
+        return Err(AppError::InvalidParameter(
+            "DeviceRememberedStatus must be remembered or not_remembered".to_string(),
+        ));
+    }
+
+    let mut device = storage
+        .get_device_for_user(&user_id, &req.device_key)
+        .await
+        .ok_or(AppError::DeviceNotFound)?;
+    device.device_remembered_status = Some(status);
+    device.device_last_modified_date = Utc::now();
+
+    storage
+        .update_device_for_user(device)
+        .await
+        .ok_or(AppError::DeviceNotFound)?;
+
     Ok(json!({}))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::action::user::{initiate_auth, sign_up};
+    use crate::action::user::{confirm_device, get_device, initiate_auth, sign_up};
     use crate::action::user_pool::{create_user_pool, create_user_pool_client};
     use serde_json::json;
 
@@ -101,10 +124,20 @@ mod tests {
         let storage = Storage::new();
         let access_token = setup_and_get_token(&storage).await;
 
+        confirm_device::handler(
+            &storage,
+            json!({
+                "AccessToken": access_token.clone(),
+                "DeviceKey": "device-key"
+            }),
+        )
+        .await
+        .unwrap();
+
         let result = handler(
             &storage,
             json!({
-                "AccessToken": access_token,
+                "AccessToken": access_token.clone(),
                 "DeviceKey": "device-key",
                 "DeviceRememberedStatus": "remembered"
             }),
@@ -113,5 +146,16 @@ mod tests {
 
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), json!({}));
+
+        let fetched = get_device::handler(
+            &storage,
+            json!({
+                "AccessToken": access_token,
+                "DeviceKey": "device-key"
+            }),
+        )
+        .await
+        .unwrap();
+        assert_eq!(fetched["Device"]["DeviceRememberedStatus"], "remembered");
     }
 }

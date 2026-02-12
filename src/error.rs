@@ -43,6 +43,9 @@ pub enum AppError {
     #[error("Resource server already exists")]
     ResourceServerAlreadyExists,
 
+    #[error("Device not found")]
+    DeviceNotFound,
+
     #[error("User already exists")]
     UserAlreadyExists,
 
@@ -129,6 +132,7 @@ impl IntoResponse for AppError {
             AppError::ResourceServerAlreadyExists => {
                 (StatusCode::BAD_REQUEST, "InvalidParameterException")
             }
+            AppError::DeviceNotFound => (StatusCode::BAD_REQUEST, "ResourceNotFoundException"),
             AppError::UserAlreadyExists => (StatusCode::BAD_REQUEST, "UsernameExistsException"),
             AppError::InvalidPassword => (StatusCode::BAD_REQUEST, "InvalidPasswordException"),
             AppError::InvalidConfirmationCode => (StatusCode::BAD_REQUEST, "CodeMismatchException"),

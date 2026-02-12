@@ -2,12 +2,14 @@
 //!
 //! <https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_ConfirmDevice.html>
 
+use chrono::Utc;
 use serde::Deserialize;
 use serde_json::{Value, json};
 
 use crate::{
     error::{AppError, Result},
     storage::Storage,
+    types::Device,
 };
 
 use super::helpers::verify_and_extract_user_id;
@@ -16,7 +18,6 @@ use super::helpers::verify_and_extract_user_id;
 #[serde(rename_all = "PascalCase")]
 struct Request {
     access_token: String,
-    #[allow(dead_code)]
     device_key: String,
 }
 
@@ -31,6 +32,31 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
         .get_user(&user_id)
         .await
         .ok_or(AppError::UserNotFound)?;
+
+    if req.device_key.trim().is_empty() {
+        return Err(AppError::InvalidParameter(
+            "DeviceKey must not be empty".to_string(),
+        ));
+    }
+
+    let now = Utc::now();
+    let device =
+        if let Some(mut existing) = storage.get_device_for_user(&user_id, &req.device_key).await {
+            existing.device_last_modified_date = now;
+            existing.device_last_authenticated_date = now;
+            existing
+        } else {
+            Device {
+                user_id,
+                device_key: req.device_key,
+                device_attributes: vec![],
+                device_create_date: now,
+                device_last_modified_date: now,
+                device_last_authenticated_date: now,
+                device_remembered_status: Some("not_remembered".to_string()),
+            }
+        };
+    storage.put_device(device).await;
 
     Ok(json!({
         "UserConfirmationNecessary": false

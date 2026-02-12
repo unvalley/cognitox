@@ -16,7 +16,6 @@ use super::helpers::verify_and_extract_user_id;
 #[serde(rename_all = "PascalCase")]
 struct Request {
     access_token: String,
-    #[allow(dead_code)]
     device_key: String,
 }
 
@@ -32,13 +31,18 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
         .await
         .ok_or(AppError::UserNotFound)?;
 
+    storage
+        .delete_device_for_user(&user_id, &req.device_key)
+        .await
+        .ok_or(AppError::DeviceNotFound)?;
+
     Ok(json!({}))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::action::user::{initiate_auth, sign_up};
+    use crate::action::user::{confirm_device, initiate_auth, sign_up};
     use crate::action::user_pool::{create_user_pool, create_user_pool_client};
     use serde_json::json;
 
@@ -99,10 +103,20 @@ mod tests {
         let storage = Storage::new();
         let access_token = setup_and_get_token(&storage).await;
 
+        confirm_device::handler(
+            &storage,
+            json!({
+                "AccessToken": access_token.clone(),
+                "DeviceKey": "device-key"
+            }),
+        )
+        .await
+        .unwrap();
+
         let result = handler(
             &storage,
             json!({
-                "AccessToken": access_token,
+                "AccessToken": access_token.clone(),
                 "DeviceKey": "device-key"
             }),
         )

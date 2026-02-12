@@ -1,8 +1,9 @@
 //! Shared helper functions for user domain
 
+use serde_json::{Value, json};
 use uuid::Uuid;
 
-use crate::jwt;
+use crate::{jwt, types::Device};
 
 /// Default bcrypt cost factor (4 for fast testing, use 12+ in production)
 const BCRYPT_COST: u32 = 4;
@@ -68,4 +69,21 @@ pub fn mask_email(email: &str) -> String {
 pub fn verify_and_extract_user_id(token: &str) -> Result<Uuid, String> {
     let token_data = jwt::verify_access_token(token)?;
     Uuid::parse_str(&token_data.claims.sub).map_err(|e| format!("Invalid user ID in token: {}", e))
+}
+
+/// Build device response payload in Cognito-compatible shape.
+pub fn build_device_response(device: &Device) -> Value {
+    let mut value = json!({
+        "DeviceKey": device.device_key,
+        "DeviceAttributes": device.device_attributes,
+        "DeviceCreateDate": device.device_create_date.timestamp(),
+        "DeviceLastModifiedDate": device.device_last_modified_date.timestamp(),
+        "DeviceLastAuthenticatedDate": device.device_last_authenticated_date.timestamp()
+    });
+
+    if let Some(status) = &device.device_remembered_status {
+        value["DeviceRememberedStatus"] = json!(status);
+    }
+
+    value
 }

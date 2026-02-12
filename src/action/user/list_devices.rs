@@ -10,15 +10,13 @@ use crate::{
     storage::Storage,
 };
 
-use super::helpers::verify_and_extract_user_id;
+use super::helpers::{build_device_response, verify_and_extract_user_id};
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "PascalCase")]
 struct Request {
     access_token: String,
-    #[allow(dead_code)]
-    limit: Option<i32>,
-    #[allow(dead_code)]
+    limit: Option<u32>,
     pagination_token: Option<String>,
 }
 
@@ -34,16 +32,51 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
         .await
         .ok_or(AppError::UserNotFound)?;
 
-    Ok(json!({
-        "Devices": [],
-        "PaginationToken": null
-    }))
+    let mut devices = storage.list_devices_for_user(&user_id).await;
+    devices.sort_by(|a, b| a.device_key.cmp(&b.device_key));
+
+    let limit = req.limit.unwrap_or(60) as usize;
+    if limit == 0 {
+        return Err(AppError::InvalidParameter(
+            "Limit must be greater than 0".to_string(),
+        ));
+    }
+
+    let start = req
+        .pagination_token
+        .as_deref()
+        .map(|token| {
+            token
+                .parse::<usize>()
+                .map_err(|_| AppError::InvalidParameter("Invalid PaginationToken".to_string()))
+        })
+        .transpose()?
+        .unwrap_or(0);
+
+    if start > devices.len() {
+        return Err(AppError::InvalidParameter(
+            "Invalid PaginationToken".to_string(),
+        ));
+    }
+
+    let end = (start + limit).min(devices.len());
+    let payload: Vec<Value> = devices[start..end]
+        .iter()
+        .map(build_device_response)
+        .collect();
+
+    let mut response = json!({ "Devices": payload });
+    if end < devices.len() {
+        response["PaginationToken"] = json!(end.to_string());
+    }
+
+    Ok(response)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::action::user::{initiate_auth, sign_up};
+    use crate::action::user::{confirm_device, initiate_auth, sign_up};
     use crate::action::user_pool::{create_user_pool, create_user_pool_client};
     use serde_json::json;
 
@@ -104,15 +137,25 @@ mod tests {
         let storage = Storage::new();
         let access_token = setup_and_get_token(&storage).await;
 
+        confirm_device::handler(
+            &storage,
+            json!({
+                "AccessToken": access_token.clone(),
+                "DeviceKey": "device-key"
+            }),
+        )
+        .await
+        .unwrap();
+
         let result = handler(
             &storage,
             json!({
-                "AccessToken": access_token
+                "AccessToken": access_token.clone()
             }),
         )
         .await;
 
         assert!(result.is_ok());
-        assert_eq!(result.unwrap()["Devices"], json!([]));
+        assert_eq!(result.unwrap()["Devices"].as_array().unwrap().len(), 1);
     }
 }

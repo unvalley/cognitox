@@ -2,6 +2,7 @@
 //!
 //! <https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_AdminUpdateDeviceStatus.html>
 
+use chrono::Utc;
 use serde::Deserialize;
 use serde_json::{Value, json};
 
@@ -16,9 +17,7 @@ use crate::{
 struct Request {
     user_pool_id: UserPoolId,
     username: String,
-    #[allow(dead_code)]
     device_key: String,
-    #[allow(dead_code)]
     device_remembered_status: Option<String>,
 }
 
@@ -31,10 +30,34 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
         .await
         .ok_or(AppError::UserPoolNotFound)?;
 
-    storage
+    let user = storage
         .get_user_by_username(&req.user_pool_id, &req.username)
         .await
         .ok_or(AppError::UserNotFound)?;
+
+    let status = req
+        .device_remembered_status
+        .ok_or_else(|| {
+            AppError::InvalidParameter("DeviceRememberedStatus is required".to_string())
+        })?
+        .to_lowercase();
+    if status != "remembered" && status != "not_remembered" {
+        return Err(AppError::InvalidParameter(
+            "DeviceRememberedStatus must be remembered or not_remembered".to_string(),
+        ));
+    }
+
+    let mut device = storage
+        .get_device_for_user(&user.id, &req.device_key)
+        .await
+        .ok_or(AppError::DeviceNotFound)?;
+    device.device_remembered_status = Some(status);
+    device.device_last_modified_date = Utc::now();
+
+    storage
+        .update_device_for_user(device)
+        .await
+        .ok_or(AppError::DeviceNotFound)?;
 
     Ok(json!({}))
 }
@@ -42,8 +65,10 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::action::user::admin_create_user;
+    use crate::action::user::{admin_create_user, admin_get_device};
     use crate::action::user_pool::create_user_pool;
+    use crate::types::Device;
+    use chrono::Utc;
     use serde_json::json;
 
     #[tokio::test]
@@ -65,6 +90,24 @@ mod tests {
         .await
         .unwrap();
 
+        let user_pool_id: crate::types::UserPoolId = pool_id.parse().unwrap();
+        let user = storage
+            .get_user_by_username(&user_pool_id, "testuser")
+            .await
+            .unwrap();
+        let now = Utc::now();
+        storage
+            .put_device(Device {
+                user_id: user.id,
+                device_key: "device-key".to_string(),
+                device_attributes: vec![],
+                device_create_date: now,
+                device_last_modified_date: now,
+                device_last_authenticated_date: now,
+                device_remembered_status: Some("not_remembered".to_string()),
+            })
+            .await;
+
         let result = handler(
             &storage,
             json!({
@@ -78,5 +121,17 @@ mod tests {
 
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), json!({}));
+
+        let fetched = admin_get_device::handler(
+            &storage,
+            json!({
+                "UserPoolId": pool_id,
+                "Username": "testuser",
+                "DeviceKey": "device-key"
+            }),
+        )
+        .await
+        .unwrap();
+        assert_eq!(fetched["Device"]["DeviceRememberedStatus"], "remembered");
     }
 }

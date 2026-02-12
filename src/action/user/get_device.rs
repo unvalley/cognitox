@@ -2,7 +2,6 @@
 //!
 //! <https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_GetDevice.html>
 
-use chrono::Utc;
 use serde::Deserialize;
 use serde_json::{Value, json};
 
@@ -11,7 +10,7 @@ use crate::{
     storage::Storage,
 };
 
-use super::helpers::verify_and_extract_user_id;
+use super::helpers::{build_device_response, verify_and_extract_user_id};
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "PascalCase")]
@@ -32,21 +31,20 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
         .await
         .ok_or(AppError::UserNotFound)?;
 
+    let device = storage
+        .get_device_for_user(&user_id, &req.device_key)
+        .await
+        .ok_or(AppError::DeviceNotFound)?;
+
     Ok(json!({
-        "Device": {
-            "DeviceKey": req.device_key,
-            "DeviceAttributes": [],
-            "DeviceCreateDate": Utc::now(),
-            "DeviceLastModifiedDate": Utc::now(),
-            "DeviceLastAuthenticatedDate": Utc::now()
-        }
+        "Device": build_device_response(&device)
     }))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::action::user::{initiate_auth, sign_up};
+    use crate::action::user::{confirm_device, initiate_auth, sign_up};
     use crate::action::user_pool::{create_user_pool, create_user_pool_client};
     use serde_json::json;
 
@@ -107,10 +105,20 @@ mod tests {
         let storage = Storage::new();
         let access_token = setup_and_get_token(&storage).await;
 
+        confirm_device::handler(
+            &storage,
+            json!({
+                "AccessToken": access_token.clone(),
+                "DeviceKey": "device-key"
+            }),
+        )
+        .await
+        .unwrap();
+
         let result = handler(
             &storage,
             json!({
-                "AccessToken": access_token,
+                "AccessToken": access_token.clone(),
                 "DeviceKey": "device-key"
             }),
         )

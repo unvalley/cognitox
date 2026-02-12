@@ -16,7 +16,6 @@ use crate::{
 struct Request {
     user_pool_id: UserPoolId,
     username: String,
-    #[allow(dead_code)]
     device_key: String,
 }
 
@@ -29,10 +28,15 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
         .await
         .ok_or(AppError::UserPoolNotFound)?;
 
-    storage
+    let user = storage
         .get_user_by_username(&req.user_pool_id, &req.username)
         .await
         .ok_or(AppError::UserNotFound)?;
+
+    storage
+        .delete_device_for_user(&user.id, &req.device_key)
+        .await
+        .ok_or(AppError::DeviceNotFound)?;
 
     Ok(json!({}))
 }
@@ -42,6 +46,8 @@ mod tests {
     use super::*;
     use crate::action::user::admin_create_user;
     use crate::action::user_pool::create_user_pool;
+    use crate::types::Device;
+    use chrono::Utc;
     use serde_json::json;
 
     #[tokio::test]
@@ -62,6 +68,24 @@ mod tests {
         )
         .await
         .unwrap();
+
+        let user_pool_id: crate::types::UserPoolId = pool_id.parse().unwrap();
+        let user = storage
+            .get_user_by_username(&user_pool_id, "testuser")
+            .await
+            .unwrap();
+        let now = Utc::now();
+        storage
+            .put_device(Device {
+                user_id: user.id,
+                device_key: "device-key".to_string(),
+                device_attributes: vec![],
+                device_create_date: now,
+                device_last_modified_date: now,
+                device_last_authenticated_date: now,
+                device_remembered_status: Some("remembered".to_string()),
+            })
+            .await;
 
         let result = handler(
             &storage,

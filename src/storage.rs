@@ -9,10 +9,10 @@ use serde_json::Value;
 use tokio::sync::RwLock;
 
 use crate::types::{
-    AuthorizationCode, BrandingId, ClientId, ConfirmationCode, DomainPrefix, Group, GroupName,
-    IdentityProvider, ManagedLoginBranding, PasswordResetCode, RefreshToken, ResourceServer,
-    TermsDocument, UiCustomization, User, UserId, UserImportJob, UserPool, UserPoolClient,
-    UserPoolDomain, UserPoolId, WebAuthnCredential,
+    AuthorizationCode, BrandingId, ClientId, ConfirmationCode, Device, DomainPrefix, Group,
+    GroupName, IdentityProvider, ManagedLoginBranding, PasswordResetCode, RefreshToken,
+    ResourceServer, TermsDocument, UiCustomization, User, UserId, UserImportJob, UserPool,
+    UserPoolClient, UserPoolDomain, UserPoolId, WebAuthnCredential,
 };
 
 #[derive(Debug, Clone)]
@@ -32,6 +32,7 @@ struct StorageInner {
     user_pool_brandings: HashMap<UserPoolId, BrandingId>,
     client_brandings: HashMap<ClientId, BrandingId>,
     users: HashMap<UserId, User>,
+    devices: HashMap<(UserId, String), Device>,
     confirmation_codes: HashMap<UserId, ConfirmationCode>,
     refresh_tokens: HashMap<String, RefreshToken>,
     authorization_codes: HashMap<String, AuthorizationCode>,
@@ -378,6 +379,7 @@ impl Storage {
             inner
                 .username_index
                 .remove(&(user.user_pool_id.clone(), user.username.clone()));
+            inner.devices.retain(|(user_id, _), _| user_id != id);
             Some(user)
         } else {
             None
@@ -392,6 +394,54 @@ impl Storage {
             .filter(|u| &u.user_pool_id == user_pool_id)
             .cloned()
             .collect()
+    }
+
+    // ==================== Device Operations ====================
+
+    pub async fn put_device(&self, device: Device) -> Device {
+        let mut inner = self.inner.write().await;
+        inner
+            .devices
+            .insert((device.user_id, device.device_key.clone()), device.clone());
+        device
+    }
+
+    pub async fn get_device_for_user(&self, user_id: &UserId, device_key: &str) -> Option<Device> {
+        let inner = self.inner.read().await;
+        inner
+            .devices
+            .get(&(*user_id, device_key.to_string()))
+            .cloned()
+    }
+
+    pub async fn list_devices_for_user(&self, user_id: &UserId) -> Vec<Device> {
+        let inner = self.inner.read().await;
+        inner
+            .devices
+            .values()
+            .filter(|device| &device.user_id == user_id)
+            .cloned()
+            .collect()
+    }
+
+    pub async fn delete_device_for_user(
+        &self,
+        user_id: &UserId,
+        device_key: &str,
+    ) -> Option<Device> {
+        let mut inner = self.inner.write().await;
+        inner.devices.remove(&(*user_id, device_key.to_string()))
+    }
+
+    pub async fn update_device_for_user(&self, device: Device) -> Option<Device> {
+        let mut inner = self.inner.write().await;
+        let key = (device.user_id, device.device_key.clone());
+        if let std::collections::hash_map::Entry::Occupied(mut e) = inner.devices.entry(key) {
+            e.insert(device.clone());
+            Some(device)
+        } else {
+            None
+        }
     }
 
     /// Confirm a user by updating their status to Confirmed

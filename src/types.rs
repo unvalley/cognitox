@@ -367,6 +367,18 @@ pub struct UserAttribute {
     pub value: Option<String>,
 }
 
+/// Remembered device metadata
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Device {
+    pub user_id: UserId,
+    pub device_key: String,
+    pub device_attributes: Vec<UserAttribute>,
+    pub device_create_date: DateTime<Utc>,
+    pub device_last_modified_date: DateTime<Utc>,
+    pub device_last_authenticated_date: DateTime<Utc>,
+    pub device_remembered_status: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConfirmationCode {
     pub user_id: UserId,
