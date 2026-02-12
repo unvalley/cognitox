@@ -15,7 +15,10 @@ use super::helpers::verify_and_extract_user_id;
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "PascalCase")]
 struct Request {
-    access_token: String,
+    #[serde(default)]
+    access_token: Option<String>,
+    #[serde(default)]
+    session: Option<String>,
     user_code: String,
     #[serde(default, rename = "FriendlyDeviceName")]
     friendly_device_name: Option<String>,
@@ -30,13 +33,37 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
             "UserCode must not be empty".to_string(),
         ));
     }
+    if req.user_code.len() != 6 || !req.user_code.chars().all(|c| c.is_ascii_digit()) {
+        return Err(AppError::InvalidParameter(
+            "UserCode must be a 6-digit code".to_string(),
+        ));
+    }
 
-    let user_id =
-        verify_and_extract_user_id(&req.access_token).map_err(|_| AppError::InvalidAccessToken)?;
+    let user_id = if let Some(access_token) = req.access_token.as_deref() {
+        verify_and_extract_user_id(access_token).map_err(|_| AppError::InvalidAccessToken)?
+    } else if let Some(session) = req.session.as_deref() {
+        storage
+            .get_software_token_session(session)
+            .await
+            .map(|(user_id, _)| user_id)
+            .ok_or_else(|| AppError::InvalidParameter("Invalid session".to_string()))?
+    } else {
+        return Err(AppError::InvalidParameter(
+            "AccessToken or Session is required".to_string(),
+        ));
+    };
+
     storage
         .get_user(&user_id)
         .await
         .ok_or(AppError::UserNotFound)?;
+
+    if let Some(session) = req.session.as_deref() {
+        storage.delete_software_token_session(session).await;
+    }
+    storage
+        .add_user_auth_factor(&user_id, "SOFTWARE_TOKEN_MFA")
+        .await;
 
     let _ = req.friendly_device_name;
 
@@ -156,5 +183,33 @@ mod tests {
 
         assert!(result.is_err());
         assert!(matches!(result.unwrap_err(), AppError::InvalidParameter(_)));
+    }
+
+    #[tokio::test]
+    async fn test_verify_software_token_with_session() {
+        let storage = Storage::new();
+        let access_token = setup_and_get_token(&storage).await;
+
+        let associated = crate::action::user::associate_software_token::handler(
+            &storage,
+            json!({
+                "AccessToken": access_token
+            }),
+        )
+        .await
+        .unwrap();
+
+        let session = associated["Session"].as_str().unwrap();
+        let result = handler(
+            &storage,
+            json!({
+                "Session": session,
+                "UserCode": "123456"
+            }),
+        )
+        .await;
+
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap()["Status"], "SUCCESS");
     }
 }

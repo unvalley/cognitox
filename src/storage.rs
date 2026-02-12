@@ -35,6 +35,8 @@ struct StorageInner {
     devices: HashMap<(UserId, String), Device>,
     confirmation_codes: HashMap<UserId, ConfirmationCode>,
     refresh_tokens: HashMap<String, RefreshToken>,
+    software_token_sessions: HashMap<String, (UserId, String)>,
+    user_auth_factors: HashMap<UserId, Vec<String>>,
     authorization_codes: HashMap<String, AuthorizationCode>,
     username_index: HashMap<(UserPoolId, String), UserId>,
     groups: HashMap<(UserPoolId, GroupName), Group>,
@@ -380,6 +382,10 @@ impl Storage {
                 .username_index
                 .remove(&(user.user_pool_id.clone(), user.username.clone()));
             inner.devices.retain(|(user_id, _), _| user_id != id);
+            inner.user_auth_factors.remove(id);
+            inner
+                .software_token_sessions
+                .retain(|_, (user_id, _)| user_id != id);
             Some(user)
         } else {
             None
@@ -501,6 +507,47 @@ impl Storage {
     pub async fn delete_refresh_tokens_for_user(&self, user_id: &UserId) {
         let mut inner = self.inner.write().await;
         inner.refresh_tokens.retain(|_, v| &v.user_id != user_id);
+    }
+
+    // ==================== Software Token MFA Operations ====================
+
+    pub async fn save_software_token_session(
+        &self,
+        session: String,
+        user_id: &UserId,
+        secret: String,
+    ) {
+        let mut inner = self.inner.write().await;
+        inner
+            .software_token_sessions
+            .insert(session, (*user_id, secret));
+    }
+
+    pub async fn get_software_token_session(&self, session: &str) -> Option<(UserId, String)> {
+        let inner = self.inner.read().await;
+        inner.software_token_sessions.get(session).cloned()
+    }
+
+    pub async fn delete_software_token_session(&self, session: &str) {
+        let mut inner = self.inner.write().await;
+        inner.software_token_sessions.remove(session);
+    }
+
+    pub async fn add_user_auth_factor(&self, user_id: &UserId, factor: &str) {
+        let mut inner = self.inner.write().await;
+        let factors = inner.user_auth_factors.entry(*user_id).or_default();
+        if !factors.iter().any(|existing| existing == factor) {
+            factors.push(factor.to_string());
+        }
+    }
+
+    pub async fn list_user_auth_factors(&self, user_id: &UserId) -> Vec<String> {
+        let inner = self.inner.read().await;
+        inner
+            .user_auth_factors
+            .get(user_id)
+            .cloned()
+            .unwrap_or_default()
     }
 
     // ==================== Group Operations ====================

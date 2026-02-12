@@ -30,17 +30,20 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
         .await
         .ok_or(AppError::UserNotFound)?;
 
-    // For the emulator, MFA factors are not stored. Return an empty list.
+    let factors = storage.list_user_auth_factors(&user_id).await;
+
     Ok(json!({
         "Username": user.username,
-        "ConfiguredUserAuthFactors": []
+        "ConfiguredUserAuthFactors": factors
     }))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::action::user::{initiate_auth, sign_up};
+    use crate::action::user::{
+        associate_software_token, initiate_auth, sign_up, verify_software_token,
+    };
     use crate::action::user_pool::{create_user_pool, create_user_pool_client};
     use serde_json::json;
 
@@ -113,6 +116,44 @@ mod tests {
         let body = result.unwrap();
         assert_eq!(body["Username"], "testuser");
         assert_eq!(body["ConfiguredUserAuthFactors"], json!([]));
+    }
+
+    #[tokio::test]
+    async fn test_get_user_auth_factors_after_verify_software_token() {
+        let storage = Storage::new();
+        let access_token = setup_and_get_token(&storage).await;
+
+        associate_software_token::handler(
+            &storage,
+            json!({
+                "AccessToken": access_token.clone()
+            }),
+        )
+        .await
+        .unwrap();
+
+        verify_software_token::handler(
+            &storage,
+            json!({
+                "AccessToken": access_token.clone(),
+                "UserCode": "123456"
+            }),
+        )
+        .await
+        .unwrap();
+
+        let body = handler(
+            &storage,
+            json!({
+                "AccessToken": access_token
+            }),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            body["ConfiguredUserAuthFactors"],
+            json!(["SOFTWARE_TOKEN_MFA"])
+        );
     }
 
     #[tokio::test]

@@ -4,6 +4,7 @@
 
 use serde::Deserialize;
 use serde_json::{Value, json};
+use uuid::Uuid;
 
 use crate::{
     error::{AppError, Result},
@@ -25,25 +26,45 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
     let req: Request = serde_json::from_value(body)
         .map_err(|e| AppError::InvalidParameter(format!("Invalid request: {}", e)))?;
 
-    if let Some(access_token) = req.access_token.as_deref() {
+    let user_id = if let Some(access_token) = req.access_token.as_deref() {
         let user_id =
             verify_and_extract_user_id(access_token).map_err(|_| AppError::InvalidAccessToken)?;
         storage
             .get_user(&user_id)
             .await
             .ok_or(AppError::UserNotFound)?;
-    } else if req.session.is_none() {
+        user_id
+    } else if let Some(session) = req.session.as_deref() {
+        storage
+            .get_software_token_session(session)
+            .await
+            .map(|(user_id, _)| user_id)
+            .ok_or_else(|| AppError::InvalidParameter("Invalid session".to_string()))?
+    } else {
         return Err(AppError::InvalidParameter(
             "AccessToken or Session is required".to_string(),
         ));
-    }
+    };
 
-    let session = uuid::Uuid::new_v4().to_string();
+    let secret_code = generate_secret_code();
+    let session = Uuid::new_v4().to_string();
+    storage
+        .save_software_token_session(session.clone(), &user_id, secret_code.clone())
+        .await;
 
     Ok(json!({
-        "SecretCode": "SOFTWARE_TOKEN_SECRET",
+        "SecretCode": secret_code,
         "Session": session
     }))
+}
+
+fn generate_secret_code() -> String {
+    use rand::Rng;
+    const CHARSET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+    let mut rng = rand::thread_rng();
+    (0..32)
+        .map(|_| CHARSET[rng.gen_range(0..CHARSET.len())] as char)
+        .collect()
 }
 
 #[cfg(test)]
@@ -120,7 +141,7 @@ mod tests {
 
         assert!(result.is_ok());
         let body = result.unwrap();
-        assert_eq!(body["SecretCode"], "SOFTWARE_TOKEN_SECRET");
+        assert_eq!(body["SecretCode"].as_str().unwrap().len(), 32);
         assert!(body["Session"].as_str().is_some());
     }
 
