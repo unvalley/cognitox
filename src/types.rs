@@ -379,6 +379,19 @@ pub struct Device {
     pub device_remembered_status: Option<String>,
 }
 
+/// User authentication event
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AuthEvent {
+    pub event_id: String,
+    pub user_id: UserId,
+    pub event_type: String,
+    pub creation_date: DateTime<Utc>,
+    pub event_response: String,
+    pub feedback_value: Option<String>,
+    pub feedback_provided_by: Option<String>,
+    pub feedback_date: Option<DateTime<Utc>>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConfirmationCode {
     pub user_id: UserId,

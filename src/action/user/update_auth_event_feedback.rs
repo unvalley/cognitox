@@ -2,6 +2,7 @@
 //!
 //! <https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_UpdateAuthEventFeedback.html>
 
+use chrono::Utc;
 use serde::Deserialize;
 use serde_json::{Value, json};
 
@@ -16,9 +17,7 @@ use super::helpers::verify_and_extract_user_id;
 #[serde(rename_all = "PascalCase")]
 struct Request {
     access_token: String,
-    #[allow(dead_code)]
     event_id: String,
-    #[allow(dead_code)]
     feedback_value: String,
 }
 
@@ -33,6 +32,29 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
         .get_user(&user_id)
         .await
         .ok_or(AppError::UserNotFound)?;
+
+    if req.feedback_value != "Valid" && req.feedback_value != "Invalid" {
+        return Err(AppError::InvalidParameter(
+            "FeedbackValue must be Valid or Invalid".to_string(),
+        ));
+    }
+
+    let mut event = storage
+        .get_auth_event(&req.event_id)
+        .await
+        .ok_or(AppError::AuthEventNotFound)?;
+    if event.user_id != user_id {
+        return Err(AppError::AuthEventNotFound);
+    }
+
+    event.feedback_value = Some(req.feedback_value);
+    event.feedback_provided_by = Some("User".to_string());
+    event.feedback_date = Some(Utc::now());
+
+    storage
+        .update_auth_event(event)
+        .await
+        .ok_or(AppError::AuthEventNotFound)?;
 
     Ok(json!({}))
 }
@@ -100,12 +122,16 @@ mod tests {
     async fn test_update_auth_event_feedback_success() {
         let storage = Storage::new();
         let access_token = setup_and_get_token(&storage).await;
+        let user_id = verify_and_extract_user_id(&access_token).unwrap();
+        let event_id = storage.list_auth_events_for_user(&user_id).await[0]
+            .event_id
+            .clone();
 
         let result = handler(
             &storage,
             json!({
                 "AccessToken": access_token,
-                "EventId": "event-id",
+                "EventId": event_id,
                 "FeedbackValue": "Valid"
             }),
         )

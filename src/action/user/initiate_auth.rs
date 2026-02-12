@@ -13,7 +13,7 @@ use crate::{
     error::{AppError, Result},
     jwt::{generate_access_token, generate_id_token},
     storage::Storage,
-    types::{ClientId, RefreshToken, UserStatus},
+    types::{AuthEvent, ClientId, RefreshToken, UserStatus},
 };
 
 use super::helpers::verify_password;
@@ -92,6 +92,19 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
                 expires_at: Utc::now() + Duration::days(30),
             };
             storage.save_refresh_token(refresh).await;
+
+            storage
+                .create_auth_event(AuthEvent {
+                    event_id: Uuid::new_v4().to_string(),
+                    user_id: user.id,
+                    event_type: "SignIn".to_string(),
+                    creation_date: Utc::now(),
+                    event_response: "Pass".to_string(),
+                    feedback_value: None,
+                    feedback_provided_by: None,
+                    feedback_date: None,
+                })
+                .await;
 
             Ok(json!({
                 "AuthenticationResult": {

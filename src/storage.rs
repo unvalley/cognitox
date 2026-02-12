@@ -9,8 +9,8 @@ use serde_json::Value;
 use tokio::sync::RwLock;
 
 use crate::types::{
-    AuthorizationCode, BrandingId, ClientId, ConfirmationCode, Device, DomainPrefix, Group,
-    GroupName, IdentityProvider, ManagedLoginBranding, PasswordResetCode, RefreshToken,
+    AuthEvent, AuthorizationCode, BrandingId, ClientId, ConfirmationCode, Device, DomainPrefix,
+    Group, GroupName, IdentityProvider, ManagedLoginBranding, PasswordResetCode, RefreshToken,
     ResourceServer, TermsDocument, UiCustomization, User, UserId, UserImportJob, UserPool,
     UserPoolClient, UserPoolDomain, UserPoolId, WebAuthnCredential,
 };
@@ -37,6 +37,8 @@ struct StorageInner {
     refresh_tokens: HashMap<String, RefreshToken>,
     software_token_sessions: HashMap<String, (UserId, String)>,
     user_auth_factors: HashMap<UserId, Vec<String>>,
+    auth_events: HashMap<String, AuthEvent>,
+    user_auth_event_index: HashMap<UserId, Vec<String>>,
     authorization_codes: HashMap<String, AuthorizationCode>,
     username_index: HashMap<(UserPoolId, String), UserId>,
     groups: HashMap<(UserPoolId, GroupName), Group>,
@@ -386,6 +388,11 @@ impl Storage {
             inner
                 .software_token_sessions
                 .retain(|_, (user_id, _)| user_id != id);
+            if let Some(event_ids) = inner.user_auth_event_index.remove(id) {
+                for event_id in event_ids {
+                    inner.auth_events.remove(&event_id);
+                }
+            }
             Some(user)
         } else {
             None
@@ -547,6 +554,52 @@ impl Storage {
             .user_auth_factors
             .get(user_id)
             .cloned()
+            .unwrap_or_default()
+    }
+
+    // ==================== Auth Event Operations ====================
+
+    pub async fn create_auth_event(&self, event: AuthEvent) -> AuthEvent {
+        let mut inner = self.inner.write().await;
+        inner
+            .user_auth_event_index
+            .entry(event.user_id)
+            .or_default()
+            .push(event.event_id.clone());
+        inner
+            .auth_events
+            .insert(event.event_id.clone(), event.clone());
+        event
+    }
+
+    pub async fn get_auth_event(&self, event_id: &str) -> Option<AuthEvent> {
+        let inner = self.inner.read().await;
+        inner.auth_events.get(event_id).cloned()
+    }
+
+    pub async fn update_auth_event(&self, event: AuthEvent) -> Option<AuthEvent> {
+        let mut inner = self.inner.write().await;
+        if let std::collections::hash_map::Entry::Occupied(mut e) =
+            inner.auth_events.entry(event.event_id.clone())
+        {
+            e.insert(event.clone());
+            Some(event)
+        } else {
+            None
+        }
+    }
+
+    pub async fn list_auth_events_for_user(&self, user_id: &UserId) -> Vec<AuthEvent> {
+        let inner = self.inner.read().await;
+        inner
+            .user_auth_event_index
+            .get(user_id)
+            .map(|ids| {
+                ids.iter()
+                    .filter_map(|id| inner.auth_events.get(id))
+                    .cloned()
+                    .collect()
+            })
             .unwrap_or_default()
     }
 

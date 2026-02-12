@@ -46,6 +46,9 @@ pub enum AppError {
     #[error("Device not found")]
     DeviceNotFound,
 
+    #[error("Auth event not found")]
+    AuthEventNotFound,
+
     #[error("User already exists")]
     UserAlreadyExists,
 
@@ -133,6 +136,7 @@ impl IntoResponse for AppError {
                 (StatusCode::BAD_REQUEST, "InvalidParameterException")
             }
             AppError::DeviceNotFound => (StatusCode::BAD_REQUEST, "ResourceNotFoundException"),
+            AppError::AuthEventNotFound => (StatusCode::BAD_REQUEST, "ResourceNotFoundException"),
             AppError::UserAlreadyExists => (StatusCode::BAD_REQUEST, "UsernameExistsException"),
             AppError::InvalidPassword => (StatusCode::BAD_REQUEST, "InvalidPasswordException"),
             AppError::InvalidConfirmationCode => (StatusCode::BAD_REQUEST, "CodeMismatchException"),
