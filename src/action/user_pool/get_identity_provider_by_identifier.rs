@@ -6,6 +6,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 use crate::{
+    action::user_pool::create_identity_provider::build_identity_provider_response,
     error::{AppError, Result},
     storage::Storage,
     types::UserPoolId,
@@ -27,18 +28,20 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
         .await
         .ok_or(AppError::UserPoolNotFound)?;
 
+    let provider = storage
+        .get_identity_provider_by_identifier(&req.user_pool_id, &req.identifier)
+        .await
+        .ok_or(AppError::IdentityProviderNotFound)?;
+
     Ok(json!({
-        "IdentityProvider": {
-            "ProviderName": req.identifier,
-            "ProviderType": "OIDC"
-        }
+        "IdentityProvider": build_identity_provider_response(&provider)
     }))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::action::user_pool::create_user_pool;
+    use crate::action::user_pool::{create_identity_provider, create_user_pool};
     use serde_json::json;
 
     #[tokio::test]
@@ -50,11 +53,23 @@ mod tests {
             .unwrap();
         let user_pool_id = pool["UserPool"]["Id"].as_str().unwrap();
 
+        create_identity_provider::handler(
+            &storage,
+            json!({
+                "UserPoolId": user_pool_id,
+                "ProviderName": "MyProvider",
+                "ProviderType": "OIDC",
+                "IdpIdentifiers": ["my-provider-id"]
+            }),
+        )
+        .await
+        .unwrap();
+
         let result = handler(
             &storage,
             json!({
                 "UserPoolId": user_pool_id,
-                "Identifier": "MyProvider"
+                "Identifier": "my-provider-id"
             }),
         )
         .await

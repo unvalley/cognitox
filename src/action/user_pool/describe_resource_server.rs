@@ -6,6 +6,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 use crate::{
+    action::user_pool::create_resource_server::build_resource_server_response,
     error::{AppError, Result},
     storage::Storage,
     types::UserPoolId,
@@ -27,19 +28,20 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
         .await
         .ok_or(AppError::UserPoolNotFound)?;
 
+    let resource_server = storage
+        .get_resource_server(&req.user_pool_id, &req.identifier)
+        .await
+        .ok_or(AppError::ResourceServerNotFound)?;
+
     Ok(json!({
-        "ResourceServer": {
-            "Identifier": req.identifier,
-            "Name": "ResourceServer",
-            "Scopes": []
-        }
+        "ResourceServer": build_resource_server_response(&resource_server)
     }))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::action::user_pool::create_user_pool;
+    use crate::action::user_pool::{create_resource_server, create_user_pool};
     use serde_json::json;
 
     #[tokio::test]
@@ -50,6 +52,17 @@ mod tests {
             .await
             .unwrap();
         let user_pool_id = pool["UserPool"]["Id"].as_str().unwrap();
+
+        create_resource_server::handler(
+            &storage,
+            json!({
+                "UserPoolId": user_pool_id,
+                "Identifier": "api",
+                "Name": "ResourceServer"
+            }),
+        )
+        .await
+        .unwrap();
 
         let result = handler(
             &storage,
@@ -62,5 +75,6 @@ mod tests {
         .unwrap();
 
         assert_eq!(result["ResourceServer"]["Identifier"], "api");
+        assert_eq!(result["ResourceServer"]["Name"], "ResourceServer");
     }
 }

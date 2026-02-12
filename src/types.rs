@@ -482,6 +482,35 @@ pub struct UserPoolDomain {
     pub managed_login_version: Option<i32>,
 }
 
+/// Identity provider configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IdentityProvider {
+    pub user_pool_id: UserPoolId,
+    pub provider_name: String,
+    pub provider_type: String,
+    pub provider_details: HashMap<String, String>,
+    pub attribute_mapping: HashMap<String, String>,
+    pub idp_identifiers: Vec<String>,
+    pub creation_date: DateTime<Utc>,
+    pub last_modified_date: DateTime<Utc>,
+}
+
+/// Resource server scope
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ResourceServerScope {
+    pub scope_name: String,
+    pub scope_description: String,
+}
+
+/// Resource server
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ResourceServer {
+    pub user_pool_id: UserPoolId,
+    pub identifier: String,
+    pub name: String,
+    pub scopes: Vec<ResourceServerScope>,
+}
+
 /// Managed Login Branding ID
 pub type BrandingId = String;
 

@@ -8,7 +8,7 @@ use serde_json::{Value, json};
 use crate::{
     error::{AppError, Result},
     storage::Storage,
-    types::UserPoolId,
+    types::{ResourceServer, ResourceServerScope, UserPoolId},
 };
 
 #[derive(Debug, Deserialize)]
@@ -18,7 +18,14 @@ struct Request {
     identifier: String,
     name: String,
     #[serde(default)]
-    scopes: Vec<Value>,
+    scopes: Vec<ScopeInput>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+struct ScopeInput {
+    scope_name: String,
+    scope_description: String,
 }
 
 pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
@@ -30,13 +37,62 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
         .await
         .ok_or(AppError::UserPoolNotFound)?;
 
+    if req.identifier.trim().is_empty() {
+        return Err(AppError::InvalidParameter(
+            "Identifier must not be empty".to_string(),
+        ));
+    }
+    if req.name.trim().is_empty() {
+        return Err(AppError::InvalidParameter(
+            "Name must not be empty".to_string(),
+        ));
+    }
+    if storage
+        .get_resource_server(&req.user_pool_id, &req.identifier)
+        .await
+        .is_some()
+    {
+        return Err(AppError::ResourceServerAlreadyExists);
+    }
+
+    let resource_server = ResourceServer {
+        user_pool_id: req.user_pool_id,
+        identifier: req.identifier,
+        name: req.name,
+        scopes: req
+            .scopes
+            .into_iter()
+            .map(|scope| ResourceServerScope {
+                scope_name: scope.scope_name,
+                scope_description: scope.scope_description,
+            })
+            .collect(),
+    };
+    let created = storage.create_resource_server(resource_server).await;
+
     Ok(json!({
-        "ResourceServer": {
-            "Identifier": req.identifier,
-            "Name": req.name,
-            "Scopes": req.scopes
-        }
+        "ResourceServer": build_resource_server_response(&created)
     }))
+}
+
+pub(crate) fn build_resource_server_response(resource_server: &ResourceServer) -> Value {
+    let scopes: Vec<Value> = resource_server
+        .scopes
+        .iter()
+        .map(|scope| {
+            json!({
+                "ScopeName": scope.scope_name,
+                "ScopeDescription": scope.scope_description
+            })
+        })
+        .collect();
+
+    json!({
+        "UserPoolId": resource_server.user_pool_id,
+        "Identifier": resource_server.identifier,
+        "Name": resource_server.name,
+        "Scopes": scopes
+    })
 }
 
 #[cfg(test)]
@@ -66,5 +122,6 @@ mod tests {
         .unwrap();
 
         assert_eq!(result["ResourceServer"]["Identifier"], "api");
+        assert_eq!(result["ResourceServer"]["Name"], "My API");
     }
 }

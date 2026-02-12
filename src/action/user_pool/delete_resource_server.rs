@@ -15,7 +15,6 @@ use crate::{
 #[serde(rename_all = "PascalCase")]
 struct Request {
     user_pool_id: UserPoolId,
-    #[allow(dead_code)]
     identifier: String,
 }
 
@@ -28,13 +27,18 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
         .await
         .ok_or(AppError::UserPoolNotFound)?;
 
+    storage
+        .delete_resource_server(&req.user_pool_id, &req.identifier)
+        .await
+        .ok_or(AppError::ResourceServerNotFound)?;
+
     Ok(json!({}))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::action::user_pool::create_user_pool;
+    use crate::action::user_pool::{create_resource_server, create_user_pool};
     use serde_json::json;
 
     #[tokio::test]
@@ -45,6 +49,17 @@ mod tests {
             .await
             .unwrap();
         let user_pool_id = pool["UserPool"]["Id"].as_str().unwrap();
+
+        create_resource_server::handler(
+            &storage,
+            json!({
+                "UserPoolId": user_pool_id,
+                "Identifier": "api",
+                "Name": "My API"
+            }),
+        )
+        .await
+        .unwrap();
 
         let result = handler(
             &storage,
@@ -57,5 +72,30 @@ mod tests {
         .unwrap();
 
         assert_eq!(result, json!({}));
+    }
+
+    #[tokio::test]
+    async fn test_delete_resource_server_not_found() {
+        let storage = Storage::new();
+
+        let pool = create_user_pool::handler(&storage, json!({"PoolName": "test-pool"}))
+            .await
+            .unwrap();
+        let user_pool_id = pool["UserPool"]["Id"].as_str().unwrap();
+
+        let result = handler(
+            &storage,
+            json!({
+                "UserPoolId": user_pool_id,
+                "Identifier": "missing"
+            }),
+        )
+        .await;
+
+        assert!(result.is_err());
+        assert!(matches!(
+            result.unwrap_err(),
+            AppError::ResourceServerNotFound
+        ));
     }
 }

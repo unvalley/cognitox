@@ -31,6 +31,18 @@ pub enum AppError {
     #[error("WebAuthn credential not found")]
     WebAuthnCredentialNotFound,
 
+    #[error("Identity provider not found")]
+    IdentityProviderNotFound,
+
+    #[error("Identity provider already exists")]
+    IdentityProviderAlreadyExists,
+
+    #[error("Resource server not found")]
+    ResourceServerNotFound,
+
+    #[error("Resource server already exists")]
+    ResourceServerAlreadyExists,
+
     #[error("User already exists")]
     UserAlreadyExists,
 
@@ -104,6 +116,18 @@ impl IntoResponse for AppError {
             AppError::TermsNotFound => (StatusCode::BAD_REQUEST, "ResourceNotFoundException"),
             AppError::WebAuthnCredentialNotFound => {
                 (StatusCode::BAD_REQUEST, "ResourceNotFoundException")
+            }
+            AppError::IdentityProviderNotFound => {
+                (StatusCode::BAD_REQUEST, "ResourceNotFoundException")
+            }
+            AppError::IdentityProviderAlreadyExists => {
+                (StatusCode::BAD_REQUEST, "InvalidParameterException")
+            }
+            AppError::ResourceServerNotFound => {
+                (StatusCode::BAD_REQUEST, "ResourceNotFoundException")
+            }
+            AppError::ResourceServerAlreadyExists => {
+                (StatusCode::BAD_REQUEST, "InvalidParameterException")
             }
             AppError::UserAlreadyExists => (StatusCode::BAD_REQUEST, "UsernameExistsException"),
             AppError::InvalidPassword => (StatusCode::BAD_REQUEST, "InvalidPasswordException"),

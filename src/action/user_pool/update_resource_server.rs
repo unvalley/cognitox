@@ -6,9 +6,10 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 use crate::{
+    action::user_pool::create_resource_server::build_resource_server_response,
     error::{AppError, Result},
     storage::Storage,
-    types::UserPoolId,
+    types::{ResourceServerScope, UserPoolId},
 };
 
 #[derive(Debug, Deserialize)]
@@ -18,7 +19,14 @@ struct Request {
     identifier: String,
     name: String,
     #[serde(default)]
-    scopes: Vec<Value>,
+    scopes: Vec<ScopeInput>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+struct ScopeInput {
+    scope_name: String,
+    scope_description: String,
 }
 
 pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
@@ -30,19 +38,35 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
         .await
         .ok_or(AppError::UserPoolNotFound)?;
 
+    let mut resource_server = storage
+        .get_resource_server(&req.user_pool_id, &req.identifier)
+        .await
+        .ok_or(AppError::ResourceServerNotFound)?;
+
+    resource_server.name = req.name;
+    resource_server.scopes = req
+        .scopes
+        .into_iter()
+        .map(|scope| ResourceServerScope {
+            scope_name: scope.scope_name,
+            scope_description: scope.scope_description,
+        })
+        .collect();
+
+    let updated = storage
+        .update_resource_server(resource_server)
+        .await
+        .ok_or(AppError::ResourceServerNotFound)?;
+
     Ok(json!({
-        "ResourceServer": {
-            "Identifier": req.identifier,
-            "Name": req.name,
-            "Scopes": req.scopes
-        }
+        "ResourceServer": build_resource_server_response(&updated)
     }))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::action::user_pool::create_user_pool;
+    use crate::action::user_pool::{create_resource_server, create_user_pool};
     use serde_json::json;
 
     #[tokio::test]
@@ -53,6 +77,17 @@ mod tests {
             .await
             .unwrap();
         let user_pool_id = pool["UserPool"]["Id"].as_str().unwrap();
+
+        create_resource_server::handler(
+            &storage,
+            json!({
+                "UserPoolId": user_pool_id,
+                "Identifier": "api",
+                "Name": "Old API"
+            }),
+        )
+        .await
+        .unwrap();
 
         let result = handler(
             &storage,

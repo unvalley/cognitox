@@ -10,9 +10,9 @@ use tokio::sync::RwLock;
 
 use crate::types::{
     AuthorizationCode, BrandingId, ClientId, ConfirmationCode, DomainPrefix, Group, GroupName,
-    ManagedLoginBranding, PasswordResetCode, RefreshToken, TermsDocument, UiCustomization, User,
-    UserId, UserImportJob, UserPool, UserPoolClient, UserPoolDomain, UserPoolId,
-    WebAuthnCredential,
+    IdentityProvider, ManagedLoginBranding, PasswordResetCode, RefreshToken, ResourceServer,
+    TermsDocument, UiCustomization, User, UserId, UserImportJob, UserPool, UserPoolClient,
+    UserPoolDomain, UserPoolId, WebAuthnCredential,
 };
 
 #[derive(Debug, Clone)]
@@ -26,6 +26,8 @@ struct StorageInner {
     user_pool_clients: HashMap<ClientId, UserPoolClient>,
     user_pool_domains: HashMap<DomainPrefix, UserPoolDomain>,
     user_pool_id_to_domain: HashMap<UserPoolId, DomainPrefix>,
+    identity_providers: HashMap<(UserPoolId, String), IdentityProvider>,
+    resource_servers: HashMap<(UserPoolId, String), ResourceServer>,
     managed_login_brandings: HashMap<BrandingId, ManagedLoginBranding>,
     user_pool_brandings: HashMap<UserPoolId, BrandingId>,
     client_brandings: HashMap<ClientId, BrandingId>,
@@ -178,6 +180,158 @@ impl Storage {
         } else {
             None
         }
+    }
+
+    // ==================== Identity Provider Operations ====================
+
+    pub async fn create_identity_provider(&self, provider: IdentityProvider) -> IdentityProvider {
+        let mut inner = self.inner.write().await;
+        inner.identity_providers.insert(
+            (
+                provider.user_pool_id.clone(),
+                provider.provider_name.clone(),
+            ),
+            provider.clone(),
+        );
+        provider
+    }
+
+    pub async fn get_identity_provider(
+        &self,
+        user_pool_id: &UserPoolId,
+        provider_name: &str,
+    ) -> Option<IdentityProvider> {
+        let inner = self.inner.read().await;
+        inner
+            .identity_providers
+            .get(&(user_pool_id.clone(), provider_name.to_string()))
+            .cloned()
+    }
+
+    pub async fn get_identity_provider_by_identifier(
+        &self,
+        user_pool_id: &UserPoolId,
+        identifier: &str,
+    ) -> Option<IdentityProvider> {
+        let inner = self.inner.read().await;
+        inner
+            .identity_providers
+            .values()
+            .find(|provider| {
+                &provider.user_pool_id == user_pool_id
+                    && (provider.provider_name == identifier
+                        || provider.idp_identifiers.iter().any(|id| id == identifier))
+            })
+            .cloned()
+    }
+
+    pub async fn list_identity_providers(
+        &self,
+        user_pool_id: &UserPoolId,
+    ) -> Vec<IdentityProvider> {
+        let inner = self.inner.read().await;
+        inner
+            .identity_providers
+            .values()
+            .filter(|provider| &provider.user_pool_id == user_pool_id)
+            .cloned()
+            .collect()
+    }
+
+    pub async fn update_identity_provider(
+        &self,
+        provider: IdentityProvider,
+    ) -> Option<IdentityProvider> {
+        let mut inner = self.inner.write().await;
+        let key = (
+            provider.user_pool_id.clone(),
+            provider.provider_name.clone(),
+        );
+        if let std::collections::hash_map::Entry::Occupied(mut e) =
+            inner.identity_providers.entry(key)
+        {
+            e.insert(provider.clone());
+            Some(provider)
+        } else {
+            None
+        }
+    }
+
+    pub async fn delete_identity_provider(
+        &self,
+        user_pool_id: &UserPoolId,
+        provider_name: &str,
+    ) -> Option<IdentityProvider> {
+        let mut inner = self.inner.write().await;
+        inner
+            .identity_providers
+            .remove(&(user_pool_id.clone(), provider_name.to_string()))
+    }
+
+    // ==================== Resource Server Operations ====================
+
+    pub async fn create_resource_server(&self, resource_server: ResourceServer) -> ResourceServer {
+        let mut inner = self.inner.write().await;
+        inner.resource_servers.insert(
+            (
+                resource_server.user_pool_id.clone(),
+                resource_server.identifier.clone(),
+            ),
+            resource_server.clone(),
+        );
+        resource_server
+    }
+
+    pub async fn get_resource_server(
+        &self,
+        user_pool_id: &UserPoolId,
+        identifier: &str,
+    ) -> Option<ResourceServer> {
+        let inner = self.inner.read().await;
+        inner
+            .resource_servers
+            .get(&(user_pool_id.clone(), identifier.to_string()))
+            .cloned()
+    }
+
+    pub async fn list_resource_servers(&self, user_pool_id: &UserPoolId) -> Vec<ResourceServer> {
+        let inner = self.inner.read().await;
+        inner
+            .resource_servers
+            .values()
+            .filter(|resource_server| &resource_server.user_pool_id == user_pool_id)
+            .cloned()
+            .collect()
+    }
+
+    pub async fn update_resource_server(
+        &self,
+        resource_server: ResourceServer,
+    ) -> Option<ResourceServer> {
+        let mut inner = self.inner.write().await;
+        let key = (
+            resource_server.user_pool_id.clone(),
+            resource_server.identifier.clone(),
+        );
+        if let std::collections::hash_map::Entry::Occupied(mut e) =
+            inner.resource_servers.entry(key)
+        {
+            e.insert(resource_server.clone());
+            Some(resource_server)
+        } else {
+            None
+        }
+    }
+
+    pub async fn delete_resource_server(
+        &self,
+        user_pool_id: &UserPoolId,
+        identifier: &str,
+    ) -> Option<ResourceServer> {
+        let mut inner = self.inner.write().await;
+        inner
+            .resource_servers
+            .remove(&(user_pool_id.clone(), identifier.to_string()))
     }
 
     // ==================== User Operations ====================
