@@ -22,7 +22,9 @@ use crate::{
         generate_confirmation_code, hash_password, normalize_confirmation_code, verify_password,
     },
     storage::Storage,
-    types::{AuthorizationCode, ClientId, ConfirmationCode, User, UserStatus},
+    types::{
+        AuthorizationCode, ClientId, ConfirmationCode, ManagedLoginBranding, User, UserStatus,
+    },
 };
 
 /// Common OAuth parameters passed through the UI flow
@@ -106,9 +108,8 @@ struct BrandingContext {
     css_url: Option<String>,
 }
 
-/// Get branding for a client or user pool
-async fn get_branding(storage: &Storage, client_id: &str) -> BrandingContext {
-    let mut ctx = BrandingContext {
+fn default_branding_context() -> BrandingContext {
+    BrandingContext {
         page_title: "Sign In".to_string(),
         sign_in_header: "Welcome".to_string(),
         sign_in_subheader: "Sign in to continue".to_string(),
@@ -119,7 +120,47 @@ async fn get_branding(storage: &Storage, client_id: &str) -> BrandingContext {
         button_text_color: "#ffffff".to_string(),
         logo_url: None,
         css_url: None,
-    };
+    }
+}
+
+fn apply_branding(ctx: &mut BrandingContext, branding: &ManagedLoginBranding) {
+    if let Some(settings) = &branding.settings {
+        if let Some(title) = &settings.page_title {
+            ctx.page_title = title.clone();
+        }
+        if let Some(header) = &settings.sign_in_header {
+            ctx.sign_in_header = header.clone();
+        }
+        if let Some(subheader) = &settings.sign_in_subheader {
+            ctx.sign_in_subheader = subheader.clone();
+        }
+        if let Some(colors) = &settings.colors {
+            if let Some(c) = &colors.background_color {
+                ctx.background_color = c.clone();
+            }
+            if let Some(c) = &colors.primary_color {
+                ctx.primary_color = c.clone();
+            }
+            if let Some(c) = &colors.text_color {
+                ctx.text_color = c.clone();
+            }
+            if let Some(c) = &colors.button_color {
+                ctx.button_color = c.clone();
+            }
+            if let Some(c) = &colors.button_text_color {
+                ctx.button_text_color = c.clone();
+            }
+        }
+    }
+    if let Some(assets) = &branding.assets {
+        ctx.logo_url = assets.logo_url.clone();
+        ctx.css_url = assets.css_url.clone();
+    }
+}
+
+/// Get branding for a client or user pool
+async fn get_branding(storage: &Storage, client_id: &str) -> BrandingContext {
+    let mut ctx = default_branding_context();
 
     // Parse client_id string to ClientId
     let parsed_client_id = match ClientId::new(client_id) {
@@ -127,82 +168,21 @@ async fn get_branding(storage: &Storage, client_id: &str) -> BrandingContext {
         Err(_) => return ctx, // Return default branding if client_id is invalid
     };
 
-    // Try to get client-specific branding first
-    if let Some(branding) = storage
+    let branding = if let Some(client_branding) = storage
         .get_managed_login_branding_by_client(&parsed_client_id)
         .await
     {
-        if let Some(settings) = &branding.settings {
-            if let Some(title) = &settings.page_title {
-                ctx.page_title = title.clone();
-            }
-            if let Some(header) = &settings.sign_in_header {
-                ctx.sign_in_header = header.clone();
-            }
-            if let Some(subheader) = &settings.sign_in_subheader {
-                ctx.sign_in_subheader = subheader.clone();
-            }
-            if let Some(colors) = &settings.colors {
-                if let Some(c) = &colors.background_color {
-                    ctx.background_color = c.clone();
-                }
-                if let Some(c) = &colors.primary_color {
-                    ctx.primary_color = c.clone();
-                }
-                if let Some(c) = &colors.text_color {
-                    ctx.text_color = c.clone();
-                }
-                if let Some(c) = &colors.button_color {
-                    ctx.button_color = c.clone();
-                }
-                if let Some(c) = &colors.button_text_color {
-                    ctx.button_text_color = c.clone();
-                }
-            }
-        }
-        if let Some(assets) = &branding.assets {
-            ctx.logo_url = assets.logo_url.clone();
-            ctx.css_url = assets.css_url.clone();
-        }
+        Some(client_branding)
     } else if let Some(client) = storage.get_user_pool_client(&parsed_client_id).await {
-        // Try pool-level branding
-        if let Some(branding) = storage
+        storage
             .get_managed_login_branding_by_user_pool(&client.user_pool_id)
             .await
-        {
-            if let Some(settings) = &branding.settings {
-                if let Some(title) = &settings.page_title {
-                    ctx.page_title = title.clone();
-                }
-                if let Some(header) = &settings.sign_in_header {
-                    ctx.sign_in_header = header.clone();
-                }
-                if let Some(subheader) = &settings.sign_in_subheader {
-                    ctx.sign_in_subheader = subheader.clone();
-                }
-                if let Some(colors) = &settings.colors {
-                    if let Some(c) = &colors.background_color {
-                        ctx.background_color = c.clone();
-                    }
-                    if let Some(c) = &colors.primary_color {
-                        ctx.primary_color = c.clone();
-                    }
-                    if let Some(c) = &colors.text_color {
-                        ctx.text_color = c.clone();
-                    }
-                    if let Some(c) = &colors.button_color {
-                        ctx.button_color = c.clone();
-                    }
-                    if let Some(c) = &colors.button_text_color {
-                        ctx.button_text_color = c.clone();
-                    }
-                }
-            }
-            if let Some(assets) = &branding.assets {
-                ctx.logo_url = assets.logo_url.clone();
-                ctx.css_url = assets.css_url.clone();
-            }
-        }
+    } else {
+        None
+    };
+
+    if let Some(branding) = branding {
+        apply_branding(&mut ctx, &branding);
     }
 
     ctx
