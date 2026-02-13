@@ -3,7 +3,10 @@
 //! This module provides thread-safe in-memory storage for user pools, clients, and users.
 //! For production use, this could be replaced with a persistent database.
 
-use std::{collections::HashMap, sync::Arc};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Arc,
+};
 
 use serde_json::Value;
 use tokio::sync::RwLock;
@@ -76,7 +79,123 @@ impl Storage {
 
     pub async fn delete_user_pool(&self, id: &UserPoolId) -> Option<UserPool> {
         let mut inner = self.inner.write().await;
-        inner.user_pools.remove(id)
+        let removed_pool = inner.user_pools.remove(id)?;
+
+        // Domain-scoped resources
+        inner.user_pool_id_to_domain.remove(id);
+        inner
+            .user_pool_domains
+            .retain(|_, domain| &domain.user_pool_id != id);
+        inner
+            .identity_providers
+            .retain(|(pool_id, _), _| pool_id != id);
+        inner
+            .resource_servers
+            .retain(|(pool_id, _), _| pool_id != id);
+        inner
+            .user_import_jobs
+            .retain(|_, job| &job.user_pool_id != id);
+        inner
+            .ui_customizations
+            .retain(|(pool_id, _), _| pool_id != id);
+        inner
+            .risk_configurations
+            .retain(|(pool_id, _), _| pool_id != id);
+        inner.log_delivery_configurations.remove(id);
+
+        // Pool clients
+        let deleted_client_ids: HashSet<ClientId> = inner
+            .user_pool_clients
+            .values()
+            .filter(|client| &client.user_pool_id == id)
+            .map(|client| client.client_id.clone())
+            .collect();
+        inner
+            .user_pool_clients
+            .retain(|_, client| &client.user_pool_id != id);
+
+        // Branding linked to pool/clients
+        inner
+            .managed_login_brandings
+            .retain(|_, branding| &branding.user_pool_id != id);
+        let existing_branding_ids: HashSet<BrandingId> =
+            inner.managed_login_brandings.keys().cloned().collect();
+        inner.user_pool_brandings.retain(|pool_id, branding_id| {
+            pool_id != id && existing_branding_ids.contains(branding_id)
+        });
+        inner.client_brandings.retain(|client_id, branding_id| {
+            !deleted_client_ids.contains(client_id) && existing_branding_ids.contains(branding_id)
+        });
+
+        // Terms linked to pool
+        inner
+            .terms_documents
+            .retain(|_, terms| &terms.user_pool_id != id);
+        let existing_terms_ids: HashSet<String> = inner.terms_documents.keys().cloned().collect();
+        inner
+            .terms_name_index
+            .retain(|(pool_id, client_id, _), terms_id| {
+                pool_id != id
+                    && !deleted_client_ids.contains(client_id)
+                    && existing_terms_ids.contains(terms_id)
+            });
+
+        // Users linked to pool
+        let deleted_user_ids: HashSet<UserId> = inner
+            .users
+            .values()
+            .filter(|user| &user.user_pool_id == id)
+            .map(|user| user.id)
+            .collect();
+        inner.users.retain(|_, user| &user.user_pool_id != id);
+        inner.username_index.retain(|(pool_id, _), _| pool_id != id);
+        inner
+            .devices
+            .retain(|(user_id, _), _| !deleted_user_ids.contains(user_id));
+        inner
+            .confirmation_codes
+            .retain(|user_id, _| !deleted_user_ids.contains(user_id));
+        inner
+            .password_reset_codes
+            .retain(|user_id, _| !deleted_user_ids.contains(user_id));
+        inner
+            .refresh_tokens
+            .retain(|_, token| !deleted_user_ids.contains(&token.user_id));
+        inner
+            .software_token_sessions
+            .retain(|_, (user_id, _)| !deleted_user_ids.contains(user_id));
+        inner
+            .user_auth_factors
+            .retain(|user_id, _| !deleted_user_ids.contains(user_id));
+        inner
+            .authorization_codes
+            .retain(|_, code| !deleted_user_ids.contains(&code.user_id));
+        inner
+            .webauthn_credentials
+            .retain(|user_id, _| !deleted_user_ids.contains(user_id));
+        inner
+            .webauthn_registration_challenges
+            .retain(|user_id, _| !deleted_user_ids.contains(user_id));
+        inner
+            .user_auth_event_index
+            .retain(|user_id, _| !deleted_user_ids.contains(user_id));
+        let indexed_event_ids: HashSet<String> = inner
+            .user_auth_event_index
+            .values()
+            .flatten()
+            .cloned()
+            .collect();
+        inner.auth_events.retain(|event_id, event| {
+            !deleted_user_ids.contains(&event.user_id) && indexed_event_ids.contains(event_id)
+        });
+
+        // Group definitions and memberships for removed users
+        inner.groups.retain(|(pool_id, _), _| pool_id != id);
+        inner
+            .user_groups
+            .retain(|user_id, _| !deleted_user_ids.contains(user_id));
+
+        Some(removed_pool)
     }
 
     pub async fn list_user_pools(&self) -> Vec<UserPool> {
@@ -113,7 +232,45 @@ impl Storage {
 
     pub async fn delete_user_pool_client(&self, client_id: &ClientId) -> Option<UserPoolClient> {
         let mut inner = self.inner.write().await;
-        inner.user_pool_clients.remove(client_id)
+        let deleted = inner.user_pool_clients.remove(client_id)?;
+
+        inner.client_brandings.remove(client_id);
+        inner
+            .managed_login_brandings
+            .retain(|_, branding| branding.client_id.as_ref() != Some(client_id));
+        let existing_branding_ids: HashSet<BrandingId> =
+            inner.managed_login_brandings.keys().cloned().collect();
+        inner
+            .user_pool_brandings
+            .retain(|_, branding_id| existing_branding_ids.contains(branding_id));
+        inner
+            .client_brandings
+            .retain(|_, branding_id| existing_branding_ids.contains(branding_id));
+
+        inner
+            .terms_documents
+            .retain(|_, terms| &terms.client_id != client_id);
+        let existing_terms_ids: HashSet<String> = inner.terms_documents.keys().cloned().collect();
+        inner
+            .terms_name_index
+            .retain(|(_, indexed_client_id, _), terms_id| {
+                indexed_client_id != client_id && existing_terms_ids.contains(terms_id)
+            });
+
+        inner
+            .ui_customizations
+            .retain(|(_, indexed_client_id), _| indexed_client_id.as_ref() != Some(client_id));
+        inner
+            .risk_configurations
+            .retain(|(_, indexed_client_id), _| indexed_client_id.as_ref() != Some(client_id));
+        inner
+            .refresh_tokens
+            .retain(|_, token| &token.client_id != client_id);
+        inner
+            .authorization_codes
+            .retain(|_, code| &code.client_id != client_id);
+
+        Some(deleted)
     }
 
     pub async fn list_user_pool_clients(&self, user_pool_id: &UserPoolId) -> Vec<UserPoolClient> {
@@ -384,15 +541,24 @@ impl Storage {
                 .username_index
                 .remove(&(user.user_pool_id.clone(), user.username.clone()));
             inner.devices.retain(|(user_id, _), _| user_id != id);
+            inner.confirmation_codes.remove(id);
+            inner.password_reset_codes.remove(id);
             inner.user_auth_factors.remove(id);
             inner
                 .software_token_sessions
                 .retain(|_, (user_id, _)| user_id != id);
+            inner.refresh_tokens.retain(|_, token| &token.user_id != id);
+            inner
+                .authorization_codes
+                .retain(|_, code| &code.user_id != id);
             if let Some(event_ids) = inner.user_auth_event_index.remove(id) {
                 for event_id in event_ids {
                     inner.auth_events.remove(&event_id);
                 }
             }
+            inner.user_groups.remove(id);
+            inner.webauthn_credentials.remove(id);
+            inner.webauthn_registration_challenges.remove(id);
             Some(user)
         } else {
             None
@@ -643,9 +809,23 @@ impl Storage {
         group_name: &GroupName,
     ) -> Option<Group> {
         let mut inner = self.inner.write().await;
-        inner
+        let deleted = inner
             .groups
-            .remove(&(user_pool_id.clone(), group_name.clone()))
+            .remove(&(user_pool_id.clone(), group_name.clone()))?;
+
+        let pool_user_ids: HashSet<UserId> = inner
+            .users
+            .values()
+            .filter(|user| &user.user_pool_id == user_pool_id)
+            .map(|user| user.id)
+            .collect();
+        for (user_id, group_names) in &mut inner.user_groups {
+            if pool_user_ids.contains(user_id) {
+                group_names.retain(|existing| existing != group_name);
+            }
+        }
+
+        Some(deleted)
     }
 
     pub async fn list_groups(&self, user_pool_id: &UserPoolId) -> Vec<Group> {
