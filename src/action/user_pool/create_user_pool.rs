@@ -3,11 +3,12 @@
 //! <https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_CreateUserPool.html>
 
 use chrono::Utc;
-use serde::Deserialize;
-use serde_json::{Value, json};
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 use crate::{
-    error::{AppError, Result},
+    action::io::{parse_request, to_response_value},
+    error::Result,
     storage::Storage,
     types::{UserPool, UserPoolId},
     validation::validate_pool_name,
@@ -19,9 +20,23 @@ struct Request {
     pool_name: String,
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "PascalCase")]
+struct Response {
+    user_pool: UserPoolView,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "PascalCase")]
+struct UserPoolView {
+    id: UserPoolId,
+    name: String,
+    creation_date: i64,
+    last_modified_date: i64,
+}
+
 pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
-    let req: Request = serde_json::from_value(body)
-        .map_err(|e| AppError::InvalidParameter(format!("Invalid request: {}", e)))?;
+    let req: Request = parse_request(body)?;
 
     // Validate input
     validate_pool_name(&req.pool_name)?;
@@ -38,14 +53,14 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
 
     let created = storage.create_user_pool(pool).await;
 
-    Ok(json!({
-        "UserPool": {
-            "Id": created.id,
-            "Name": created.name,
-            "CreationDate": created.creation_date.timestamp(),
-            "LastModifiedDate": created.last_modified_date.timestamp()
-        }
-    }))
+    to_response_value(Response {
+        user_pool: UserPoolView {
+            id: created.id,
+            name: created.name,
+            creation_date: created.creation_date.timestamp(),
+            last_modified_date: created.last_modified_date.timestamp(),
+        },
+    })
 }
 
 #[cfg(test)]
