@@ -5,6 +5,49 @@ use axum::{
 };
 use serde::Serialize;
 
+#[derive(Serialize)]
+struct CognitoErrorResponse {
+    #[serde(rename = "__type")]
+    error_type: String,
+    message: String,
+}
+
+#[derive(Serialize)]
+struct OAuthErrorResponse {
+    error: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error_description: Option<String>,
+}
+
+enum ErrorFormat {
+    Cognito,
+    OAuth,
+}
+
+fn build_error_response(
+    status: StatusCode,
+    format: ErrorFormat,
+    code: String,
+    message: Option<String>,
+) -> Response {
+    match format {
+        ErrorFormat::Cognito => {
+            let body = CognitoErrorResponse {
+                error_type: code,
+                message: message.unwrap_or_else(|| "Unknown error".to_string()),
+            };
+            (status, Json(body)).into_response()
+        }
+        ErrorFormat::OAuth => {
+            let body = OAuthErrorResponse {
+                error: code,
+                error_description: message,
+            };
+            (status, Json(body)).into_response()
+        }
+    }
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum AppError {
     #[error("User not found")]
@@ -88,18 +131,17 @@ pub enum AppError {
     #[error("Internal server error: {0}")]
     Internal(String),
 
-    #[error("Database error: {0}")]
-    Database(#[from] sqlx::Error),
+    #[error("Storage error: {0}")]
+    Storage(String),
 
     #[error("Not implemented: {0}")]
     NotImplemented(String),
 }
 
-#[derive(Serialize)]
-struct ErrorResponse {
-    #[serde(rename = "__type")]
-    error_type: String,
-    message: String,
+#[derive(Debug)]
+pub struct OAuthError {
+    pub error: String,
+    pub error_description: Option<String>,
 }
 
 impl IntoResponse for AppError {
@@ -150,16 +192,27 @@ impl IntoResponse for AppError {
             AppError::LimitExceeded => (StatusCode::BAD_REQUEST, "LimitExceededException"),
             AppError::InvalidParameter(_) => (StatusCode::BAD_REQUEST, "InvalidParameterException"),
             AppError::Internal(_) => (StatusCode::INTERNAL_SERVER_ERROR, "InternalErrorException"),
-            AppError::Database(_) => (StatusCode::INTERNAL_SERVER_ERROR, "InternalErrorException"),
+            AppError::Storage(_) => (StatusCode::INTERNAL_SERVER_ERROR, "InternalErrorException"),
             AppError::NotImplemented(_) => (StatusCode::NOT_IMPLEMENTED, "NotImplementedException"),
         };
 
-        let body = ErrorResponse {
-            error_type: error_type.to_string(),
-            message: self.to_string(),
-        };
+        build_error_response(
+            status,
+            ErrorFormat::Cognito,
+            error_type.to_string(),
+            Some(self.to_string()),
+        )
+    }
+}
 
-        (status, Json(body)).into_response()
+impl IntoResponse for OAuthError {
+    fn into_response(self) -> Response {
+        build_error_response(
+            StatusCode::BAD_REQUEST,
+            ErrorFormat::OAuth,
+            self.error,
+            self.error_description,
+        )
     }
 }
 
