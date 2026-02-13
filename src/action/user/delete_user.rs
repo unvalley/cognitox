@@ -29,7 +29,6 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
         .delete_user(&user_id)
         .await
         .ok_or(AppError::UserNotFound)?;
-    storage.delete_refresh_tokens_for_user(&user_id).await;
 
     Ok(json!({}))
 }
@@ -39,6 +38,7 @@ mod tests {
     use super::*;
     use serde_json::json;
 
+    use crate::action::group::{admin_add_user_to_group, create_group};
     use crate::action::user::{initiate_auth, sign_up};
     use crate::action::user_pool::{create_user_pool, create_user_pool_client};
 
@@ -147,5 +147,54 @@ mod tests {
         .await;
 
         assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_delete_user_cleans_group_memberships() {
+        let storage = Storage::new();
+        let (pool_id, client_id) = setup_pool_and_client(&storage).await;
+
+        let (access_token, user_id) = create_confirmed_user_and_get_token(
+            &storage,
+            &client_id,
+            "groupmember",
+            "Password123!",
+        )
+        .await;
+
+        create_group::handler(
+            &storage,
+            json!({
+                "UserPoolId": pool_id,
+                "GroupName": "admins"
+            }),
+        )
+        .await
+        .unwrap();
+
+        admin_add_user_to_group::handler(
+            &storage,
+            json!({
+                "UserPoolId": pool_id,
+                "Username": "groupmember",
+                "GroupName": "admins"
+            }),
+        )
+        .await
+        .unwrap();
+
+        let groups_before = storage.get_groups_for_user(&user_id).await;
+        assert_eq!(groups_before, vec!["admins".to_string()]);
+
+        handler(
+            &storage,
+            json!({
+                "AccessToken": access_token
+            }),
+        )
+        .await
+        .unwrap();
+
+        assert!(storage.get_groups_for_user(&user_id).await.is_empty());
     }
 }
