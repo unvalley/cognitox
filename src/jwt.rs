@@ -198,6 +198,39 @@ pub fn generate_access_token(
         .map_err(|e| format!("Failed to encode access token: {}", e))
 }
 
+/// Generate Access Token for OAuth client_credentials grant.
+pub fn generate_client_access_token(
+    client_id: &str,
+    user_pool_id: &UserPoolId,
+    scopes: &[String],
+) -> Result<String, String> {
+    let keys = get_jwt_keys();
+    let now = Utc::now();
+    let auth_time = now.timestamp();
+
+    let scope = scopes.join(" ");
+    let client_subject = format!("client:{}", client_id);
+
+    let claims = AccessTokenClaims {
+        sub: client_subject.clone(),
+        iss: format!("https://cognito-idp.local.amazonaws.com/{}", user_pool_id),
+        iat: now.timestamp(),
+        exp: (now + Duration::hours(1)).timestamp(),
+        auth_time,
+        token_use: "access".to_string(),
+        client_id: client_id.to_string(),
+        cognito_groups: Vec::new(),
+        scope,
+        username: client_subject,
+    };
+
+    let mut header = Header::new(Algorithm::RS256);
+    header.kid = Some(keys.key_id.clone());
+
+    encode(&header, &claims, &keys.encoding_key)
+        .map_err(|e| format!("Failed to encode client access token: {}", e))
+}
+
 /// Verify and decode an access token
 pub fn verify_access_token(token: &str) -> Result<TokenData<AccessTokenClaims>, String> {
     let keys = get_jwt_keys();

@@ -17,12 +17,12 @@ use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 use crate::{
-    jwt::{generate_access_token, generate_id_token, verify_access_token},
+    jwt::{
+        generate_access_token, generate_client_access_token, generate_id_token, verify_access_token,
+    },
     storage::Storage,
-    types::{AuthorizationCode, ClientId, RefreshToken, UserStatus},
+    types::{ClientId, RefreshToken},
 };
-
-use super::super::action::user::helpers::verify_password;
 
 /// Authorization endpoint query parameters
 #[derive(Debug, Deserialize)]
@@ -40,11 +40,6 @@ pub struct AuthorizeParams {
     pub code_challenge: Option<String>,
     #[serde(default)]
     pub code_challenge_method: Option<String>,
-    // For direct login (non-interactive for testing)
-    #[serde(default)]
-    pub username: Option<String>,
-    #[serde(default)]
-    pub password: Option<String>,
 }
 
 /// Token endpoint request body
@@ -95,11 +90,9 @@ impl IntoResponse for OAuthError {
     }
 }
 
-/// GET /oauth2/authorize - Authorization endpoint
+/// GET /oauth2/authorize - Authorization endpoint.
 ///
-/// For testing purposes, this endpoint can directly authenticate users
-/// if username and password are provided as query parameters.
-/// In production, this would redirect to a login page.
+/// This endpoint validates OAuth request parameters and redirects to Hosted UI login.
 pub async fn authorize(
     State(storage): State<Storage>,
     Query(params): Query<AuthorizeParams>,
@@ -127,15 +120,6 @@ pub async fn authorize(
         });
     }
 
-    // Parse scopes
-    let scopes: Vec<String> = params
-        .scope
-        .as_deref()
-        .unwrap_or("openid")
-        .split_whitespace()
-        .map(String::from)
-        .collect();
-
     // Validate response_type
     match params.response_type.as_str() {
         "code" => {
@@ -149,72 +133,7 @@ pub async fn authorize(
                 });
             }
 
-            // For testing: direct authentication if credentials provided
-            if let (Some(username), Some(password)) = (&params.username, &params.password) {
-                let user = storage
-                    .get_user_by_username(&client.user_pool_id, username)
-                    .await
-                    .ok_or_else(|| OAuthError {
-                        error: "access_denied".to_string(),
-                        error_description: Some("Invalid credentials".to_string()),
-                    })?;
-
-                // Check if user is enabled
-                if !user.enabled {
-                    return Err(OAuthError {
-                        error: "access_denied".to_string(),
-                        error_description: Some("User is disabled".to_string()),
-                    });
-                }
-
-                if user.user_status != UserStatus::Confirmed {
-                    return Err(OAuthError {
-                        error: "access_denied".to_string(),
-                        error_description: Some("User not confirmed".to_string()),
-                    });
-                }
-
-                if !verify_password(password, &user.password_hash) {
-                    return Err(OAuthError {
-                        error: "access_denied".to_string(),
-                        error_description: Some("Invalid credentials".to_string()),
-                    });
-                }
-
-                // Generate authorization code
-                let code = Uuid::new_v4().to_string();
-                let auth_code = AuthorizationCode {
-                    code: code.clone(),
-                    user_id: user.id,
-                    client_id: parsed_client_id.clone(),
-                    redirect_uri: params.redirect_uri.clone(),
-                    scope: scopes,
-                    nonce: params.nonce.clone(),
-                    code_challenge: params.code_challenge.clone(),
-                    code_challenge_method: params.code_challenge_method.clone(),
-                    expires_at: Utc::now() + Duration::minutes(5),
-                };
-                storage.save_authorization_code(auth_code).await;
-
-                // Build redirect URL
-                let mut redirect_url = params.redirect_uri.clone();
-                redirect_url.push_str(if redirect_url.contains('?') { "&" } else { "?" });
-                redirect_url.push_str(&format!("code={}", code));
-                if let Some(state) = &params.state {
-                    redirect_url.push_str(&format!("&state={}", state));
-                }
-
-                return Ok(Redirect::temporary(&redirect_url).into_response());
-            }
-
-            // Without credentials, return login page HTML (simplified)
-            let login_html = generate_login_html(&params);
-            Ok((
-                StatusCode::OK,
-                [(header::CONTENT_TYPE, "text/html")],
-                login_html,
-            )
-                .into_response())
+            Ok(Redirect::temporary(&build_login_redirect(&params)).into_response())
         }
         "token" => {
             // Implicit Flow (legacy, not recommended)
@@ -229,73 +148,7 @@ pub async fn authorize(
                 });
             }
 
-            // For implicit flow with direct auth
-            if let (Some(username), Some(password)) = (&params.username, &params.password) {
-                let user = storage
-                    .get_user_by_username(&client.user_pool_id, username)
-                    .await
-                    .ok_or_else(|| OAuthError {
-                        error: "access_denied".to_string(),
-                        error_description: Some("Invalid credentials".to_string()),
-                    })?;
-
-                // Check if user is enabled
-                if !user.enabled {
-                    return Err(OAuthError {
-                        error: "access_denied".to_string(),
-                        error_description: Some("User is disabled".to_string()),
-                    });
-                }
-
-                if !verify_password(password, &user.password_hash) {
-                    return Err(OAuthError {
-                        error: "access_denied".to_string(),
-                        error_description: Some("Invalid credentials".to_string()),
-                    });
-                }
-
-                let groups = storage.get_groups_for_user(&user.id).await;
-                let access_token = generate_access_token(
-                    &user,
-                    &params.client_id,
-                    &client.user_pool_id,
-                    &groups,
-                    &scopes,
-                )
-                .map_err(|e| OAuthError {
-                    error: "server_error".to_string(),
-                    error_description: Some(e),
-                })?;
-
-                let mut redirect_url = format!(
-                    "{}#access_token={}&token_type=Bearer&expires_in=3600",
-                    params.redirect_uri, access_token
-                );
-
-                if scopes.contains(&"openid".to_string()) {
-                    let id_token =
-                        generate_id_token(&user, &params.client_id, &client.user_pool_id, &groups)
-                            .map_err(|e| OAuthError {
-                                error: "server_error".to_string(),
-                                error_description: Some(e),
-                            })?;
-                    redirect_url.push_str(&format!("&id_token={}", id_token));
-                }
-
-                if let Some(state) = &params.state {
-                    redirect_url.push_str(&format!("&state={}", state));
-                }
-
-                return Ok(Redirect::temporary(&redirect_url).into_response());
-            }
-
-            let login_html = generate_login_html(&params);
-            Ok((
-                StatusCode::OK,
-                [(header::CONTENT_TYPE, "text/html")],
-                login_html,
-            )
-                .into_response())
+            Ok(Redirect::temporary(&build_login_redirect(&params)).into_response())
         }
         _ => Err(OAuthError {
             error: "unsupported_response_type".to_string(),
@@ -605,8 +458,6 @@ pub async fn token(
                 });
             }
 
-            // For client_credentials, generate a minimal access token
-            // Note: This is a simplified implementation
             let scopes: Vec<String> = req
                 .scope
                 .as_deref()
@@ -615,15 +466,12 @@ pub async fn token(
                 .map(String::from)
                 .collect();
 
-            let now = Utc::now();
-
-            // Use a simple token format for client_credentials
-            let access_token = format!(
-                "client_{}_{}_{}",
-                client_id,
-                now.timestamp(),
-                Uuid::new_v4()
-            );
+            let access_token =
+                generate_client_access_token(client_id.as_str(), &client.user_pool_id, &scopes)
+                    .map_err(|e| OAuthError {
+                        error: "server_error".to_string(),
+                        error_description: Some(e),
+                    })?;
 
             Ok(Json(TokenResponse {
                 access_token,
@@ -643,6 +491,41 @@ pub async fn token(
             error_description: Some(format!("Grant type '{}' is not supported", req.grant_type)),
         }),
     }
+}
+
+fn build_login_redirect(params: &AuthorizeParams) -> String {
+    let mut query = vec![
+        format!(
+            "response_type={}",
+            urlencoding::encode(&params.response_type)
+        ),
+        format!("client_id={}", urlencoding::encode(&params.client_id)),
+        format!("redirect_uri={}", urlencoding::encode(&params.redirect_uri)),
+    ];
+
+    if let Some(scope) = &params.scope {
+        query.push(format!("scope={}", urlencoding::encode(scope)));
+    }
+    if let Some(state) = &params.state {
+        query.push(format!("state={}", urlencoding::encode(state)));
+    }
+    if let Some(nonce) = &params.nonce {
+        query.push(format!("nonce={}", urlencoding::encode(nonce)));
+    }
+    if let Some(code_challenge) = &params.code_challenge {
+        query.push(format!(
+            "code_challenge={}",
+            urlencoding::encode(code_challenge)
+        ));
+    }
+    if let Some(code_challenge_method) = &params.code_challenge_method {
+        query.push(format!(
+            "code_challenge_method={}",
+            urlencoding::encode(code_challenge_method)
+        ));
+    }
+
+    format!("/login?{}", query.join("&"))
 }
 
 /// UserInfo response
@@ -740,55 +623,4 @@ pub async fn openid_configuration(headers: axum::http::HeaderMap) -> Json<Value>
         "code_challenge_methods_supported": ["S256", "plain"],
         "grant_types_supported": ["authorization_code", "refresh_token", "client_credentials"]
     }))
-}
-
-/// Generate a simple login HTML page
-fn generate_login_html(params: &AuthorizeParams) -> String {
-    format!(
-        r#"<!DOCTYPE html>
-<html>
-<head>
-    <title>Sign In - Cognito Emulator</title>
-    <style>
-        body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-               display: flex; justify-content: center; align-items: center; height: 100vh;
-               margin: 0; background: #f5f5f5; }}
-        .container {{ background: white; padding: 40px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); width: 300px; }}
-        h1 {{ margin: 0 0 20px; font-size: 24px; text-align: center; }}
-        input {{ width: 100%; padding: 12px; margin: 8px 0; border: 1px solid #ddd; border-radius: 4px; box-sizing: border-box; }}
-        button {{ width: 100%; padding: 12px; background: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 16px; }}
-        button:hover {{ background: #0056b3; }}
-        .error {{ color: #dc3545; text-align: center; margin-top: 10px; }}
-    </style>
-</head>
-<body>
-    <div class="container">
-        <h1>Sign In</h1>
-        <form method="GET" action="/oauth2/authorize">
-            <input type="hidden" name="response_type" value="{}">
-            <input type="hidden" name="client_id" value="{}">
-            <input type="hidden" name="redirect_uri" value="{}">
-            <input type="hidden" name="scope" value="{}">
-            {}
-            {}
-            {}
-            <input type="text" name="username" placeholder="Username" required>
-            <input type="password" name="password" placeholder="Password" required>
-            <button type="submit">Sign In</button>
-        </form>
-    </div>
-</body>
-</html>"#,
-        params.response_type,
-        params.client_id,
-        params.redirect_uri,
-        params.scope.as_deref().unwrap_or("openid"),
-        params.state.as_ref().map(|s| format!(r#"<input type="hidden" name="state" value="{}">"#, s)).unwrap_or_default(),
-        params.nonce.as_ref().map(|s| format!(r#"<input type="hidden" name="nonce" value="{}">"#, s)).unwrap_or_default(),
-        params.code_challenge.as_ref().map(|s| format!(
-            r#"<input type="hidden" name="code_challenge" value="{}"><input type="hidden" name="code_challenge_method" value="{}">"#,
-            s,
-            params.code_challenge_method.as_deref().unwrap_or("S256")
-        )).unwrap_or_default(),
-    )
 }
