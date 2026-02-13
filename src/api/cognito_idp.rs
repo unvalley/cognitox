@@ -3,6 +3,8 @@
 //! This module implements the main entry point for Cognito User Pools API requests.
 //! Requests are routed based on the `X-Amz-Target` header.
 
+use std::str::FromStr;
+
 use axum::{
     Json,
     extract::State,
@@ -56,717 +58,178 @@ pub async fn handle_request(
     }
 }
 
-/// Dispatch to the appropriate action handler
-async fn dispatch_action(
-    storage: &Storage,
-    action: Action,
-    body: Value,
-) -> Result<Value, AppError> {
-    use Action::*;
-
-    match action {
-        // User Pool Actions
-        CreateUserPool => user_pool::create_user_pool::handler(storage, body).await,
-        DeleteUserPool => user_pool::delete_user_pool::handler(storage, body).await,
-        DescribeUserPool => user_pool::describe_user_pool::handler(storage, body).await,
-        ListUserPools => user_pool::list_user_pools::handler(storage, body).await,
-        UpdateUserPool => user_pool::update_user_pool::handler(storage, body).await,
-
-        // User Pool Client Actions
-        CreateUserPoolClient => user_pool::create_user_pool_client::handler(storage, body).await,
-        DeleteUserPoolClient => user_pool::delete_user_pool_client::handler(storage, body).await,
-        DescribeUserPoolClient => {
-            user_pool::describe_user_pool_client::handler(storage, body).await
-        }
-        ListUserPoolClients => user_pool::list_user_pool_clients::handler(storage, body).await,
-        UpdateUserPoolClient => user_pool::update_user_pool_client::handler(storage, body).await,
-
-        // User Pool Domain Actions
-        CreateUserPoolDomain => user_pool::create_user_pool_domain::handler(storage, body).await,
-        DeleteUserPoolDomain => user_pool::delete_user_pool_domain::handler(storage, body).await,
-        DescribeUserPoolDomain => {
-            user_pool::describe_user_pool_domain::handler(storage, body).await
-        }
-        UpdateUserPoolDomain => user_pool::update_user_pool_domain::handler(storage, body).await,
-
-        // Managed Login Branding Actions
-        CreateManagedLoginBranding => {
-            user_pool::create_managed_login_branding::handler(storage, body).await
-        }
-        DeleteManagedLoginBranding => {
-            user_pool::delete_managed_login_branding::handler(storage, body).await
-        }
-        DescribeManagedLoginBranding => {
-            user_pool::describe_managed_login_branding::handler(storage, body).await
-        }
-        DescribeManagedLoginBrandingByClient => {
-            user_pool::describe_managed_login_branding_by_client::handler(storage, body).await
-        }
-        UpdateManagedLoginBranding => {
-            user_pool::update_managed_login_branding::handler(storage, body).await
-        }
-
-        // User Actions
-        SignUp => user::sign_up::handler(storage, body).await,
-        ConfirmSignUp => user::confirm_sign_up::handler(storage, body).await,
-        ResendConfirmationCode => user::resend_confirmation_code::handler(storage, body).await,
-        InitiateAuth => user::initiate_auth::handler(storage, body).await,
-        RespondToAuthChallenge => user::respond_to_auth_challenge::handler(storage, body).await,
-        GetUser => user::get_user::handler(storage, body).await,
-        DeleteUser => user::delete_user::handler(storage, body).await,
-        DeleteUserAttributes => user::delete_user_attributes::handler(storage, body).await,
-        UpdateUserAttributes => user::update_user_attributes::handler(storage, body).await,
-        ListUsers => user::list_users::handler(storage, body).await,
-        ChangePassword => user::change_password::handler(storage, body).await,
-        ForgotPassword => user::forgot_password::handler(storage, body).await,
-        ConfirmForgotPassword => user::confirm_forgot_password::handler(storage, body).await,
-        GlobalSignOut => user::global_sign_out::handler(storage, body).await,
-        RevokeToken => user::revoke_token::handler(storage, body).await,
-        GetTokensFromRefreshToken => {
-            user::get_tokens_from_refresh_token::handler(storage, body).await
-        }
-        GetUserAttributeVerificationCode => {
-            user::get_user_attribute_verification_code::handler(storage, body).await
-        }
-        VerifyUserAttribute => user::verify_user_attribute::handler(storage, body).await,
-
-        // Admin Actions
-        AdminConfirmSignUp => user::admin_confirm_sign_up::handler(storage, body).await,
-        AdminCreateUser => user::admin_create_user::handler(storage, body).await,
-        AdminDeleteUser => user::admin_delete_user::handler(storage, body).await,
-        AdminDeleteUserAttributes => {
-            user::admin_delete_user_attributes::handler(storage, body).await
-        }
-        AdminDisableProviderForUser => {
-            user::admin_disable_provider_for_user::handler(storage, body).await
-        }
-        AdminDisableUser => user::admin_disable_user::handler(storage, body).await,
-        AdminEnableUser => user::admin_enable_user::handler(storage, body).await,
-        AdminForgetDevice => user::admin_forget_device::handler(storage, body).await,
-        AdminGetDevice => user::admin_get_device::handler(storage, body).await,
-        AdminGetUser => user::admin_get_user::handler(storage, body).await,
-        AdminInitiateAuth => user::admin_initiate_auth::handler(storage, body).await,
-        AdminLinkProviderForUser => {
-            user::admin_link_provider_for_user::handler(storage, body).await
-        }
-        AdminListDevices => user::admin_list_devices::handler(storage, body).await,
-        AdminListUserAuthEvents => user::admin_list_user_auth_events::handler(storage, body).await,
-        AdminResetUserPassword => user::admin_reset_user_password::handler(storage, body).await,
-        AdminRespondToAuthChallenge => {
-            user::admin_respond_to_auth_challenge::handler(storage, body).await
-        }
-        AdminUpdateAuthEventFeedback => {
-            user::admin_update_auth_event_feedback::handler(storage, body).await
-        }
-        AdminUpdateDeviceStatus => user::admin_update_device_status::handler(storage, body).await,
-        AdminSetUserPassword => user::admin_set_user_password::handler(storage, body).await,
-        AdminUpdateUserAttributes => {
-            user::admin_update_user_attributes::handler(storage, body).await
-        }
-        AdminUserGlobalSignOut => user::admin_user_global_sign_out::handler(storage, body).await,
-        AdminAddUserToGroup => group::admin_add_user_to_group::handler(storage, body).await,
-        AdminRemoveUserFromGroup => {
-            group::admin_remove_user_from_group::handler(storage, body).await
-        }
-        AdminListGroupsForUser => group::admin_list_groups_for_user::handler(storage, body).await,
-
-        // Group Actions
-        CreateGroup => group::create_group::handler(storage, body).await,
-        DeleteGroup => group::delete_group::handler(storage, body).await,
-        GetGroup => group::get_group::handler(storage, body).await,
-        ListGroups => group::list_groups::handler(storage, body).await,
-        ListUsersInGroup => group::list_users_in_group::handler(storage, body).await,
-        UpdateGroup => group::update_group::handler(storage, body).await,
-
-        // Identity Provider Actions
-        CreateIdentityProvider => user_pool::create_identity_provider::handler(storage, body).await,
-        DeleteIdentityProvider => user_pool::delete_identity_provider::handler(storage, body).await,
-        DescribeIdentityProvider => {
-            user_pool::describe_identity_provider::handler(storage, body).await
-        }
-        GetIdentityProviderByIdentifier => {
-            user_pool::get_identity_provider_by_identifier::handler(storage, body).await
-        }
-        ListIdentityProviders => user_pool::list_identity_providers::handler(storage, body).await,
-        UpdateIdentityProvider => user_pool::update_identity_provider::handler(storage, body).await,
-
-        // Resource Server Actions
-        CreateResourceServer => user_pool::create_resource_server::handler(storage, body).await,
-        DeleteResourceServer => user_pool::delete_resource_server::handler(storage, body).await,
-        DescribeResourceServer => user_pool::describe_resource_server::handler(storage, body).await,
-        ListResourceServers => user_pool::list_resource_servers::handler(storage, body).await,
-        UpdateResourceServer => user_pool::update_resource_server::handler(storage, body).await,
-
-        // Other Actions
-        AddCustomAttributes => user_pool::add_custom_attributes::handler(storage, body).await,
-        GetSigningCertificate => user_pool::get_signing_certificate::handler(storage, body).await,
-        UpdateAuthEventFeedback => user::update_auth_event_feedback::handler(storage, body).await,
-        UpdateDeviceStatus => user::update_device_status::handler(storage, body).await,
-
-        // MFA Actions
-        SetUserMFAPreference => user::set_user_mfa_preference::handler(storage, body).await,
-        AdminSetUserMFAPreference => {
-            user::admin_set_user_mfa_preference::handler(storage, body).await
-        }
-        AssociateSoftwareToken => user::associate_software_token::handler(storage, body).await,
-        VerifySoftwareToken => user::verify_software_token::handler(storage, body).await,
-        GetUserPoolMfaConfig => user_pool::get_user_pool_mfa_config::handler(storage, body).await,
-        SetUserPoolMfaConfig => user_pool::set_user_pool_mfa_config::handler(storage, body).await,
-        GetUserAuthFactors => user::get_user_auth_factors::handler(storage, body).await,
-        ConfirmDevice => user::confirm_device::handler(storage, body).await,
-        ForgetDevice => user::forget_device::handler(storage, body).await,
-        GetDevice => user::get_device::handler(storage, body).await,
-        ListDevices => user::list_devices::handler(storage, body).await,
-
-        // User Settings Actions
-        SetUserSettings => user::set_user_settings::handler(storage, body).await,
-        AdminSetUserSettings => user::admin_set_user_settings::handler(storage, body).await,
-
-        // User Import Actions
-        CreateUserImportJob => user_pool::create_user_import_job::handler(storage, body).await,
-        DescribeUserImportJob => user_pool::describe_user_import_job::handler(storage, body).await,
-        GetCSVHeader => user_pool::get_csv_header::handler(storage, body).await,
-        ListUserImportJobs => user_pool::list_user_import_jobs::handler(storage, body).await,
-        StartUserImportJob => user_pool::start_user_import_job::handler(storage, body).await,
-        StopUserImportJob => user_pool::stop_user_import_job::handler(storage, body).await,
-
-        // WebAuthn Actions
-        CompleteWebAuthnRegistration => {
-            user::complete_webauthn_registration::handler(storage, body).await
-        }
-        DeleteWebAuthnCredential => user::delete_webauthn_credential::handler(storage, body).await,
-        ListWebAuthnCredentials => user::list_webauthn_credentials::handler(storage, body).await,
-        StartWebAuthnRegistration => {
-            user::start_webauthn_registration::handler(storage, body).await
-        }
-
-        // Terms Actions
-        CreateTerms => user_pool::create_terms::handler(storage, body).await,
-        DeleteTerms => user_pool::delete_terms::handler(storage, body).await,
-        DescribeTerms => user_pool::describe_terms::handler(storage, body).await,
-        ListTerms => user_pool::list_terms::handler(storage, body).await,
-        UpdateTerms => user_pool::update_terms::handler(storage, body).await,
-
-        // Risk Configuration Actions
-        DescribeRiskConfiguration => {
-            user_pool::describe_risk_configuration::handler(storage, body).await
-        }
-        SetRiskConfiguration => user_pool::set_risk_configuration::handler(storage, body).await,
-
-        // UI Customization Actions
-        GetUICustomization => user_pool::get_ui_customization::handler(storage, body).await,
-        SetUICustomization => user_pool::set_ui_customization::handler(storage, body).await,
-
-        // Log Configuration Actions
-        GetLogDeliveryConfiguration => {
-            user_pool::get_log_delivery_configuration::handler(storage, body).await
-        }
-        SetLogDeliveryConfiguration => {
-            user_pool::set_log_delivery_configuration::handler(storage, body).await
-        }
-
-        // Tagging Actions
-        ListTagsForResource => user_pool::list_tags_for_resource::handler(storage, body).await,
-        TagResource => user_pool::tag_resource::handler(storage, body).await,
-        UntagResource => user_pool::untag_resource::handler(storage, body).await,
-    }
-}
-
-use std::str::FromStr;
-
-/// All Cognito Identity Provider operations
-///
-/// <https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_Operations.html>
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum Action {
-    // Admin Actions
-    AdminAddUserToGroup,
-    AdminConfirmSignUp,
-    AdminCreateUser,
-    AdminDeleteUser,
-    AdminDeleteUserAttributes,
-    AdminDisableProviderForUser,
-    AdminDisableUser,
-    AdminEnableUser,
-    AdminForgetDevice,
-    AdminGetDevice,
-    AdminGetUser,
-    AdminInitiateAuth,
-    AdminLinkProviderForUser,
-    AdminListDevices,
-    AdminListGroupsForUser,
-    AdminListUserAuthEvents,
-    AdminRemoveUserFromGroup,
-    AdminResetUserPassword,
-    AdminRespondToAuthChallenge,
-    AdminSetUserMFAPreference,
-    AdminSetUserPassword,
-    AdminSetUserSettings,
-    AdminUpdateAuthEventFeedback,
-    AdminUpdateDeviceStatus,
-    AdminUpdateUserAttributes,
-    AdminUserGlobalSignOut,
-
-    // User Pool Actions
-    CreateUserPool,
-    DeleteUserPool,
-    DescribeUserPool,
-    ListUserPools,
-    UpdateUserPool,
-
-    // User Pool Client Actions
-    CreateUserPoolClient,
-    DeleteUserPoolClient,
-    DescribeUserPoolClient,
-    ListUserPoolClients,
-    UpdateUserPoolClient,
-
-    // User Pool Domain Actions
-    CreateUserPoolDomain,
-    DeleteUserPoolDomain,
-    DescribeUserPoolDomain,
-    UpdateUserPoolDomain,
-
-    // Managed Login Branding Actions
-    CreateManagedLoginBranding,
-    DeleteManagedLoginBranding,
-    DescribeManagedLoginBranding,
-    DescribeManagedLoginBrandingByClient,
-    UpdateManagedLoginBranding,
-
-    // User Actions
-    DeleteUser,
-    DeleteUserAttributes,
-    GetUser,
-    ListUsers,
-    UpdateUserAttributes,
-    VerifyUserAttribute,
-
-    // Authentication Actions
-    ChangePassword,
-    ConfirmForgotPassword,
-    ConfirmSignUp,
-    ForgotPassword,
-    GlobalSignOut,
-    InitiateAuth,
-    ResendConfirmationCode,
-    RespondToAuthChallenge,
-    RevokeToken,
-    GetTokensFromRefreshToken,
-    SignUp,
-    GetUserAttributeVerificationCode,
-
-    // MFA Actions
-    AssociateSoftwareToken,
-    SetUserMFAPreference,
-    VerifySoftwareToken,
-    GetUserPoolMfaConfig,
-    SetUserPoolMfaConfig,
-    SetUserSettings,
-    GetUserAuthFactors,
-
-    // Device Actions
-    ConfirmDevice,
-    ForgetDevice,
-    GetDevice,
-    ListDevices,
-
-    // Group Actions
-    CreateGroup,
-    DeleteGroup,
-    GetGroup,
-    ListGroups,
-    ListUsersInGroup,
-    UpdateGroup,
-
-    // Identity Provider Actions
-    CreateIdentityProvider,
-    DeleteIdentityProvider,
-    DescribeIdentityProvider,
-    GetIdentityProviderByIdentifier,
-    ListIdentityProviders,
-    UpdateIdentityProvider,
-
-    // Resource Server Actions
-    CreateResourceServer,
-    DeleteResourceServer,
-    DescribeResourceServer,
-    ListResourceServers,
-    UpdateResourceServer,
-
-    // User Import Actions
-    CreateUserImportJob,
-    DescribeUserImportJob,
-    GetCSVHeader,
-    ListUserImportJobs,
-    StartUserImportJob,
-    StopUserImportJob,
-
-    // WebAuthn Actions
-    CompleteWebAuthnRegistration,
-    DeleteWebAuthnCredential,
-    ListWebAuthnCredentials,
-    StartWebAuthnRegistration,
-
-    // Terms Actions
-    CreateTerms,
-    DeleteTerms,
-    DescribeTerms,
-    ListTerms,
-    UpdateTerms,
-
-    // Risk Configuration Actions
-    DescribeRiskConfiguration,
-    SetRiskConfiguration,
-
-    // UI Customization Actions
-    GetUICustomization,
-    SetUICustomization,
-
-    // Log Configuration Actions
-    GetLogDeliveryConfiguration,
-    SetLogDeliveryConfiguration,
-
-    // Tagging Actions
-    ListTagsForResource,
-    TagResource,
-    UntagResource,
-
-    // Other Actions
-    AddCustomAttributes,
-    GetSigningCertificate,
-    UpdateAuthEventFeedback,
-    UpdateDeviceStatus,
-}
-
-impl Action {
-    /// Returns true if this operation is implemented
-    pub const fn is_implemented(&self) -> bool {
-        matches!(
-            self,
-            // User Pool Actions
-            Self::CreateUserPool
-                | Self::DeleteUserPool
-                | Self::DescribeUserPool
-                | Self::ListUserPools
-                | Self::UpdateUserPool
-                // User Pool Client Actions
-                | Self::CreateUserPoolClient
-                | Self::DeleteUserPoolClient
-                | Self::DescribeUserPoolClient
-                | Self::ListUserPoolClients
-                | Self::UpdateUserPoolClient
-                // User Pool Domain Actions
-                | Self::CreateUserPoolDomain
-                | Self::DeleteUserPoolDomain
-                | Self::DescribeUserPoolDomain
-                | Self::UpdateUserPoolDomain
-                // Managed Login Branding Actions
-                | Self::CreateManagedLoginBranding
-                | Self::DeleteManagedLoginBranding
-                | Self::DescribeManagedLoginBranding
-                | Self::DescribeManagedLoginBrandingByClient
-                | Self::UpdateManagedLoginBranding
-                // User Actions
-                | Self::SignUp
-                | Self::ConfirmSignUp
-                | Self::ResendConfirmationCode
-                | Self::InitiateAuth
-                | Self::RespondToAuthChallenge
-                | Self::GetUser
-                | Self::DeleteUser
-                | Self::DeleteUserAttributes
-                | Self::UpdateUserAttributes
-                | Self::ListUsers
-                | Self::ChangePassword
-                | Self::ForgotPassword
-                | Self::ConfirmForgotPassword
-                | Self::GlobalSignOut
-                | Self::RevokeToken
-                | Self::GetTokensFromRefreshToken
-                | Self::GetUserAttributeVerificationCode
-                | Self::VerifyUserAttribute
-                // Admin Actions
-                | Self::AdminConfirmSignUp
-                | Self::AdminCreateUser
-                | Self::AdminDeleteUser
-                | Self::AdminDeleteUserAttributes
-                | Self::AdminDisableProviderForUser
-                | Self::AdminDisableUser
-                | Self::AdminEnableUser
-                | Self::AdminForgetDevice
-                | Self::AdminGetDevice
-                | Self::AdminGetUser
-                | Self::AdminInitiateAuth
-                | Self::AdminLinkProviderForUser
-                | Self::AdminListDevices
-                | Self::AdminListUserAuthEvents
-                | Self::AdminResetUserPassword
-                | Self::AdminRespondToAuthChallenge
-                | Self::AdminUpdateAuthEventFeedback
-                | Self::AdminUpdateDeviceStatus
-                | Self::AdminSetUserPassword
-                | Self::AdminUpdateUserAttributes
-                | Self::AdminUserGlobalSignOut
-                | Self::AdminAddUserToGroup
-                | Self::AdminRemoveUserFromGroup
-                | Self::AdminListGroupsForUser
-                // Identity Provider Actions
-                | Self::CreateIdentityProvider
-                | Self::DeleteIdentityProvider
-                | Self::DescribeIdentityProvider
-                | Self::GetIdentityProviderByIdentifier
-                | Self::ListIdentityProviders
-                | Self::UpdateIdentityProvider
-                // Resource Server Actions
-                | Self::CreateResourceServer
-                | Self::DeleteResourceServer
-                | Self::DescribeResourceServer
-                | Self::ListResourceServers
-                | Self::UpdateResourceServer
-                // Group Actions
-                | Self::CreateGroup
-                | Self::DeleteGroup
-                | Self::GetGroup
-                | Self::ListGroups
-                | Self::ListUsersInGroup
-                | Self::UpdateGroup
-                // Other Actions
-                | Self::AddCustomAttributes
-                | Self::GetSigningCertificate
-                | Self::UpdateAuthEventFeedback
-                | Self::UpdateDeviceStatus
-                // MFA Actions
-                | Self::AssociateSoftwareToken
-                | Self::SetUserMFAPreference
-                | Self::VerifySoftwareToken
-                | Self::AdminSetUserMFAPreference
-                | Self::GetUserPoolMfaConfig
-                | Self::SetUserPoolMfaConfig
-                | Self::GetUserAuthFactors
-                // Device Actions
-                | Self::ConfirmDevice
-                | Self::ForgetDevice
-                | Self::GetDevice
-                | Self::ListDevices
-                // User Settings Actions
-                | Self::SetUserSettings
-                | Self::AdminSetUserSettings
-                // User Import Actions
-                | Self::CreateUserImportJob
-                | Self::DescribeUserImportJob
-                | Self::GetCSVHeader
-                | Self::ListUserImportJobs
-                | Self::StartUserImportJob
-                | Self::StopUserImportJob
-                // WebAuthn Actions
-                | Self::CompleteWebAuthnRegistration
-                | Self::DeleteWebAuthnCredential
-                | Self::ListWebAuthnCredentials
-                | Self::StartWebAuthnRegistration
-                // Terms Actions
-                | Self::CreateTerms
-                | Self::DeleteTerms
-                | Self::DescribeTerms
-                | Self::ListTerms
-                | Self::UpdateTerms
-                // Risk Configuration Actions
-                | Self::DescribeRiskConfiguration
-                | Self::SetRiskConfiguration
-                // UI Customization Actions
-                | Self::GetUICustomization
-                | Self::SetUICustomization
-                // Log Configuration Actions
-                | Self::GetLogDeliveryConfiguration
-                | Self::SetLogDeliveryConfiguration
-                // Tagging Actions
-                | Self::ListTagsForResource
-                | Self::TagResource
-                | Self::UntagResource
-        )
-    }
-
-    /// Returns the AWS documentation URL for this operation
-    pub fn doc_url(&self) -> String {
-        format!(
-            "https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_{:?}.html",
-            self
-        )
-    }
-}
-
 #[derive(Debug, Clone)]
 pub struct UnknownAction(pub String);
 
-impl FromStr for Action {
-    type Err = UnknownAction;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
-            // Admin Actions
-            "AdminAddUserToGroup" => Ok(Self::AdminAddUserToGroup),
-            "AdminConfirmSignUp" => Ok(Self::AdminConfirmSignUp),
-            "AdminCreateUser" => Ok(Self::AdminCreateUser),
-            "AdminDeleteUser" => Ok(Self::AdminDeleteUser),
-            "AdminDeleteUserAttributes" => Ok(Self::AdminDeleteUserAttributes),
-            "AdminDisableProviderForUser" => Ok(Self::AdminDisableProviderForUser),
-            "AdminDisableUser" => Ok(Self::AdminDisableUser),
-            "AdminEnableUser" => Ok(Self::AdminEnableUser),
-            "AdminForgetDevice" => Ok(Self::AdminForgetDevice),
-            "AdminGetDevice" => Ok(Self::AdminGetDevice),
-            "AdminGetUser" => Ok(Self::AdminGetUser),
-            "AdminInitiateAuth" => Ok(Self::AdminInitiateAuth),
-            "AdminLinkProviderForUser" => Ok(Self::AdminLinkProviderForUser),
-            "AdminListDevices" => Ok(Self::AdminListDevices),
-            "AdminListGroupsForUser" => Ok(Self::AdminListGroupsForUser),
-            "AdminListUserAuthEvents" => Ok(Self::AdminListUserAuthEvents),
-            "AdminRemoveUserFromGroup" => Ok(Self::AdminRemoveUserFromGroup),
-            "AdminResetUserPassword" => Ok(Self::AdminResetUserPassword),
-            "AdminRespondToAuthChallenge" => Ok(Self::AdminRespondToAuthChallenge),
-            "AdminSetUserMFAPreference" => Ok(Self::AdminSetUserMFAPreference),
-            "AdminSetUserPassword" => Ok(Self::AdminSetUserPassword),
-            "AdminSetUserSettings" => Ok(Self::AdminSetUserSettings),
-            "AdminUpdateAuthEventFeedback" => Ok(Self::AdminUpdateAuthEventFeedback),
-            "AdminUpdateDeviceStatus" => Ok(Self::AdminUpdateDeviceStatus),
-            "AdminUpdateUserAttributes" => Ok(Self::AdminUpdateUserAttributes),
-            "AdminUserGlobalSignOut" => Ok(Self::AdminUserGlobalSignOut),
-
-            // User Pool Actions
-            "CreateUserPool" => Ok(Self::CreateUserPool),
-            "DeleteUserPool" => Ok(Self::DeleteUserPool),
-            "DescribeUserPool" => Ok(Self::DescribeUserPool),
-            "ListUserPools" => Ok(Self::ListUserPools),
-            "UpdateUserPool" => Ok(Self::UpdateUserPool),
-
-            // User Pool Client Actions
-            "CreateUserPoolClient" => Ok(Self::CreateUserPoolClient),
-            "DeleteUserPoolClient" => Ok(Self::DeleteUserPoolClient),
-            "DescribeUserPoolClient" => Ok(Self::DescribeUserPoolClient),
-            "ListUserPoolClients" => Ok(Self::ListUserPoolClients),
-            "UpdateUserPoolClient" => Ok(Self::UpdateUserPoolClient),
-
-            // User Pool Domain Actions
-            "CreateUserPoolDomain" => Ok(Self::CreateUserPoolDomain),
-            "DeleteUserPoolDomain" => Ok(Self::DeleteUserPoolDomain),
-            "DescribeUserPoolDomain" => Ok(Self::DescribeUserPoolDomain),
-            "UpdateUserPoolDomain" => Ok(Self::UpdateUserPoolDomain),
-
-            // Managed Login Branding Actions
-            "CreateManagedLoginBranding" => Ok(Self::CreateManagedLoginBranding),
-            "DeleteManagedLoginBranding" => Ok(Self::DeleteManagedLoginBranding),
-            "DescribeManagedLoginBranding" => Ok(Self::DescribeManagedLoginBranding),
-            "DescribeManagedLoginBrandingByClient" => {
-                Ok(Self::DescribeManagedLoginBrandingByClient)
-            }
-            "UpdateManagedLoginBranding" => Ok(Self::UpdateManagedLoginBranding),
-
-            // User Actions
-            "DeleteUser" => Ok(Self::DeleteUser),
-            "DeleteUserAttributes" => Ok(Self::DeleteUserAttributes),
-            "GetUser" => Ok(Self::GetUser),
-            "ListUsers" => Ok(Self::ListUsers),
-            "UpdateUserAttributes" => Ok(Self::UpdateUserAttributes),
-            "VerifyUserAttribute" => Ok(Self::VerifyUserAttribute),
-
-            // Authentication Actions
-            "ChangePassword" => Ok(Self::ChangePassword),
-            "ConfirmForgotPassword" => Ok(Self::ConfirmForgotPassword),
-            "ConfirmSignUp" => Ok(Self::ConfirmSignUp),
-            "ForgotPassword" => Ok(Self::ForgotPassword),
-            "GlobalSignOut" => Ok(Self::GlobalSignOut),
-            "InitiateAuth" => Ok(Self::InitiateAuth),
-            "ResendConfirmationCode" => Ok(Self::ResendConfirmationCode),
-            "RespondToAuthChallenge" => Ok(Self::RespondToAuthChallenge),
-            "RevokeToken" => Ok(Self::RevokeToken),
-            "GetTokensFromRefreshToken" => Ok(Self::GetTokensFromRefreshToken),
-            "SignUp" => Ok(Self::SignUp),
-            "GetUserAttributeVerificationCode" => Ok(Self::GetUserAttributeVerificationCode),
-
-            // MFA Actions
-            "AssociateSoftwareToken" => Ok(Self::AssociateSoftwareToken),
-            "SetUserMFAPreference" => Ok(Self::SetUserMFAPreference),
-            "VerifySoftwareToken" => Ok(Self::VerifySoftwareToken),
-            "GetUserPoolMfaConfig" => Ok(Self::GetUserPoolMfaConfig),
-            "SetUserPoolMfaConfig" => Ok(Self::SetUserPoolMfaConfig),
-            "SetUserSettings" => Ok(Self::SetUserSettings),
-            "GetUserAuthFactors" => Ok(Self::GetUserAuthFactors),
-
-            // Device Actions
-            "ConfirmDevice" => Ok(Self::ConfirmDevice),
-            "ForgetDevice" => Ok(Self::ForgetDevice),
-            "GetDevice" => Ok(Self::GetDevice),
-            "ListDevices" => Ok(Self::ListDevices),
-
-            // Group Actions
-            "CreateGroup" => Ok(Self::CreateGroup),
-            "DeleteGroup" => Ok(Self::DeleteGroup),
-            "GetGroup" => Ok(Self::GetGroup),
-            "ListGroups" => Ok(Self::ListGroups),
-            "ListUsersInGroup" => Ok(Self::ListUsersInGroup),
-            "UpdateGroup" => Ok(Self::UpdateGroup),
-
-            // Identity Provider Actions
-            "CreateIdentityProvider" => Ok(Self::CreateIdentityProvider),
-            "DeleteIdentityProvider" => Ok(Self::DeleteIdentityProvider),
-            "DescribeIdentityProvider" => Ok(Self::DescribeIdentityProvider),
-            "GetIdentityProviderByIdentifier" => Ok(Self::GetIdentityProviderByIdentifier),
-            "ListIdentityProviders" => Ok(Self::ListIdentityProviders),
-            "UpdateIdentityProvider" => Ok(Self::UpdateIdentityProvider),
-
-            // Resource Server Actions
-            "CreateResourceServer" => Ok(Self::CreateResourceServer),
-            "DeleteResourceServer" => Ok(Self::DeleteResourceServer),
-            "DescribeResourceServer" => Ok(Self::DescribeResourceServer),
-            "ListResourceServers" => Ok(Self::ListResourceServers),
-            "UpdateResourceServer" => Ok(Self::UpdateResourceServer),
-
-            // User Import Actions
-            "CreateUserImportJob" => Ok(Self::CreateUserImportJob),
-            "DescribeUserImportJob" => Ok(Self::DescribeUserImportJob),
-            "GetCSVHeader" => Ok(Self::GetCSVHeader),
-            "ListUserImportJobs" => Ok(Self::ListUserImportJobs),
-            "StartUserImportJob" => Ok(Self::StartUserImportJob),
-            "StopUserImportJob" => Ok(Self::StopUserImportJob),
-
-            // WebAuthn Actions
-            "CompleteWebAuthnRegistration" => Ok(Self::CompleteWebAuthnRegistration),
-            "DeleteWebAuthnCredential" => Ok(Self::DeleteWebAuthnCredential),
-            "ListWebAuthnCredentials" => Ok(Self::ListWebAuthnCredentials),
-            "StartWebAuthnRegistration" => Ok(Self::StartWebAuthnRegistration),
-
-            // Terms Actions
-            "CreateTerms" => Ok(Self::CreateTerms),
-            "DeleteTerms" => Ok(Self::DeleteTerms),
-            "DescribeTerms" => Ok(Self::DescribeTerms),
-            "ListTerms" => Ok(Self::ListTerms),
-            "UpdateTerms" => Ok(Self::UpdateTerms),
-
-            // Risk Configuration Actions
-            "DescribeRiskConfiguration" => Ok(Self::DescribeRiskConfiguration),
-            "SetRiskConfiguration" => Ok(Self::SetRiskConfiguration),
-
-            // UI Customization Actions
-            "GetUICustomization" => Ok(Self::GetUICustomization),
-            "SetUICustomization" => Ok(Self::SetUICustomization),
-
-            // Log Configuration Actions
-            "GetLogDeliveryConfiguration" => Ok(Self::GetLogDeliveryConfiguration),
-            "SetLogDeliveryConfiguration" => Ok(Self::SetLogDeliveryConfiguration),
-
-            // Tagging Actions
-            "ListTagsForResource" => Ok(Self::ListTagsForResource),
-            "TagResource" => Ok(Self::TagResource),
-            "UntagResource" => Ok(Self::UntagResource),
-
-            // Other Actions
-            "AddCustomAttributes" => Ok(Self::AddCustomAttributes),
-            "GetSigningCertificate" => Ok(Self::GetSigningCertificate),
-            "UpdateAuthEventFeedback" => Ok(Self::UpdateAuthEventFeedback),
-            "UpdateDeviceStatus" => Ok(Self::UpdateDeviceStatus),
-
-            _ => Err(UnknownAction(s.to_string())),
+macro_rules! define_action_registry {
+    ($($variant:ident => $handler:path,)+) => {
+        /// All Cognito Identity Provider operations.
+        ///
+        /// <https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_Operations.html>
+        #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+        pub enum Action {
+            $($variant,)+
         }
-    }
+
+        impl Action {
+            /// Returns true if this operation is implemented.
+            /// Generated from the same registry as dispatch and parsing.
+            pub const fn is_implemented(&self) -> bool {
+                matches!(self, $(Self::$variant)|+)
+            }
+
+            /// Returns the AWS documentation URL for this operation.
+            pub fn doc_url(&self) -> String {
+                format!(
+                    "https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_{:?}.html",
+                    self
+                )
+            }
+        }
+
+        impl FromStr for Action {
+            type Err = UnknownAction;
+
+            fn from_str(s: &str) -> Result<Self, Self::Err> {
+                match s {
+                    $(stringify!($variant) => Ok(Self::$variant),)+
+                    _ => Err(UnknownAction(s.to_string())),
+                }
+            }
+        }
+
+        async fn dispatch_action(
+            storage: &Storage,
+            action: Action,
+            body: Value,
+        ) -> Result<Value, AppError> {
+            match action {
+                $(Action::$variant => $handler(storage, body).await,)+
+            }
+        }
+    };
+}
+
+define_action_registry! {
+    CreateUserPool => user_pool::create_user_pool::handler,
+    DeleteUserPool => user_pool::delete_user_pool::handler,
+    DescribeUserPool => user_pool::describe_user_pool::handler,
+    ListUserPools => user_pool::list_user_pools::handler,
+    UpdateUserPool => user_pool::update_user_pool::handler,
+    CreateUserPoolClient => user_pool::create_user_pool_client::handler,
+    DeleteUserPoolClient => user_pool::delete_user_pool_client::handler,
+    DescribeUserPoolClient => user_pool::describe_user_pool_client::handler,
+    ListUserPoolClients => user_pool::list_user_pool_clients::handler,
+    UpdateUserPoolClient => user_pool::update_user_pool_client::handler,
+    CreateUserPoolDomain => user_pool::create_user_pool_domain::handler,
+    DeleteUserPoolDomain => user_pool::delete_user_pool_domain::handler,
+    DescribeUserPoolDomain => user_pool::describe_user_pool_domain::handler,
+    UpdateUserPoolDomain => user_pool::update_user_pool_domain::handler,
+    CreateManagedLoginBranding => user_pool::create_managed_login_branding::handler,
+    DeleteManagedLoginBranding => user_pool::delete_managed_login_branding::handler,
+    DescribeManagedLoginBranding => user_pool::describe_managed_login_branding::handler,
+    DescribeManagedLoginBrandingByClient => user_pool::describe_managed_login_branding_by_client::handler,
+    UpdateManagedLoginBranding => user_pool::update_managed_login_branding::handler,
+    SignUp => user::sign_up::handler,
+    ConfirmSignUp => user::confirm_sign_up::handler,
+    ResendConfirmationCode => user::resend_confirmation_code::handler,
+    InitiateAuth => user::initiate_auth::handler,
+    RespondToAuthChallenge => user::respond_to_auth_challenge::handler,
+    GetUser => user::get_user::handler,
+    DeleteUser => user::delete_user::handler,
+    DeleteUserAttributes => user::delete_user_attributes::handler,
+    UpdateUserAttributes => user::update_user_attributes::handler,
+    ListUsers => user::list_users::handler,
+    ChangePassword => user::change_password::handler,
+    ForgotPassword => user::forgot_password::handler,
+    ConfirmForgotPassword => user::confirm_forgot_password::handler,
+    GlobalSignOut => user::global_sign_out::handler,
+    RevokeToken => user::revoke_token::handler,
+    GetTokensFromRefreshToken => user::get_tokens_from_refresh_token::handler,
+    GetUserAttributeVerificationCode => user::get_user_attribute_verification_code::handler,
+    VerifyUserAttribute => user::verify_user_attribute::handler,
+    AdminConfirmSignUp => user::admin_confirm_sign_up::handler,
+    AdminCreateUser => user::admin_create_user::handler,
+    AdminDeleteUser => user::admin_delete_user::handler,
+    AdminDeleteUserAttributes => user::admin_delete_user_attributes::handler,
+    AdminDisableProviderForUser => user::admin_disable_provider_for_user::handler,
+    AdminDisableUser => user::admin_disable_user::handler,
+    AdminEnableUser => user::admin_enable_user::handler,
+    AdminForgetDevice => user::admin_forget_device::handler,
+    AdminGetDevice => user::admin_get_device::handler,
+    AdminGetUser => user::admin_get_user::handler,
+    AdminInitiateAuth => user::admin_initiate_auth::handler,
+    AdminLinkProviderForUser => user::admin_link_provider_for_user::handler,
+    AdminListDevices => user::admin_list_devices::handler,
+    AdminListUserAuthEvents => user::admin_list_user_auth_events::handler,
+    AdminResetUserPassword => user::admin_reset_user_password::handler,
+    AdminRespondToAuthChallenge => user::admin_respond_to_auth_challenge::handler,
+    AdminUpdateAuthEventFeedback => user::admin_update_auth_event_feedback::handler,
+    AdminUpdateDeviceStatus => user::admin_update_device_status::handler,
+    AdminSetUserPassword => user::admin_set_user_password::handler,
+    AdminUpdateUserAttributes => user::admin_update_user_attributes::handler,
+    AdminUserGlobalSignOut => user::admin_user_global_sign_out::handler,
+    AdminAddUserToGroup => group::admin_add_user_to_group::handler,
+    AdminRemoveUserFromGroup => group::admin_remove_user_from_group::handler,
+    AdminListGroupsForUser => group::admin_list_groups_for_user::handler,
+    CreateGroup => group::create_group::handler,
+    DeleteGroup => group::delete_group::handler,
+    GetGroup => group::get_group::handler,
+    ListGroups => group::list_groups::handler,
+    ListUsersInGroup => group::list_users_in_group::handler,
+    UpdateGroup => group::update_group::handler,
+    CreateIdentityProvider => user_pool::create_identity_provider::handler,
+    DeleteIdentityProvider => user_pool::delete_identity_provider::handler,
+    DescribeIdentityProvider => user_pool::describe_identity_provider::handler,
+    GetIdentityProviderByIdentifier => user_pool::get_identity_provider_by_identifier::handler,
+    ListIdentityProviders => user_pool::list_identity_providers::handler,
+    UpdateIdentityProvider => user_pool::update_identity_provider::handler,
+    CreateResourceServer => user_pool::create_resource_server::handler,
+    DeleteResourceServer => user_pool::delete_resource_server::handler,
+    DescribeResourceServer => user_pool::describe_resource_server::handler,
+    ListResourceServers => user_pool::list_resource_servers::handler,
+    UpdateResourceServer => user_pool::update_resource_server::handler,
+    AddCustomAttributes => user_pool::add_custom_attributes::handler,
+    GetSigningCertificate => user_pool::get_signing_certificate::handler,
+    UpdateAuthEventFeedback => user::update_auth_event_feedback::handler,
+    UpdateDeviceStatus => user::update_device_status::handler,
+    SetUserMFAPreference => user::set_user_mfa_preference::handler,
+    AdminSetUserMFAPreference => user::admin_set_user_mfa_preference::handler,
+    AssociateSoftwareToken => user::associate_software_token::handler,
+    VerifySoftwareToken => user::verify_software_token::handler,
+    GetUserPoolMfaConfig => user_pool::get_user_pool_mfa_config::handler,
+    SetUserPoolMfaConfig => user_pool::set_user_pool_mfa_config::handler,
+    GetUserAuthFactors => user::get_user_auth_factors::handler,
+    ConfirmDevice => user::confirm_device::handler,
+    ForgetDevice => user::forget_device::handler,
+    GetDevice => user::get_device::handler,
+    ListDevices => user::list_devices::handler,
+    SetUserSettings => user::set_user_settings::handler,
+    AdminSetUserSettings => user::admin_set_user_settings::handler,
+    CreateUserImportJob => user_pool::create_user_import_job::handler,
+    DescribeUserImportJob => user_pool::describe_user_import_job::handler,
+    GetCSVHeader => user_pool::get_csv_header::handler,
+    ListUserImportJobs => user_pool::list_user_import_jobs::handler,
+    StartUserImportJob => user_pool::start_user_import_job::handler,
+    StopUserImportJob => user_pool::stop_user_import_job::handler,
+    CompleteWebAuthnRegistration => user::complete_webauthn_registration::handler,
+    DeleteWebAuthnCredential => user::delete_webauthn_credential::handler,
+    ListWebAuthnCredentials => user::list_webauthn_credentials::handler,
+    StartWebAuthnRegistration => user::start_webauthn_registration::handler,
+    CreateTerms => user_pool::create_terms::handler,
+    DeleteTerms => user_pool::delete_terms::handler,
+    DescribeTerms => user_pool::describe_terms::handler,
+    ListTerms => user_pool::list_terms::handler,
+    UpdateTerms => user_pool::update_terms::handler,
+    DescribeRiskConfiguration => user_pool::describe_risk_configuration::handler,
+    SetRiskConfiguration => user_pool::set_risk_configuration::handler,
+    GetUICustomization => user_pool::get_ui_customization::handler,
+    SetUICustomization => user_pool::set_ui_customization::handler,
+    GetLogDeliveryConfiguration => user_pool::get_log_delivery_configuration::handler,
+    SetLogDeliveryConfiguration => user_pool::set_log_delivery_configuration::handler,
+    ListTagsForResource => user_pool::list_tags_for_resource::handler,
+    TagResource => user_pool::tag_resource::handler,
+    UntagResource => user_pool::untag_resource::handler,
 }
 
 #[cfg(test)]
