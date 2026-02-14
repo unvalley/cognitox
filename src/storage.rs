@@ -1,12 +1,21 @@
-//! In-memory storage for Cognito entities
+//! In-memory storage for Cognito entities with optional file persistence.
 //!
 //! This module provides thread-safe in-memory storage for user pools, clients, and users.
-//! For production use, this could be replaced with a persistent database.
+//! If `DATA_FILE` is set, state is loaded from/saved to that file.
 
-use std::{collections::HashMap, sync::Arc};
+use std::{
+    collections::HashMap,
+    fs,
+    path::{Path, PathBuf},
+    sync::Arc,
+    time::Duration,
+};
 
+use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64_STANDARD};
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio::sync::RwLock;
+use tracing::error;
 
 use crate::types::{
     AuthEvent, AuthorizationCode, BrandingId, ClientId, ConfirmationCode, Device, DomainPrefix,
@@ -18,9 +27,10 @@ use crate::types::{
 #[derive(Debug, Clone)]
 pub struct Storage {
     inner: Arc<RwLock<StorageInner>>,
+    persistence: Option<Arc<PersistenceConfig>>,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Serialize, Deserialize, Default)]
 struct StorageInner {
     user_pools: HashMap<UserPoolId, UserPool>,
     user_pool_clients: HashMap<ClientId, UserPoolClient>,
@@ -54,12 +64,170 @@ struct StorageInner {
     webauthn_registration_challenges: HashMap<UserId, String>,
 }
 
+#[derive(Debug)]
+struct PersistenceConfig {
+    data_file: PathBuf,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct PersistedSnapshot {
+    version: u32,
+    encoding: String,
+    payload: String,
+}
+
+impl PersistedSnapshot {
+    const CURRENT_VERSION: u32 = 1;
+    const CURRENT_ENCODING: &'static str = "bincode+base64";
+}
+
 impl Storage {
     pub fn new() -> Self {
-        Self {
-            inner: Arc::new(RwLock::new(StorageInner::default())),
+        Self::try_new().expect("Failed to initialize storage")
+    }
+
+    pub fn try_new() -> Result<Self, String> {
+        let data_file = std::env::var("DATA_FILE").ok().map(PathBuf::from);
+        Self::try_with_data_file(data_file)
+    }
+
+    pub fn try_with_data_file(data_file: Option<PathBuf>) -> Result<Self, String> {
+        let persistence = data_file.map(|data_file| Arc::new(PersistenceConfig { data_file }));
+        let initial_inner = if let Some(config) = &persistence {
+            Self::load_from_file(&config.data_file)?
+        } else {
+            StorageInner::default()
+        };
+
+        let storage = Self {
+            inner: Arc::new(RwLock::new(initial_inner)),
+            persistence,
+        };
+        storage.start_auto_persist_loop();
+        Ok(storage)
+    }
+
+    fn start_auto_persist_loop(&self) {
+        let Some(config) = &self.persistence else {
+            return;
+        };
+
+        let Ok(handle) = tokio::runtime::Handle::try_current() else {
+            return;
+        };
+
+        let inner = Arc::downgrade(&self.inner);
+        let data_file = config.data_file.clone();
+        handle.spawn(async move {
+            let mut last_snapshot: Option<Vec<u8>> = None;
+            loop {
+                tokio::time::sleep(Duration::from_millis(500)).await;
+                let Some(inner) = inner.upgrade() else {
+                    break;
+                };
+                let snapshot = {
+                    let inner = inner.read().await;
+                    match Storage::encode_snapshot(&inner) {
+                        Ok(snapshot) => snapshot,
+                        Err(e) => {
+                            error!("Failed to serialize storage snapshot: {e}");
+                            continue;
+                        }
+                    }
+                };
+
+                if last_snapshot.as_ref() == Some(&snapshot) {
+                    continue;
+                }
+
+                if let Err(e) = Storage::write_snapshot_file(&data_file, &snapshot) {
+                    error!("Failed to persist storage snapshot to {:?}: {e}", data_file);
+                    continue;
+                }
+
+                last_snapshot = Some(snapshot);
+            }
+        });
+    }
+
+    fn load_from_file(path: &Path) -> Result<StorageInner, String> {
+        match fs::read_to_string(path) {
+            Ok(content) => Self::decode_snapshot(&content),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(StorageInner::default()),
+            Err(e) => Err(format!("Failed to read data file {:?}: {}", path, e)),
         }
     }
+
+    fn decode_snapshot(content: &str) -> Result<StorageInner, String> {
+        let snapshot: PersistedSnapshot =
+            serde_json::from_str(content).map_err(|e| format!("Invalid JSON snapshot: {e}"))?;
+
+        if snapshot.version != PersistedSnapshot::CURRENT_VERSION {
+            return Err(format!(
+                "Unsupported snapshot version: {}",
+                snapshot.version
+            ));
+        }
+
+        if snapshot.encoding != PersistedSnapshot::CURRENT_ENCODING {
+            return Err(format!(
+                "Unsupported snapshot encoding: {}",
+                snapshot.encoding
+            ));
+        }
+
+        let payload = BASE64_STANDARD
+            .decode(snapshot.payload.as_bytes())
+            .map_err(|e| format!("Invalid snapshot payload encoding: {e}"))?;
+
+        bincode::deserialize::<StorageInner>(&payload)
+            .map_err(|e| format!("Failed to deserialize snapshot payload: {e}"))
+    }
+
+    fn encode_snapshot(inner: &StorageInner) -> Result<Vec<u8>, String> {
+        let payload = bincode::serialize(inner)
+            .map_err(|e| format!("Failed to serialize storage state: {e}"))?;
+        let snapshot = PersistedSnapshot {
+            version: PersistedSnapshot::CURRENT_VERSION,
+            encoding: PersistedSnapshot::CURRENT_ENCODING.to_string(),
+            payload: BASE64_STANDARD.encode(payload),
+        };
+
+        serde_json::to_vec_pretty(&snapshot).map_err(|e| format!("Failed to encode snapshot: {e}"))
+    }
+
+    fn write_snapshot_file(path: &Path, data: &[u8]) -> Result<(), String> {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).map_err(|e| {
+                format!("Failed to create persistence directory {:?}: {}", parent, e)
+            })?;
+        }
+
+        let tmp_path = path.with_extension("tmp");
+        fs::write(&tmp_path, data)
+            .map_err(|e| format!("Failed to write temp snapshot {:?}: {}", tmp_path, e))?;
+        fs::rename(&tmp_path, path)
+            .map_err(|e| format!("Failed to atomically move snapshot to {:?}: {}", path, e))
+    }
+
+    pub async fn flush_persistence(&self) -> Result<(), String> {
+        let Some(config) = &self.persistence else {
+            return Ok(());
+        };
+        let snapshot = {
+            let inner = self.inner.read().await;
+            Self::encode_snapshot(&inner)?
+        };
+        Self::write_snapshot_file(&config.data_file, &snapshot)
+    }
+
+    pub fn persistence_path(&self) -> Option<&Path> {
+        self.persistence
+            .as_ref()
+            .map(|config| config.data_file.as_path())
+    }
+
+    // ==================== User Pool Operations ====================
 
     // ==================== User Pool Operations ====================
 
@@ -1079,5 +1247,52 @@ impl Storage {
 impl Default for Storage {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::Utc;
+    use std::fs;
+
+    use crate::types::{UserPool, UserPoolId};
+
+    fn temp_data_file() -> PathBuf {
+        std::env::temp_dir().join(format!("cognitox-storage-{}.json", uuid::Uuid::new_v4()))
+    }
+
+    #[tokio::test]
+    async fn test_persistence_roundtrip() {
+        let path = temp_data_file();
+
+        let storage = Storage::try_with_data_file(Some(path.clone())).unwrap();
+        let now = Utc::now();
+        let pool = UserPool {
+            id: UserPoolId::new_local(),
+            name: "persisted-pool".to_string(),
+            creation_date: now,
+            last_modified_date: now,
+        };
+        storage.create_user_pool(pool).await;
+        storage.flush_persistence().await.unwrap();
+
+        let loaded = Storage::try_with_data_file(Some(path.clone())).unwrap();
+        let pools = loaded.list_user_pools().await;
+        assert_eq!(pools.len(), 1);
+        assert_eq!(pools[0].name, "persisted-pool");
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn test_invalid_persistence_file_fails() {
+        let path = temp_data_file();
+        fs::write(&path, "{not valid json").unwrap();
+
+        let result = Storage::try_with_data_file(Some(path.clone()));
+        assert!(result.is_err());
+
+        let _ = fs::remove_file(path);
     }
 }
