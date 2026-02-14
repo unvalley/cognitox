@@ -7,7 +7,7 @@ use axum::{
     Form, Json,
     extract::{Query, State},
     http::{StatusCode, header},
-    response::{IntoResponse, Redirect, Response},
+    response::{IntoResponse, Redirect},
 };
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use chrono::{Duration, Utc};
@@ -17,6 +17,7 @@ use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 use crate::{
+    error::OAuthError,
     jwt::{generate_access_token, generate_id_token, verify_access_token},
     storage::Storage,
     types::{AuthorizationCode, ClientId, RefreshToken, UserStatus},
@@ -79,20 +80,6 @@ pub struct TokenResponse {
     pub id_token: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub scope: Option<String>,
-}
-
-/// OAuth error response
-#[derive(Debug, Serialize)]
-pub struct OAuthError {
-    pub error: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub error_description: Option<String>,
-}
-
-impl IntoResponse for OAuthError {
-    fn into_response(self) -> Response {
-        (StatusCode::BAD_REQUEST, Json(self)).into_response()
-    }
 }
 
 /// GET /oauth2/authorize - Authorization endpoint
