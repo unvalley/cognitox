@@ -7,12 +7,14 @@ use chrono::{Duration, Utc};
 use jsonwebtoken::{
     Algorithm, DecodingKey, EncodingKey, Header, TokenData, Validation, decode, encode,
 };
-use rsa::pkcs1::{EncodeRsaPrivateKey, EncodeRsaPublicKey};
+use rsa::pkcs1::{
+    DecodeRsaPrivateKey, DecodeRsaPublicKey, EncodeRsaPrivateKey, EncodeRsaPublicKey,
+};
 use rsa::pkcs8::LineEnding;
 use rsa::traits::PublicKeyParts;
 use rsa::{RsaPrivateKey, RsaPublicKey};
 use serde::{Deserialize, Serialize};
-use std::sync::OnceLock;
+use std::{fs, sync::OnceLock};
 
 use crate::types::{User, UserPoolId};
 
@@ -29,6 +31,80 @@ pub struct JwtKeys {
 }
 
 impl JwtKeys {
+    fn from_rsa_keys(
+        private_key: RsaPrivateKey,
+        public_key: RsaPublicKey,
+        key_id: String,
+    ) -> Result<Self, String> {
+        let private_pem = private_key
+            .to_pkcs1_pem(LineEnding::LF)
+            .map_err(|e| format!("Failed to encode private key: {e}"))?;
+        let public_pem = public_key
+            .to_pkcs1_pem(LineEnding::LF)
+            .map_err(|e| format!("Failed to encode public key: {e}"))?;
+
+        let encoding_key = EncodingKey::from_rsa_pem(private_pem.as_bytes())
+            .map_err(|e| format!("Invalid private key PEM: {e}"))?;
+        let decoding_key = DecodingKey::from_rsa_pem(public_pem.as_bytes())
+            .map_err(|e| format!("Invalid public key PEM: {e}"))?;
+
+        let n_bytes = public_key.n().to_bytes_be();
+        let e_bytes = public_key.e().to_bytes_be();
+
+        Ok(Self {
+            encoding_key,
+            decoding_key,
+            key_id,
+            public_key_n: URL_SAFE_NO_PAD.encode(&n_bytes),
+            public_key_e: URL_SAFE_NO_PAD.encode(&e_bytes),
+        })
+    }
+
+    fn load_pem_from_env(direct_var: &str, path_var: &str) -> Result<Option<String>, String> {
+        if let Ok(pem) = std::env::var(direct_var) {
+            return Ok(Some(pem));
+        }
+        if let Ok(path) = std::env::var(path_var) {
+            let pem = fs::read_to_string(&path)
+                .map_err(|e| format!("Failed to read {path_var} ({path}): {e}"))?;
+            return Ok(Some(pem));
+        }
+        Ok(None)
+    }
+
+    fn from_env() -> Result<Option<Self>, String> {
+        let private_pem = Self::load_pem_from_env(
+            "COGNITOX_JWT_PRIVATE_KEY_PEM",
+            "COGNITOX_JWT_PRIVATE_KEY_PATH",
+        )?;
+        let public_pem = Self::load_pem_from_env(
+            "COGNITOX_JWT_PUBLIC_KEY_PEM",
+            "COGNITOX_JWT_PUBLIC_KEY_PATH",
+        )?;
+
+        if private_pem.is_none() && public_pem.is_none() {
+            return Ok(None);
+        }
+
+        let private_pem = private_pem.ok_or_else(|| {
+            "JWT private key is required when configuring external JWT keys".to_string()
+        })?;
+        let private_key = RsaPrivateKey::from_pkcs1_pem(&private_pem)
+            .map_err(|e| format!("Failed to parse configured private key: {e}"))?;
+
+        let public_key = if let Some(public_pem) = public_pem {
+            RsaPublicKey::from_pkcs1_pem(&public_pem)
+                .map_err(|e| format!("Failed to parse configured public key: {e}"))?
+        } else {
+            RsaPublicKey::from(&private_key)
+        };
+
+        let key_id = std::env::var("COGNITOX_JWT_KEY_ID")
+            .unwrap_or_else(|_| uuid::Uuid::new_v4().to_string());
+
+        Self::from_rsa_keys(private_key, public_key, key_id).map(Some)
+    }
+
     /// Generate a new RSA key pair
     fn generate() -> Self {
         let mut rng = rand::thread_rng();
@@ -37,39 +113,20 @@ impl JwtKeys {
         let private_key =
             RsaPrivateKey::new(&mut rng, 2048).expect("Failed to generate RSA key pair");
         let public_key = RsaPublicKey::from(&private_key);
-
-        // Export keys in PEM format for jsonwebtoken
-        let private_pem = private_key
-            .to_pkcs1_pem(LineEnding::LF)
-            .expect("Failed to encode private key");
-        let public_pem = public_key
-            .to_pkcs1_pem(LineEnding::LF)
-            .expect("Failed to encode public key");
-
-        let encoding_key =
-            EncodingKey::from_rsa_pem(private_pem.as_bytes()).expect("Invalid private key PEM");
-        let decoding_key =
-            DecodingKey::from_rsa_pem(public_pem.as_bytes()).expect("Invalid public key PEM");
-
-        // Extract n and e for JWKS
-        let n_bytes = public_key.n().to_bytes_be();
-        let e_bytes = public_key.e().to_bytes_be();
-
         let key_id = uuid::Uuid::new_v4().to_string();
 
-        Self {
-            encoding_key,
-            decoding_key,
-            key_id,
-            public_key_n: URL_SAFE_NO_PAD.encode(&n_bytes),
-            public_key_e: URL_SAFE_NO_PAD.encode(&e_bytes),
-        }
+        Self::from_rsa_keys(private_key, public_key, key_id)
+            .expect("Failed to create JWT keys from generated RSA key pair")
     }
 }
 
 /// Get or initialize the global JWT keys
 pub fn get_jwt_keys() -> &'static JwtKeys {
-    JWT_KEYS.get_or_init(JwtKeys::generate)
+    JWT_KEYS.get_or_init(|| {
+        JwtKeys::from_env()
+            .unwrap_or_else(|e| panic!("Failed to load configured JWT keys: {e}"))
+            .unwrap_or_else(JwtKeys::generate)
+    })
 }
 
 /// Claims for ID Token
