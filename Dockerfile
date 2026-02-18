@@ -34,11 +34,14 @@ RUN apk add --no-cache ca-certificates
 
 WORKDIR /app
 
+RUN mkdir -p /data && chown nobody:nogroup /data
+
 # Copy the binary from builder
 COPY --from=builder /app/target/release/cognito-emulator /app/cognito-emulator
 
 # Default port
 ENV PORT=9229
+ENV DATA_FILE=/data/storage.json
 
 EXPOSE 9229
 

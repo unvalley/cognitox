@@ -3,6 +3,8 @@ services:
     build: .
     ports:
       - "9229:9229"
+    volumes:
+      - cognitox_data:/data
     environment:
       - PORT=9229
       - RUST_LOG=cognito_emulator=info
@@ -12,3 +14,6 @@ services:
       timeout: 3s
       retries: 3
       start_period: 5s
+
+volumes:
+  cognitox_data:

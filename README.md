@@ -9,7 +9,7 @@ AWS Cognito User Pools emulator for local development.
 |----------|---------|-------------|
 | `PORT` | `9229` | Server port |
 | `RUST_LOG` | `info` | Log level |
-| `DATA_FILE` | *(unset)* | Optional path to persist emulator state as a JSON snapshot file |
+| `DATA_FILE` | Auto (`/data/storage.json` in containers, `./.cognitox/storage.json` otherwise) | Path to persist emulator state as a JSON snapshot file |
 
 ## API Coverage
 
