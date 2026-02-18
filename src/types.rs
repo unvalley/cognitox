@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::fmt;
 use std::str::FromStr;
 
@@ -366,6 +367,31 @@ pub struct UserAttribute {
     pub value: Option<String>,
 }
 
+/// Remembered device metadata
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Device {
+    pub user_id: UserId,
+    pub device_key: String,
+    pub device_attributes: Vec<UserAttribute>,
+    pub device_create_date: DateTime<Utc>,
+    pub device_last_modified_date: DateTime<Utc>,
+    pub device_last_authenticated_date: DateTime<Utc>,
+    pub device_remembered_status: Option<String>,
+}
+
+/// User authentication event
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AuthEvent {
+    pub event_id: String,
+    pub user_id: UserId,
+    pub event_type: String,
+    pub creation_date: DateTime<Utc>,
+    pub event_response: String,
+    pub feedback_value: Option<String>,
+    pub feedback_provided_by: Option<String>,
+    pub feedback_date: Option<DateTime<Utc>>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConfirmationCode {
     pub user_id: UserId,
@@ -481,6 +507,35 @@ pub struct UserPoolDomain {
     pub managed_login_version: Option<i32>,
 }
 
+/// Identity provider configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IdentityProvider {
+    pub user_pool_id: UserPoolId,
+    pub provider_name: String,
+    pub provider_type: String,
+    pub provider_details: HashMap<String, String>,
+    pub attribute_mapping: HashMap<String, String>,
+    pub idp_identifiers: Vec<String>,
+    pub creation_date: DateTime<Utc>,
+    pub last_modified_date: DateTime<Utc>,
+}
+
+/// Resource server scope
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ResourceServerScope {
+    pub scope_name: String,
+    pub scope_description: String,
+}
+
+/// Resource server
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ResourceServer {
+    pub user_pool_id: UserPoolId,
+    pub identifier: String,
+    pub name: String,
+    pub scopes: Vec<ResourceServerScope>,
+}
+
 /// Managed Login Branding ID
 pub type BrandingId = String;
 
@@ -540,4 +595,74 @@ pub struct BrandingSettings {
     pub sign_in_header: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sign_in_subheader: Option<String>,
+}
+
+/// User import job status
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+pub enum UserImportJobStatus {
+    #[default]
+    Created,
+    Pending,
+    InProgress,
+    Stopping,
+    Expired,
+    Stopped,
+    Failed,
+    Succeeded,
+}
+
+/// User import job metadata
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UserImportJob {
+    pub job_id: String,
+    pub user_pool_id: UserPoolId,
+    pub job_name: String,
+    pub cloud_watch_logs_role_arn: String,
+    pub status: UserImportJobStatus,
+    pub pre_signed_url: Option<String>,
+    pub creation_date: DateTime<Utc>,
+    pub start_date: Option<DateTime<Utc>>,
+    pub completion_date: Option<DateTime<Utc>>,
+    pub completion_message: Option<String>,
+    pub imported_users: i32,
+    pub skipped_users: i32,
+    pub failed_users: i32,
+}
+
+/// Terms document metadata
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TermsDocument {
+    pub terms_id: String,
+    pub user_pool_id: UserPoolId,
+    pub client_id: ClientId,
+    pub terms_name: String,
+    pub terms_source: String,
+    pub enforcement: Option<String>,
+    pub links: HashMap<String, String>,
+    pub creation_date: DateTime<Utc>,
+    pub last_modified_date: DateTime<Utc>,
+}
+
+/// UI customization settings
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UiCustomization {
+    pub user_pool_id: UserPoolId,
+    pub client_id: Option<ClientId>,
+    pub css: Option<String>,
+    pub css_version: String,
+    pub image_url: Option<String>,
+    pub creation_date: DateTime<Utc>,
+    pub last_modified_date: DateTime<Utc>,
+}
+
+/// WebAuthn credential metadata
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WebAuthnCredential {
+    pub credential_id: String,
+    pub friendly_credential_name: Option<String>,
+    pub relying_party_id: Option<String>,
+    pub created_at: DateTime<Utc>,
+    pub authenticator_attachment: Option<String>,
+    pub authenticator_transports: Vec<String>,
 }
