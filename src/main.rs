@@ -22,7 +22,10 @@ async fn main() {
     dotenvy::dotenv().ok();
 
     // Initialize storage
-    let storage = Storage::new();
+    let storage = Storage::try_new().unwrap_or_else(|e| {
+        tracing::error!("Failed to initialize storage: {e}");
+        std::process::exit(1);
+    });
 
     // Build router
     let app = api::create_router(storage)
