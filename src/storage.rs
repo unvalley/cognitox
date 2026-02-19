@@ -878,9 +878,18 @@ impl Storage {
         group_name: &GroupName,
     ) -> Option<Group> {
         let mut store = self.group_store.write().await;
-        store
+        let deleted = store
             .groups
-            .remove(&(user_pool_id.clone(), group_name.clone()))
+            .remove(&(user_pool_id.clone(), group_name.clone()));
+
+        if deleted.is_some() {
+            store.user_groups.retain(|_, groups| {
+                groups.retain(|existing| existing != group_name);
+                !groups.is_empty()
+            });
+        }
+
+        deleted
     }
 
     pub async fn list_groups(&self, user_pool_id: &UserPoolId) -> Vec<Group> {

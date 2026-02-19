@@ -38,7 +38,10 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::action::group::{create_group, get_group};
+    use crate::action::group::{
+        admin_add_user_to_group, admin_list_groups_for_user, create_group, get_group,
+    };
+    use crate::action::user::admin_create_user;
     use crate::action::user_pool::create_user_pool;
     use serde_json::json;
 
@@ -55,6 +58,28 @@ mod tests {
             &storage,
             json!({
                 "UserPoolId": pool_id,
+                "GroupName": "admins"
+            }),
+        )
+        .await
+        .unwrap();
+
+        admin_create_user::handler(
+            &storage,
+            json!({
+                "UserPoolId": pool_id,
+                "Username": "testuser",
+                "TemporaryPassword": "TempPass123!"
+            }),
+        )
+        .await
+        .unwrap();
+
+        admin_add_user_to_group::handler(
+            &storage,
+            json!({
+                "UserPoolId": pool_id,
+                "Username": "testuser",
                 "GroupName": "admins"
             }),
         )
@@ -82,6 +107,17 @@ mod tests {
         )
         .await;
         assert!(get_result.is_err());
+
+        let list_result = admin_list_groups_for_user::handler(
+            &storage,
+            json!({
+                "UserPoolId": pool_id,
+                "Username": "testuser"
+            }),
+        )
+        .await
+        .unwrap();
+        assert_eq!(list_result["Groups"].as_array().unwrap().len(), 0);
     }
 
     #[tokio::test]
