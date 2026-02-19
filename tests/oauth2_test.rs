@@ -336,6 +336,81 @@ async fn test_invalid_client() {
 }
 
 #[tokio::test]
+async fn test_authorize_rejects_client_without_oauth_enabled() {
+    let client = TestClient::new();
+    let (_, pool_body) = client
+        .request("CreateUserPool", json!({ "PoolName": "TestPool" }))
+        .await;
+    let pool_id = pool_body["UserPool"]["Id"].as_str().unwrap().to_string();
+
+    let (_, client_body) = client
+        .request(
+            "CreateUserPoolClient",
+            json!({
+                "UserPoolId": pool_id,
+                "ClientName": "OAuthClient",
+                "AllowedOAuthFlows": ["code"],
+                "AllowedOAuthScopes": ["openid"],
+                "CallbackURLs": ["https://example.com/callback"],
+                "AllowedOAuthFlowsUserPoolClient": false
+            }),
+        )
+        .await;
+    let client_id = client_body["UserPoolClient"]["ClientId"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let response = client
+        .get(&format!(
+            "/oauth2/authorize?response_type=code&client_id={}&redirect_uri=https://example.com/callback&scope=openid",
+            client_id
+        ))
+        .await;
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let body: serde_json::Value = response.json().await.unwrap();
+    assert_eq!(body["error"], "unauthorized_client");
+}
+
+#[tokio::test]
+async fn test_authorize_rejects_client_without_code_flow() {
+    let client = TestClient::new();
+    let (_, pool_body) = client
+        .request("CreateUserPool", json!({ "PoolName": "TestPool" }))
+        .await;
+    let pool_id = pool_body["UserPool"]["Id"].as_str().unwrap().to_string();
+
+    let (_, client_body) = client
+        .request(
+            "CreateUserPoolClient",
+            json!({
+                "UserPoolId": pool_id,
+                "ClientName": "OAuthClient",
+                "AllowedOAuthScopes": ["openid"],
+                "CallbackURLs": ["https://example.com/callback"],
+                "AllowedOAuthFlowsUserPoolClient": true
+            }),
+        )
+        .await;
+    let client_id = client_body["UserPoolClient"]["ClientId"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let response = client
+        .get(&format!(
+            "/oauth2/authorize?response_type=code&client_id={}&redirect_uri=https://example.com/callback&scope=openid",
+            client_id
+        ))
+        .await;
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let body: serde_json::Value = response.json().await.unwrap();
+    assert_eq!(body["error"], "unauthorized_client");
+}
+
+#[tokio::test]
 async fn test_invalid_authorization_code() {
     let client = TestClient::new();
     let (_, client_id, _, _) = setup_user_and_client(&client).await;

@@ -114,6 +114,13 @@ pub async fn authorize(
         });
     }
 
+    if !client.allowed_oauth_flows_user_pool_client {
+        return Err(OAuthError {
+            error: "unauthorized_client".to_string(),
+            error_description: Some("OAuth flows are not enabled for this client".to_string()),
+        });
+    }
+
     // Parse scopes
     let scopes: Vec<String> = params
         .scope
@@ -127,9 +134,7 @@ pub async fn authorize(
     match params.response_type.as_str() {
         "code" => {
             // Authorization Code Flow
-            if !client.allowed_oauth_flows.is_empty()
-                && !client.allowed_oauth_flows.contains(&"code".to_string())
-            {
+            if !client.allowed_oauth_flows.contains(&"code".to_string()) {
                 return Err(OAuthError {
                     error: "unauthorized_client".to_string(),
                     error_description: Some("Code flow not allowed for this client".to_string()),
@@ -205,9 +210,7 @@ pub async fn authorize(
         }
         "token" => {
             // Implicit Flow (legacy, not recommended)
-            if !client.allowed_oauth_flows.is_empty()
-                && !client.allowed_oauth_flows.contains(&"implicit".to_string())
-            {
+            if !client.allowed_oauth_flows.contains(&"implicit".to_string()) {
                 return Err(OAuthError {
                     error: "unauthorized_client".to_string(),
                     error_description: Some(
@@ -577,6 +580,15 @@ pub async fn token(
                 return Err(OAuthError {
                     error: "invalid_client".to_string(),
                     error_description: Some("Invalid client credentials".to_string()),
+                });
+            }
+
+            if !client.allowed_oauth_flows_user_pool_client {
+                return Err(OAuthError {
+                    error: "unauthorized_client".to_string(),
+                    error_description: Some(
+                        "OAuth flows are not enabled for this client".to_string(),
+                    ),
                 });
             }
 
