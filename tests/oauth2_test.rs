@@ -67,6 +67,73 @@ async fn setup_user_and_client(client: &TestClient) -> (String, String, String, 
     )
 }
 
+async fn setup_user_and_confidential_client(
+    client: &TestClient,
+) -> (String, String, String, String, String) {
+    let (_, pool_body) = client
+        .request(
+            "CreateUserPool",
+            json!({ "PoolName": "TestPoolWithSecret" }),
+        )
+        .await;
+    let pool_id = pool_body["UserPool"]["Id"].as_str().unwrap().to_string();
+
+    let (_, client_body) = client
+        .request(
+            "CreateUserPoolClient",
+            json!({
+                "UserPoolId": pool_id,
+                "ClientName": "OAuthClientWithSecret",
+                "AllowedOAuthFlows": ["code", "implicit"],
+                "AllowedOAuthScopes": ["openid", "email", "profile"],
+                "AllowedOAuthFlowsUserPoolClient": true,
+                "CallbackURLs": ["https://example.com/callback"],
+                "GenerateSecret": true
+            }),
+        )
+        .await;
+    let client_id = client_body["UserPoolClient"]["ClientId"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let client_secret = client_body["UserPoolClient"]["ClientSecret"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    client
+        .request(
+            "SignUp",
+            json!({
+                "ClientId": client_id,
+                "Username": "testuser",
+                "Password": "Test123!",
+                "UserAttributes": [
+                    { "Name": "email", "Value": "test@example.com" }
+                ]
+            }),
+        )
+        .await;
+
+    client
+        .request(
+            "AdminConfirmSignUp",
+            json!({
+                "UserPoolId": pool_id,
+                "Username": "testuser"
+            }),
+        )
+        .await;
+
+    (
+        pool_id,
+        client_id,
+        client_secret,
+        "testuser".to_string(),
+        "Test123!".to_string(),
+    )
+}
+
 #[tokio::test]
 async fn test_openid_configuration() {
     let client = TestClient::new();
@@ -264,6 +331,202 @@ async fn test_refresh_token_flow() {
 
     let refresh_body: serde_json::Value = refresh_response.json().await.unwrap();
     assert!(refresh_body["access_token"].as_str().is_some());
+}
+
+#[tokio::test]
+async fn test_refresh_token_flow_requires_client_secret_for_confidential_client() {
+    let client = TestClient::new();
+    let (_, client_id, client_secret, username, password) =
+        setup_user_and_confidential_client(&client).await;
+
+    let auth_url = format!(
+        "/oauth2/authorize?response_type=code&client_id={}&redirect_uri={}&scope={}&username={}&password={}",
+        client_id, "https://example.com/callback", "openid", username, password
+    );
+
+    let response = client.get(&auth_url).await;
+    let location = response
+        .headers()
+        .get("location")
+        .unwrap()
+        .to_str()
+        .unwrap();
+    let code = location
+        .split("code=")
+        .nth(1)
+        .unwrap()
+        .split('&')
+        .next()
+        .unwrap();
+
+    let token_response = client
+        .post_form(
+            "/oauth2/token",
+            &[
+                ("grant_type", "authorization_code"),
+                ("code", code),
+                ("client_id", &client_id),
+                ("client_secret", &client_secret),
+                ("redirect_uri", "https://example.com/callback"),
+            ],
+        )
+        .await;
+    assert_eq!(token_response.status(), StatusCode::OK);
+    let token_body: serde_json::Value = token_response.json().await.unwrap();
+    let refresh_token = token_body["refresh_token"].as_str().unwrap();
+
+    let refresh_response = client
+        .post_form(
+            "/oauth2/token",
+            &[
+                ("grant_type", "refresh_token"),
+                ("refresh_token", refresh_token),
+                ("client_id", &client_id),
+            ],
+        )
+        .await;
+    assert_eq!(refresh_response.status(), StatusCode::BAD_REQUEST);
+    let refresh_body: serde_json::Value = refresh_response.json().await.unwrap();
+    assert_eq!(refresh_body["error"], "invalid_client");
+}
+
+#[tokio::test]
+async fn test_refresh_token_flow_rejects_disabled_user() {
+    let client = TestClient::new();
+    let (pool_id, client_id, username, password) = setup_user_and_client(&client).await;
+
+    let auth_url = format!(
+        "/oauth2/authorize?response_type=code&client_id={}&redirect_uri={}&scope={}&username={}&password={}",
+        client_id, "https://example.com/callback", "openid", username, password
+    );
+
+    let response = client.get(&auth_url).await;
+    let location = response
+        .headers()
+        .get("location")
+        .unwrap()
+        .to_str()
+        .unwrap();
+    let code = location
+        .split("code=")
+        .nth(1)
+        .unwrap()
+        .split('&')
+        .next()
+        .unwrap();
+
+    let token_response = client
+        .post_form(
+            "/oauth2/token",
+            &[
+                ("grant_type", "authorization_code"),
+                ("code", code),
+                ("client_id", &client_id),
+                ("redirect_uri", "https://example.com/callback"),
+            ],
+        )
+        .await;
+    assert_eq!(token_response.status(), StatusCode::OK);
+    let token_body: serde_json::Value = token_response.json().await.unwrap();
+    let refresh_token = token_body["refresh_token"].as_str().unwrap();
+
+    let (status, _) = client
+        .request(
+            "AdminDisableUser",
+            json!({
+                "UserPoolId": pool_id,
+                "Username": username
+            }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK);
+
+    let refresh_response = client
+        .post_form(
+            "/oauth2/token",
+            &[
+                ("grant_type", "refresh_token"),
+                ("refresh_token", refresh_token),
+                ("client_id", &client_id),
+            ],
+        )
+        .await;
+    assert_eq!(refresh_response.status(), StatusCode::BAD_REQUEST);
+    let refresh_body: serde_json::Value = refresh_response.json().await.unwrap();
+    assert_eq!(refresh_body["error"], "invalid_grant");
+}
+
+#[tokio::test]
+async fn test_refresh_token_flow_rejects_client_id_mismatch() {
+    let client = TestClient::new();
+    let (pool_id, client_id, username, password) = setup_user_and_client(&client).await;
+
+    let (_, second_client_body) = client
+        .request(
+            "CreateUserPoolClient",
+            json!({
+                "UserPoolId": pool_id,
+                "ClientName": "OAuthClient2",
+                "AllowedOAuthFlows": ["code", "implicit"],
+                "AllowedOAuthScopes": ["openid", "email", "profile"],
+                "AllowedOAuthFlowsUserPoolClient": true,
+                "CallbackURLs": ["https://example.com/callback"],
+                "GenerateSecret": false
+            }),
+        )
+        .await;
+    let second_client_id = second_client_body["UserPoolClient"]["ClientId"]
+        .as_str()
+        .unwrap();
+
+    let auth_url = format!(
+        "/oauth2/authorize?response_type=code&client_id={}&redirect_uri={}&scope={}&username={}&password={}",
+        client_id, "https://example.com/callback", "openid", username, password
+    );
+
+    let response = client.get(&auth_url).await;
+    let location = response
+        .headers()
+        .get("location")
+        .unwrap()
+        .to_str()
+        .unwrap();
+    let code = location
+        .split("code=")
+        .nth(1)
+        .unwrap()
+        .split('&')
+        .next()
+        .unwrap();
+
+    let token_response = client
+        .post_form(
+            "/oauth2/token",
+            &[
+                ("grant_type", "authorization_code"),
+                ("code", code),
+                ("client_id", &client_id),
+                ("redirect_uri", "https://example.com/callback"),
+            ],
+        )
+        .await;
+    assert_eq!(token_response.status(), StatusCode::OK);
+    let token_body: serde_json::Value = token_response.json().await.unwrap();
+    let refresh_token = token_body["refresh_token"].as_str().unwrap();
+
+    let refresh_response = client
+        .post_form(
+            "/oauth2/token",
+            &[
+                ("grant_type", "refresh_token"),
+                ("refresh_token", refresh_token),
+                ("client_id", second_client_id),
+            ],
+        )
+        .await;
+    assert_eq!(refresh_response.status(), StatusCode::BAD_REQUEST);
+    let refresh_body: serde_json::Value = refresh_response.json().await.unwrap();
+    assert_eq!(refresh_body["error"], "invalid_grant");
 }
 
 #[tokio::test]
