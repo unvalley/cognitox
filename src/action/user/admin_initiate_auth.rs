@@ -149,6 +149,10 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
                 .await
                 .ok_or(AppError::InvalidRefreshToken)?;
 
+            if stored_token.client_id != req.client_id {
+                return Err(AppError::InvalidRefreshToken);
+            }
+
             if stored_token.expires_at < Utc::now() {
                 return Err(AppError::InvalidRefreshToken);
             }
@@ -381,5 +385,79 @@ mod tests {
 
         assert!(result.is_err());
         assert!(matches!(result.unwrap_err(), AppError::UserPoolNotFound));
+    }
+
+    #[tokio::test]
+    async fn test_admin_initiate_auth_refresh_token_client_mismatch() {
+        let storage = Storage::new();
+        let (pool_id, client_id1) = setup_pool_and_client(&storage).await;
+
+        let client2 = create_user_pool_client::handler(
+            &storage,
+            json!({
+                "UserPoolId": pool_id,
+                "ClientName": "test-client-2"
+            }),
+        )
+        .await
+        .unwrap();
+        let client_id2 = client2["UserPoolClient"]["ClientId"].as_str().unwrap();
+
+        admin_create_user::handler(
+            &storage,
+            json!({
+                "UserPoolId": pool_id,
+                "Username": "testuser"
+            }),
+        )
+        .await
+        .unwrap();
+        admin_set_user_password::handler(
+            &storage,
+            json!({
+                "UserPoolId": pool_id,
+                "Username": "testuser",
+                "Password": "Password123!",
+                "Permanent": true
+            }),
+        )
+        .await
+        .unwrap();
+
+        let auth = handler(
+            &storage,
+            json!({
+                "UserPoolId": pool_id,
+                "ClientId": client_id1,
+                "AuthFlow": "ADMIN_USER_PASSWORD_AUTH",
+                "AuthParameters": {
+                    "USERNAME": "testuser",
+                    "PASSWORD": "Password123!"
+                }
+            }),
+        )
+        .await
+        .unwrap();
+        let refresh_token = auth["AuthenticationResult"]["RefreshToken"]
+            .as_str()
+            .unwrap();
+
+        let refresh_result = handler(
+            &storage,
+            json!({
+                "UserPoolId": pool_id,
+                "ClientId": client_id2,
+                "AuthFlow": "REFRESH_TOKEN_AUTH",
+                "AuthParameters": {
+                    "REFRESH_TOKEN": refresh_token
+                }
+            }),
+        )
+        .await;
+
+        assert!(matches!(
+            refresh_result.unwrap_err(),
+            AppError::InvalidRefreshToken
+        ));
     }
 }
