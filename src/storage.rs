@@ -4,7 +4,7 @@
 //! If `DATA_FILE` is set, state is loaded from/saved to that file.
 
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     fs,
     path::{Path, PathBuf},
     sync::Arc,
@@ -310,8 +310,102 @@ impl Storage {
     }
 
     pub async fn delete_user_pool(&self, id: &UserPoolId) -> Option<UserPool> {
-        let mut store = self.pool_store.write().await;
-        store.user_pools.remove(id)
+        let mut pool_store = self.pool_store.write().await;
+        let mut principal_store = self.principal_store.write().await;
+        let mut group_store = self.group_store.write().await;
+        let mut branding_store = self.branding_store.write().await;
+
+        let pool = pool_store.user_pools.remove(id)?;
+
+        // Remove domain and reverse index entries for this pool.
+        pool_store
+            .user_pool_domains
+            .retain(|_, domain| &domain.user_pool_id != id);
+        pool_store
+            .user_pool_id_to_domain
+            .retain(|pool_id, _| pool_id != id);
+
+        // Remove pool-scoped clients and keep track of their IDs for downstream cleanup.
+        let client_ids: HashSet<ClientId> = pool_store
+            .user_pool_clients
+            .iter()
+            .filter(|(_, client)| &client.user_pool_id == id)
+            .map(|(client_id, _)| client_id.clone())
+            .collect();
+        pool_store
+            .user_pool_clients
+            .retain(|client_id, _| !client_ids.contains(client_id));
+
+        // Remove pool-scoped entities.
+        pool_store
+            .identity_providers
+            .retain(|(pool_id, _), _| pool_id != id);
+        pool_store
+            .resource_servers
+            .retain(|(pool_id, _), _| pool_id != id);
+        group_store.groups.retain(|(pool_id, _), _| pool_id != id);
+        pool_store
+            .user_import_jobs
+            .retain(|_, job| &job.user_pool_id != id);
+        pool_store
+            .ui_customizations
+            .retain(|(pool_id, _), _| pool_id != id);
+        pool_store
+            .risk_configurations
+            .retain(|(pool_id, _), _| pool_id != id);
+        pool_store.log_delivery_configurations.remove(id);
+
+        // Remove terms and associated indexes.
+        let terms_ids: HashSet<String> = pool_store
+            .terms_documents
+            .iter()
+            .filter(|(_, terms)| &terms.user_pool_id == id)
+            .map(|(terms_id, _)| terms_id.clone())
+            .collect();
+        pool_store
+            .terms_documents
+            .retain(|terms_id, _| !terms_ids.contains(terms_id));
+        pool_store
+            .terms_name_index
+            .retain(|(pool_id, _, _), terms_id| pool_id != id && !terms_ids.contains(terms_id));
+
+        // Remove managed login branding for the pool and any clients that were removed.
+        let branding_ids: HashSet<BrandingId> = branding_store
+            .managed_login_brandings
+            .iter()
+            .filter(|(_, branding)| &branding.user_pool_id == id)
+            .map(|(branding_id, _)| branding_id.clone())
+            .collect();
+        branding_store
+            .managed_login_brandings
+            .retain(|branding_id, _| !branding_ids.contains(branding_id));
+        branding_store
+            .user_pool_brandings
+            .retain(|pool_id, branding_id| pool_id != id && !branding_ids.contains(branding_id));
+        branding_store
+            .client_brandings
+            .retain(|client_id, branding_id| {
+                !client_ids.contains(client_id) && !branding_ids.contains(branding_id)
+            });
+
+        // Remove users in this pool using the same cleanup semantics as DeleteUser.
+        let user_ids: Vec<UserId> = principal_store
+            .users
+            .values()
+            .filter(|user| &user.user_pool_id == id)
+            .map(|user| user.id)
+            .collect();
+        let user_id_set: HashSet<UserId> = user_ids.iter().copied().collect();
+        for user_id in user_ids {
+            Self::remove_user_records(&mut principal_store, &mut group_store, &user_id);
+        }
+
+        // Remove authorization codes tied to deleted users or clients.
+        principal_store.authorization_codes.retain(|_, code| {
+            !user_id_set.contains(&code.user_id) && !client_ids.contains(&code.client_id)
+        });
+
+        Some(pool)
     }
 
     pub async fn list_user_pools(&self) -> Vec<UserPool> {
@@ -613,25 +707,9 @@ impl Storage {
     }
 
     pub async fn delete_user(&self, id: &UserId) -> Option<User> {
-        let mut store = self.principal_store.write().await;
-        if let Some(user) = store.users.remove(id) {
-            store
-                .username_index
-                .remove(&(user.user_pool_id.clone(), user.username.clone()));
-            store.devices.retain(|(user_id, _), _| user_id != id);
-            store.user_auth_factors.remove(id);
-            store
-                .software_token_sessions
-                .retain(|_, (user_id, _)| user_id != id);
-            if let Some(event_ids) = store.user_auth_event_index.remove(id) {
-                for event_id in event_ids {
-                    store.auth_events.remove(&event_id);
-                }
-            }
-            Some(user)
-        } else {
-            None
-        }
+        let mut principal_store = self.principal_store.write().await;
+        let mut group_store = self.group_store.write().await;
+        Self::remove_user_records(&mut principal_store, &mut group_store, id)
     }
 
     pub async fn list_users(&self, user_pool_id: &UserPoolId) -> Vec<User> {
@@ -1311,6 +1389,43 @@ impl Storage {
         }
         false
     }
+
+    fn remove_user_records(
+        principal_store: &mut PrincipalStore,
+        group_store: &mut GroupStore,
+        user_id: &UserId,
+    ) -> Option<User> {
+        let user = principal_store.users.remove(user_id)?;
+
+        principal_store
+            .username_index
+            .remove(&(user.user_pool_id.clone(), user.username.clone()));
+        principal_store.devices.retain(|(id, _), _| id != user_id);
+        principal_store.user_auth_factors.remove(user_id);
+        principal_store
+            .software_token_sessions
+            .retain(|_, (id, _)| id != user_id);
+
+        if let Some(event_ids) = principal_store.user_auth_event_index.remove(user_id) {
+            for event_id in event_ids {
+                principal_store.auth_events.remove(&event_id);
+            }
+        }
+
+        principal_store.confirmation_codes.remove(user_id);
+        principal_store.password_reset_codes.remove(user_id);
+        principal_store
+            .refresh_tokens
+            .retain(|_, token| &token.user_id != user_id);
+        group_store.user_groups.remove(user_id);
+        principal_store.webauthn_credentials.remove(user_id);
+        principal_store.webauthn_registration_challenges.remove(user_id);
+        principal_store
+            .authorization_codes
+            .retain(|_, code| &code.user_id != user_id);
+
+        Some(user)
+    }
 }
 
 impl Default for Storage {
@@ -1322,9 +1437,14 @@ impl Default for Storage {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::Utc;
+    use chrono::{Duration, Utc};
+    use std::fs;
+    use uuid::Uuid;
 
-    use crate::types::{UserPool, UserPoolId};
+    use crate::types::{
+        ClientId, ConfirmationCode, Group, PasswordResetCode, RefreshToken, User, UserPool,
+        UserPoolClient, UserPoolDomain, UserPoolId, UserStatus, WebAuthnCredential,
+    };
 
     fn temp_data_file() -> PathBuf {
         std::env::temp_dir().join(format!("cognitox-storage-{}.json", uuid::Uuid::new_v4()))
@@ -1362,5 +1482,236 @@ mod tests {
         assert!(result.is_err());
 
         let _ = fs::remove_file(path);
+    }
+
+    fn sample_client(pool_id: &UserPoolId, name: &str) -> UserPoolClient {
+        let now = Utc::now();
+        UserPoolClient {
+            client_id: ClientId::generate(),
+            user_pool_id: pool_id.clone(),
+            client_name: name.to_string(),
+            client_secret: None,
+            creation_date: now,
+            last_modified_date: now,
+            allowed_oauth_flows: Vec::new(),
+            allowed_oauth_scopes: Vec::new(),
+            allowed_oauth_flows_user_pool_client: false,
+            callback_urls: Vec::new(),
+            logout_urls: Vec::new(),
+            default_redirect_uri: None,
+            supported_identity_providers: Vec::new(),
+            explicit_auth_flows: Vec::new(),
+            access_token_validity: None,
+            id_token_validity: None,
+            refresh_token_validity: None,
+            token_validity_units: None,
+            enable_token_revocation: true,
+            prevent_user_existence_errors: None,
+            enable_propagate_additional_user_context_data: false,
+        }
+    }
+
+    fn sample_user(pool_id: &UserPoolId, username: &str) -> User {
+        let now = Utc::now();
+        User {
+            id: Uuid::new_v4(),
+            user_pool_id: pool_id.clone(),
+            username: username.to_string(),
+            email: Some(format!("{username}@example.com")),
+            phone_number: None,
+            password_hash: "hashed-password".to_string(),
+            enabled: true,
+            user_status: UserStatus::Confirmed,
+            attributes: Vec::new(),
+            creation_date: now,
+            last_modified_date: now,
+        }
+    }
+
+    #[tokio::test]
+    async fn test_delete_user_cleans_related_records() {
+        let storage = Storage::new();
+        let now = Utc::now();
+        let pool_id = UserPoolId::new_local();
+        let client = sample_client(&pool_id, "client");
+        let user = sample_user(&pool_id, "alice");
+        let refresh_token = Uuid::new_v4().to_string();
+        let session = "software-session".to_string();
+        let group_name = "admins".to_string();
+
+        storage
+            .create_user_pool(UserPool {
+                id: pool_id.clone(),
+                name: "pool".to_string(),
+                creation_date: now,
+                last_modified_date: now,
+            })
+            .await;
+        storage.create_user_pool_client(client.clone()).await;
+        storage.create_user(user.clone()).await;
+        storage
+            .save_confirmation_code(ConfirmationCode {
+                user_id: user.id,
+                code: "123456".to_string(),
+                expires_at: now + Duration::hours(1),
+            })
+            .await;
+        storage
+            .save_password_reset_code(PasswordResetCode {
+                user_id: user.id,
+                code: "654321".to_string(),
+                expires_at: now + Duration::hours(1),
+            })
+            .await;
+        storage
+            .save_refresh_token(RefreshToken {
+                token: refresh_token.clone(),
+                user_id: user.id,
+                client_id: client.client_id.clone(),
+                expires_at: now + Duration::hours(1),
+            })
+            .await;
+        storage
+            .save_software_token_session(session.clone(), &user.id, "secret".to_string())
+            .await;
+        storage.add_user_to_group(&user.id, &group_name).await;
+        storage
+            .save_webauthn_challenge(&user.id, "challenge".into())
+            .await;
+        storage
+            .add_webauthn_credential(
+                &user.id,
+                WebAuthnCredential {
+                    credential_id: "cred-1".to_string(),
+                    friendly_credential_name: None,
+                    relying_party_id: None,
+                    created_at: now,
+                    authenticator_attachment: None,
+                    authenticator_transports: Vec::new(),
+                },
+            )
+            .await;
+
+        storage.delete_user(&user.id).await;
+
+        assert!(storage.get_user(&user.id).await.is_none());
+        assert!(
+            storage
+                .get_user_by_username(&pool_id, &user.username)
+                .await
+                .is_none()
+        );
+        assert!(storage.get_confirmation_code(&user.id).await.is_none());
+        assert!(storage.get_password_reset_code(&user.id).await.is_none());
+        assert!(storage.get_refresh_token(&refresh_token).await.is_none());
+        assert!(storage.get_software_token_session(&session).await.is_none());
+        assert!(storage.get_groups_for_user(&user.id).await.is_empty());
+        assert!(storage.get_webauthn_challenge(&user.id).await.is_none());
+        assert!(storage.list_webauthn_credentials(&user.id).await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_delete_user_pool_cascades_related_records() {
+        let storage = Storage::new();
+        let now = Utc::now();
+
+        let target_pool_id = UserPoolId::new_local();
+        let other_pool_id = UserPoolId::new_local();
+        let target_client = sample_client(&target_pool_id, "target-client");
+        let other_client = sample_client(&other_pool_id, "other-client");
+        let target_user = sample_user(&target_pool_id, "alice");
+        let other_user = sample_user(&other_pool_id, "bob");
+        let target_token = Uuid::new_v4().to_string();
+        let group_name = "admins".to_string();
+
+        storage
+            .create_user_pool(UserPool {
+                id: target_pool_id.clone(),
+                name: "target".to_string(),
+                creation_date: now,
+                last_modified_date: now,
+            })
+            .await;
+        storage
+            .create_user_pool(UserPool {
+                id: other_pool_id.clone(),
+                name: "other".to_string(),
+                creation_date: now,
+                last_modified_date: now,
+            })
+            .await;
+        storage.create_user_pool_client(target_client.clone()).await;
+        storage.create_user_pool_client(other_client.clone()).await;
+        storage.create_user(target_user.clone()).await;
+        storage.create_user(other_user.clone()).await;
+        storage
+            .create_group(Group {
+                group_name: group_name.clone(),
+                user_pool_id: target_pool_id.clone(),
+                description: None,
+                role_arn: None,
+                precedence: None,
+                creation_date: now,
+                last_modified_date: now,
+            })
+            .await;
+        storage
+            .add_user_to_group(&target_user.id, &group_name)
+            .await;
+        storage
+            .create_user_pool_domain(UserPoolDomain {
+                domain: "target-domain".to_string(),
+                user_pool_id: target_pool_id.clone(),
+                status: Default::default(),
+                version: None,
+                s3_bucket: None,
+                cloud_front_distribution: None,
+                custom_domain_config: None,
+                managed_login_version: None,
+            })
+            .await;
+        storage
+            .save_refresh_token(RefreshToken {
+                token: target_token.clone(),
+                user_id: target_user.id,
+                client_id: target_client.client_id.clone(),
+                expires_at: now + Duration::hours(1),
+            })
+            .await;
+
+        storage.delete_user_pool(&target_pool_id).await.unwrap();
+
+        assert!(storage.get_user_pool(&target_pool_id).await.is_none());
+        assert!(storage.get_user_pool(&other_pool_id).await.is_some());
+
+        assert!(
+            storage
+                .list_user_pool_clients(&target_pool_id)
+                .await
+                .is_empty()
+        );
+        assert_eq!(
+            storage.list_user_pool_clients(&other_pool_id).await.len(),
+            1
+        );
+
+        assert!(storage.list_users(&target_pool_id).await.is_empty());
+        assert!(storage.get_user(&target_user.id).await.is_none());
+        assert!(storage.get_user(&other_user.id).await.is_some());
+
+        assert!(storage.list_groups(&target_pool_id).await.is_empty());
+        assert!(
+            storage
+                .get_groups_for_user(&target_user.id)
+                .await
+                .is_empty()
+        );
+        assert!(
+            storage
+                .get_user_pool_domain_by_user_pool_id(&target_pool_id)
+                .await
+                .is_none()
+        );
+        assert!(storage.get_refresh_token(&target_token).await.is_none());
     }
 }
