@@ -24,6 +24,20 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
         .map_err(|e| AppError::InvalidParameter(format!("Invalid request: {}", e)))?;
 
     storage
+        .get_user_pool(&req.user_pool_id)
+        .await
+        .ok_or(AppError::UserPoolNotFound)?;
+
+    let client = storage
+        .get_user_pool_client(&req.client_id)
+        .await
+        .ok_or(AppError::UserPoolClientNotFound)?;
+
+    if client.user_pool_id != req.user_pool_id {
+        return Err(AppError::UserPoolClientNotFound);
+    }
+
+    storage
         .delete_user_pool_client(&req.client_id)
         .await
         .ok_or(AppError::UserPoolClientNotFound)?;
@@ -94,5 +108,54 @@ mod tests {
         .await;
 
         assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_delete_user_pool_client_wrong_pool() {
+        let storage = Storage::new();
+
+        let pool_a = create_user_pool::handler(&storage, json!({"PoolName": "pool-a"}))
+            .await
+            .unwrap();
+        let pool_a_id = pool_a["UserPool"]["Id"].as_str().unwrap();
+
+        let pool_b = create_user_pool::handler(&storage, json!({"PoolName": "pool-b"}))
+            .await
+            .unwrap();
+        let pool_b_id = pool_b["UserPool"]["Id"].as_str().unwrap();
+
+        let client = create_user_pool_client::handler(
+            &storage,
+            json!({
+                "UserPoolId": pool_a_id,
+                "ClientName": "test-client"
+            }),
+        )
+        .await
+        .unwrap();
+        let client_id = client["UserPoolClient"]["ClientId"].as_str().unwrap();
+
+        let result = handler(
+            &storage,
+            json!({
+                "UserPoolId": pool_b_id,
+                "ClientId": client_id
+            }),
+        )
+        .await;
+
+        assert!(result.is_err());
+        assert!(matches!(
+            result.unwrap_err(),
+            AppError::UserPoolClientNotFound
+        ));
+
+        // Verify the original client still exists.
+        assert!(
+            storage
+                .get_user_pool_client(&client_id.parse().unwrap())
+                .await
+                .is_some()
+        );
     }
 }
