@@ -878,9 +878,18 @@ impl Storage {
         group_name: &GroupName,
     ) -> Option<Group> {
         let mut store = self.group_store.write().await;
-        store
+        let removed = store
             .groups
-            .remove(&(user_pool_id.clone(), group_name.clone()))
+            .remove(&(user_pool_id.clone(), group_name.clone()));
+
+        if removed.is_some() {
+            store.user_groups.retain(|_, groups| {
+                groups.retain(|group| group != group_name);
+                !groups.is_empty()
+            });
+        }
+
+        removed
     }
 
     pub async fn list_groups(&self, user_pool_id: &UserPoolId) -> Vec<Group> {
@@ -897,17 +906,19 @@ impl Storage {
 
     pub async fn add_user_to_group(&self, user_id: &UserId, group_name: &GroupName) {
         let mut store = self.group_store.write().await;
-        store
-            .user_groups
-            .entry(*user_id)
-            .or_default()
-            .push(group_name.clone());
+        let groups = store.user_groups.entry(*user_id).or_default();
+        if !groups.contains(group_name) {
+            groups.push(group_name.clone());
+        }
     }
 
     pub async fn remove_user_from_group(&self, user_id: &UserId, group_name: &GroupName) {
         let mut store = self.group_store.write().await;
         if let Some(groups) = store.user_groups.get_mut(user_id) {
             groups.retain(|g| g != group_name);
+            if groups.is_empty() {
+                store.user_groups.remove(user_id);
+            }
         }
     }
 
