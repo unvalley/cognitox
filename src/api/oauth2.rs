@@ -485,6 +485,21 @@ pub async fn token(
                 });
             }
 
+            if let Some(requested_client_id) = req.client_id.as_deref() {
+                let requested_client_id =
+                    ClientId::new(requested_client_id).map_err(|_| OAuthError {
+                        error: "invalid_client".to_string(),
+                        error_description: Some("Invalid client ID format".to_string()),
+                    })?;
+
+                if requested_client_id != stored_token.client_id {
+                    return Err(OAuthError {
+                        error: "invalid_grant".to_string(),
+                        error_description: Some("Client ID mismatch".to_string()),
+                    });
+                }
+            }
+
             let client = storage
                 .get_user_pool_client(&stored_token.client_id)
                 .await
@@ -493,6 +508,20 @@ pub async fn token(
                     error_description: Some("Client not found".to_string()),
                 })?;
 
+            if client.client_secret.is_some() {
+                let provided_secret = req.client_secret.as_ref().ok_or_else(|| OAuthError {
+                    error: "invalid_client".to_string(),
+                    error_description: Some("Client secret required".to_string()),
+                })?;
+
+                if client.client_secret.as_ref() != Some(provided_secret) {
+                    return Err(OAuthError {
+                        error: "invalid_client".to_string(),
+                        error_description: Some("Invalid client secret".to_string()),
+                    });
+                }
+            }
+
             let user = storage
                 .get_user(&stored_token.user_id)
                 .await
@@ -500,6 +529,13 @@ pub async fn token(
                     error: "invalid_grant".to_string(),
                     error_description: Some("User not found".to_string()),
                 })?;
+
+            if !user.enabled {
+                return Err(OAuthError {
+                    error: "invalid_grant".to_string(),
+                    error_description: Some("User is disabled".to_string()),
+                });
+            }
 
             let groups = storage.get_groups_for_user(&user.id).await;
             let scopes: Vec<String> = req
