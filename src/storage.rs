@@ -1419,7 +1419,9 @@ impl Storage {
             .retain(|_, token| &token.user_id != user_id);
         group_store.user_groups.remove(user_id);
         principal_store.webauthn_credentials.remove(user_id);
-        principal_store.webauthn_registration_challenges.remove(user_id);
+        principal_store
+            .webauthn_registration_challenges
+            .remove(user_id);
         principal_store
             .authorization_codes
             .retain(|_, code| &code.user_id != user_id);
