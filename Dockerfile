@@ -1,5 +1,5 @@
 # Build stage
-FROM rust:1.85-alpine AS builder
+FROM rust:1.93.1-alpine AS builder
 
 RUN apk add --no-cache musl-dev perl make
 
@@ -12,9 +12,6 @@ COPY Cargo.toml Cargo.lock ./
 RUN mkdir src && \
     echo "fn main() {}" > src/main.rs && \
     echo "pub fn dummy() {}" > src/lib.rs
-
-# Downgrade time crate to be compatible with Rust 1.85
-RUN cargo update time@0.3.46 --precise 0.3.36 || true
 
 # Build dependencies (this layer will be cached)
 RUN cargo build --release && \
