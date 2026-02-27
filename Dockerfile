@@ -1,4 +1,21 @@
-# Build stage
+# UI build stage
+FROM node:24-alpine AS ui-builder
+
+WORKDIR /app/ui
+
+# Copy package files
+COPY ui/package.json ui/package-lock.json ./
+
+# Install dependencies
+RUN npm ci
+
+# Copy UI source
+COPY ui/ ./
+
+# Build UI
+RUN npm run build
+
+# Rust build stage
 FROM rust:1.93.1-alpine AS builder
 
 RUN apk add --no-cache musl-dev perl make
@@ -30,6 +47,9 @@ FROM alpine:3.20
 RUN apk add --no-cache ca-certificates
 
 WORKDIR /app
+
+# Copy UI dist from ui-builder
+COPY --from=ui-builder /app/ui/dist /app/ui/dist
 
 # Copy the binary from builder
 COPY --from=builder /app/target/release/cognito-emulator /app/cognito-emulator
