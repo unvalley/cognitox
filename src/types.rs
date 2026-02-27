@@ -15,10 +15,7 @@ use uuid::Uuid;
 pub struct UserPoolId(String);
 
 impl UserPoolId {
-    /// Minimum length for UserPoolId
     pub const MIN_LENGTH: usize = 1;
-
-    /// Maximum length for UserPoolId
     pub const MAX_LENGTH: usize = 55;
 
     /// Create a new UserPoolId with validation
@@ -47,7 +44,6 @@ impl UserPoolId {
 
     /// Validate the UserPoolId format
     fn validate(value: &str) -> Result<(), UserPoolIdError> {
-        // Length check
         if value.is_empty() {
             return Err(UserPoolIdError::Empty);
         }
@@ -157,10 +153,7 @@ impl std::error::Error for UserPoolIdError {}
 pub struct ClientId(String);
 
 impl ClientId {
-    /// Minimum length for ClientId
     pub const MIN_LENGTH: usize = 1;
-
-    /// Maximum length for ClientId
     pub const MAX_LENGTH: usize = 128;
 
     /// Create a new ClientId with validation
