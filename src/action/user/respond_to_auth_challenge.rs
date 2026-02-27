@@ -13,17 +13,44 @@ use crate::types::ClientId;
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "PascalCase")]
+struct AnalyticsMetadata {
+    analytics_endpoint_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+struct UserContextData {
+    encoded_data: Option<String>,
+    ip_address: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "PascalCase")]
 struct Request {
-    #[allow(dead_code)]
     client_id: ClientId,
     challenge_name: String,
-    #[allow(dead_code)]
     challenge_responses: Option<HashMap<String, String>>,
+    analytics_metadata: Option<AnalyticsMetadata>,
+    client_metadata: Option<HashMap<String, String>>,
+    session: Option<String>,
+    user_context_data: Option<UserContextData>,
 }
 
 pub async fn handler(_storage: &Storage, body: Value) -> Result<Value> {
     let req: Request = serde_json::from_value(body)
         .map_err(|e| AppError::InvalidParameter(format!("Invalid request: {}", e)))?;
+    let _ = (
+        &req.client_id,
+        &req.challenge_responses,
+        &req.client_metadata,
+        &req.session,
+        req.analytics_metadata
+            .as_ref()
+            .map(|meta| &meta.analytics_endpoint_id),
+        req.user_context_data
+            .as_ref()
+            .map(|ctx| (&ctx.encoded_data, &ctx.ip_address)),
+    );
 
     Err(AppError::NotImplemented(format!(
         "Challenge: {}",

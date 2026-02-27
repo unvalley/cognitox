@@ -2,6 +2,8 @@
 //!
 //! <https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_SignUp.html>
 
+use std::collections::HashMap;
+
 use chrono::{Duration, Utc};
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -18,16 +20,45 @@ use super::helpers::{generate_confirmation_code, hash_password, mask_email};
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "PascalCase")]
+struct AnalyticsMetadata {
+    analytics_endpoint_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+struct UserContextData {
+    encoded_data: Option<String>,
+    ip_address: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "PascalCase")]
 struct Request {
     client_id: ClientId,
     username: String,
     password: String,
     user_attributes: Option<Vec<UserAttribute>>,
+    validation_data: Option<Vec<UserAttribute>>,
+    secret_hash: Option<String>,
+    user_context_data: Option<UserContextData>,
+    analytics_metadata: Option<AnalyticsMetadata>,
+    client_metadata: Option<HashMap<String, String>>,
 }
 
 pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
     let req: Request = serde_json::from_value(body)
         .map_err(|e| AppError::InvalidParameter(format!("Invalid request: {}", e)))?;
+    let _ = (
+        &req.validation_data,
+        &req.secret_hash,
+        &req.client_metadata,
+        req.user_context_data
+            .as_ref()
+            .map(|ctx| (&ctx.encoded_data, &ctx.ip_address)),
+        req.analytics_metadata
+            .as_ref()
+            .map(|meta| &meta.analytics_endpoint_id),
+    );
 
     // Validate input
     validate_username(&req.username)?;

@@ -20,16 +20,65 @@ use super::helpers::verify_password;
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "PascalCase")]
+struct AnalyticsMetadata {
+    analytics_endpoint_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct HttpHeader {
+    #[serde(rename = "headerName")]
+    header_name: Option<String>,
+    #[serde(rename = "headerValue")]
+    header_value: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+struct ContextData {
+    ip_address: Option<String>,
+    server_name: Option<String>,
+    server_path: Option<String>,
+    http_headers: Option<Vec<HttpHeader>>,
+    encoded_data: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "PascalCase")]
 struct Request {
     user_pool_id: UserPoolId,
     client_id: ClientId,
     auth_flow: String,
     auth_parameters: Option<HashMap<String, String>>,
+    analytics_metadata: Option<AnalyticsMetadata>,
+    context_data: Option<ContextData>,
+    session: Option<String>,
+    client_metadata: Option<HashMap<String, String>>,
 }
 
 pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
     let req: Request = serde_json::from_value(body)
         .map_err(|e| AppError::InvalidParameter(format!("Invalid request: {}", e)))?;
+    let _ = (
+        &req.session,
+        &req.client_metadata,
+        req.analytics_metadata
+            .as_ref()
+            .map(|meta| &meta.analytics_endpoint_id),
+        req.context_data.as_ref().map(|ctx| {
+            (
+                &ctx.ip_address,
+                &ctx.server_name,
+                &ctx.server_path,
+                &ctx.encoded_data,
+                ctx.http_headers.as_ref().map(|headers| {
+                    headers
+                        .iter()
+                        .map(|header| (&header.header_name, &header.header_value))
+                        .collect::<Vec<_>>()
+                }),
+            )
+        }),
+    );
 
     storage
         .get_user_pool(&req.user_pool_id)

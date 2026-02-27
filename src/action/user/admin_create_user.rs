@@ -2,6 +2,8 @@
 //!
 //! <https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_AdminCreateUser.html>
 
+use std::collections::HashMap;
+
 use chrono::Utc;
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -23,11 +25,23 @@ struct Request {
     username: String,
     temporary_password: Option<String>,
     user_attributes: Option<Vec<UserAttribute>>,
+    force_alias_creation: Option<bool>,
+    message_action: Option<String>,
+    desired_delivery_mediums: Option<Vec<String>>,
+    client_metadata: Option<HashMap<String, String>>,
+    validation_data: Option<Vec<UserAttribute>>,
 }
 
 pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
     let req: Request = serde_json::from_value(body)
         .map_err(|e| AppError::InvalidParameter(format!("Invalid request: {}", e)))?;
+    let _ = (
+        &req.force_alias_creation,
+        &req.message_action,
+        &req.desired_delivery_mediums,
+        &req.client_metadata,
+        &req.validation_data,
+    );
 
     // Validate input
     validate_username(&req.username)?;
@@ -188,5 +202,40 @@ mod tests {
 
         assert!(result.is_err());
         assert!(matches!(result.unwrap_err(), AppError::UserAlreadyExists));
+    }
+
+    #[tokio::test]
+    async fn test_admin_create_user_accepts_full_request_syntax_fields() {
+        let storage = Storage::new();
+
+        let pool = create_user_pool::handler(&storage, json!({"PoolName": "test"}))
+            .await
+            .unwrap();
+        let pool_id = pool["UserPool"]["Id"].as_str().unwrap();
+
+        let result = handler(
+            &storage,
+            json!({
+                "UserPoolId": pool_id,
+                "Username": "fullsyntaxuser",
+                "TemporaryPassword": "TempPass123!",
+                "ForceAliasCreation": false,
+                "MessageAction": "SUPPRESS",
+                "DesiredDeliveryMediums": ["EMAIL"],
+                "ClientMetadata": {
+                    "trace_id": "local-test"
+                },
+                "UserAttributes": [
+                    {"Name": "email", "Value": "full@example.com"}
+                ],
+                "ValidationData": [
+                    {"Name": "department", "Value": "engineering"}
+                ]
+            }),
+        )
+        .await;
+
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap()["User"]["Username"], "fullsyntaxuser");
     }
 }
