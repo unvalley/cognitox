@@ -1,0 +1,732 @@
+{
+  "model_url": "https://raw.githubusercontent.com/boto/botocore/develop/botocore/data/cognito-idp/2016-04-18/service-2.json",
+  "model_sha256": "6954ae190918d03b4f081acbf3b77c287b3252bf399614b35e14fdbe894d47d3",
+  "operations": {
+    "AddCustomAttributes": {
+      "path": "src/action/user_pool/add_custom_attributes.rs",
+      "missing": [],
+      "extra": []
+    },
+    "AdminAddUserToGroup": {
+      "path": "src/action/group/admin_add_user_to_group.rs",
+      "missing": [],
+      "extra": []
+    },
+    "AdminConfirmSignUp": {
+      "path": "src/action/user/admin_confirm_sign_up.rs",
+      "missing": [],
+      "extra": []
+    },
+    "AdminCreateUser": {
+      "path": "src/action/user/admin_create_user.rs",
+      "missing": [],
+      "extra": []
+    },
+    "AdminDeleteUser": {
+      "path": "src/action/user/admin_delete_user.rs",
+      "missing": [],
+      "extra": []
+    },
+    "AdminDeleteUserAttributes": {
+      "path": "src/action/user/admin_delete_user_attributes.rs",
+      "missing": [],
+      "extra": []
+    },
+    "AdminDisableProviderForUser": {
+      "path": "src/action/user/admin_disable_provider_for_user.rs",
+      "missing": [],
+      "extra": []
+    },
+    "AdminDisableUser": {
+      "path": "src/action/user/admin_disable_user.rs",
+      "missing": [],
+      "extra": []
+    },
+    "AdminEnableUser": {
+      "path": "src/action/user/admin_enable_user.rs",
+      "missing": [],
+      "extra": []
+    },
+    "AdminForgetDevice": {
+      "path": "src/action/user/admin_forget_device.rs",
+      "missing": [],
+      "extra": []
+    },
+    "AdminGetDevice": {
+      "path": "src/action/user/admin_get_device.rs",
+      "missing": [],
+      "extra": []
+    },
+    "AdminGetUser": {
+      "path": "src/action/user/admin_get_user.rs",
+      "missing": [],
+      "extra": []
+    },
+    "AdminInitiateAuth": {
+      "path": "src/action/user/admin_initiate_auth.rs",
+      "missing": [],
+      "extra": []
+    },
+    "AdminLinkProviderForUser": {
+      "path": "src/action/user/admin_link_provider_for_user.rs",
+      "missing": [],
+      "extra": []
+    },
+    "AdminListDevices": {
+      "path": "src/action/user/admin_list_devices.rs",
+      "missing": [],
+      "extra": []
+    },
+    "AdminListGroupsForUser": {
+      "path": "src/action/group/admin_list_groups_for_user.rs",
+      "missing": [],
+      "extra": []
+    },
+    "AdminListUserAuthEvents": {
+      "path": "src/action/user/admin_list_user_auth_events.rs",
+      "missing": [],
+      "extra": []
+    },
+    "AdminRemoveUserFromGroup": {
+      "path": "src/action/group/admin_remove_user_from_group.rs",
+      "missing": [],
+      "extra": []
+    },
+    "AdminResetUserPassword": {
+      "path": "src/action/user/admin_reset_user_password.rs",
+      "missing": [
+        "ClientMetadata"
+      ],
+      "extra": []
+    },
+    "AdminRespondToAuthChallenge": {
+      "path": "src/action/user/admin_respond_to_auth_challenge.rs",
+      "missing": [],
+      "extra": []
+    },
+    "AdminSetUserMFAPreference": {
+      "path": "src/action/user/admin_set_user_mfa_preference.rs",
+      "missing": [
+        "EmailMfaSettings"
+      ],
+      "extra": []
+    },
+    "AdminSetUserPassword": {
+      "path": "src/action/user/admin_set_user_password.rs",
+      "missing": [],
+      "extra": []
+    },
+    "AdminSetUserSettings": {
+      "path": "src/action/user/admin_set_user_settings.rs",
+      "missing": [],
+      "extra": []
+    },
+    "AdminUpdateAuthEventFeedback": {
+      "path": "src/action/user/admin_update_auth_event_feedback.rs",
+      "missing": [],
+      "extra": []
+    },
+    "AdminUpdateDeviceStatus": {
+      "path": "src/action/user/admin_update_device_status.rs",
+      "missing": [],
+      "extra": []
+    },
+    "AdminUpdateUserAttributes": {
+      "path": "src/action/user/admin_update_user_attributes.rs",
+      "missing": [
+        "ClientMetadata"
+      ],
+      "extra": []
+    },
+    "AdminUserGlobalSignOut": {
+      "path": "src/action/user/admin_user_global_sign_out.rs",
+      "missing": [],
+      "extra": []
+    },
+    "AssociateSoftwareToken": {
+      "path": "src/action/user/associate_software_token.rs",
+      "missing": [],
+      "extra": []
+    },
+    "ChangePassword": {
+      "path": "src/action/user/change_password.rs",
+      "missing": [],
+      "extra": []
+    },
+    "CompleteWebAuthnRegistration": {
+      "path": "src/action/user/complete_webauthn_registration.rs",
+      "missing": [],
+      "extra": [
+        "friendly_credential_name"
+      ]
+    },
+    "ConfirmDevice": {
+      "path": "src/action/user/confirm_device.rs",
+      "missing": [
+        "DeviceName",
+        "DeviceSecretVerifierConfig"
+      ],
+      "extra": []
+    },
+    "ConfirmForgotPassword": {
+      "path": "src/action/user/confirm_forgot_password.rs",
+      "missing": [
+        "AnalyticsMetadata",
+        "ClientMetadata",
+        "SecretHash",
+        "UserContextData"
+      ],
+      "extra": []
+    },
+    "ConfirmSignUp": {
+      "path": "src/action/user/confirm_sign_up.rs",
+      "missing": [
+        "AnalyticsMetadata",
+        "ClientMetadata",
+        "ForceAliasCreation",
+        "SecretHash",
+        "Session",
+        "UserContextData"
+      ],
+      "extra": []
+    },
+    "CreateGroup": {
+      "path": "src/action/group/create_group.rs",
+      "missing": [],
+      "extra": []
+    },
+    "CreateIdentityProvider": {
+      "path": "src/action/user_pool/create_identity_provider.rs",
+      "missing": [],
+      "extra": []
+    },
+    "CreateManagedLoginBranding": {
+      "path": "src/action/user_pool/create_managed_login_branding.rs",
+      "missing": [],
+      "extra": []
+    },
+    "CreateResourceServer": {
+      "path": "src/action/user_pool/create_resource_server.rs",
+      "missing": [],
+      "extra": []
+    },
+    "CreateTerms": {
+      "path": "src/action/user_pool/create_terms.rs",
+      "missing": [],
+      "extra": []
+    },
+    "CreateUserImportJob": {
+      "path": "src/action/user_pool/create_user_import_job.rs",
+      "missing": [],
+      "extra": []
+    },
+    "CreateUserPool": {
+      "path": "src/action/user_pool/create_user_pool.rs",
+      "missing": [
+        "AccountRecoverySetting",
+        "AdminCreateUserConfig",
+        "AliasAttributes",
+        "AutoVerifiedAttributes",
+        "DeletionProtection",
+        "DeviceConfiguration",
+        "EmailConfiguration",
+        "EmailVerificationMessage",
+        "EmailVerificationSubject",
+        "LambdaConfig",
+        "MfaConfiguration",
+        "Policies",
+        "Schema",
+        "SmsAuthenticationMessage",
+        "SmsConfiguration",
+        "SmsVerificationMessage",
+        "UserAttributeUpdateSettings",
+        "UsernameAttributes",
+        "UsernameConfiguration",
+        "UserPoolAddOns",
+        "UserPoolTags",
+        "UserPoolTier",
+        "VerificationMessageTemplate"
+      ],
+      "extra": []
+    },
+    "CreateUserPoolClient": {
+      "path": "src/action/user_pool/create_user_pool_client.rs",
+      "missing": [
+        "AnalyticsConfiguration",
+        "AuthSessionValidity",
+        "ClientSecret",
+        "ReadAttributes",
+        "RefreshTokenRotation",
+        "WriteAttributes"
+      ],
+      "extra": []
+    },
+    "CreateUserPoolDomain": {
+      "path": "src/action/user_pool/create_user_pool_domain.rs",
+      "missing": [],
+      "extra": []
+    },
+    "DeleteGroup": {
+      "path": "src/action/group/delete_group.rs",
+      "missing": [],
+      "extra": []
+    },
+    "DeleteIdentityProvider": {
+      "path": "src/action/user_pool/delete_identity_provider.rs",
+      "missing": [],
+      "extra": []
+    },
+    "DeleteManagedLoginBranding": {
+      "path": "src/action/user_pool/delete_managed_login_branding.rs",
+      "missing": [],
+      "extra": []
+    },
+    "DeleteResourceServer": {
+      "path": "src/action/user_pool/delete_resource_server.rs",
+      "missing": [],
+      "extra": []
+    },
+    "DeleteTerms": {
+      "path": "src/action/user_pool/delete_terms.rs",
+      "missing": [],
+      "extra": []
+    },
+    "DeleteUser": {
+      "path": "src/action/user/delete_user.rs",
+      "missing": [],
+      "extra": []
+    },
+    "DeleteUserAttributes": {
+      "path": "src/action/user/delete_user_attributes.rs",
+      "missing": [],
+      "extra": []
+    },
+    "DeleteUserPool": {
+      "path": "src/action/user_pool/delete_user_pool.rs",
+      "missing": [],
+      "extra": []
+    },
+    "DeleteUserPoolClient": {
+      "path": "src/action/user_pool/delete_user_pool_client.rs",
+      "missing": [],
+      "extra": []
+    },
+    "DeleteUserPoolDomain": {
+      "path": "src/action/user_pool/delete_user_pool_domain.rs",
+      "missing": [],
+      "extra": []
+    },
+    "DeleteWebAuthnCredential": {
+      "path": "src/action/user/delete_webauthn_credential.rs",
+      "missing": [],
+      "extra": []
+    },
+    "DescribeIdentityProvider": {
+      "path": "src/action/user_pool/describe_identity_provider.rs",
+      "missing": [],
+      "extra": []
+    },
+    "DescribeManagedLoginBranding": {
+      "path": "src/action/user_pool/describe_managed_login_branding.rs",
+      "missing": [
+        "ReturnMergedResources"
+      ],
+      "extra": []
+    },
+    "DescribeManagedLoginBrandingByClient": {
+      "path": "src/action/user_pool/describe_managed_login_branding_by_client.rs",
+      "missing": [
+        "ReturnMergedResources"
+      ],
+      "extra": []
+    },
+    "DescribeResourceServer": {
+      "path": "src/action/user_pool/describe_resource_server.rs",
+      "missing": [],
+      "extra": []
+    },
+    "DescribeRiskConfiguration": {
+      "path": "src/action/user_pool/describe_risk_configuration.rs",
+      "missing": [],
+      "extra": []
+    },
+    "DescribeTerms": {
+      "path": "src/action/user_pool/describe_terms.rs",
+      "missing": [],
+      "extra": []
+    },
+    "DescribeUserImportJob": {
+      "path": "src/action/user_pool/describe_user_import_job.rs",
+      "missing": [],
+      "extra": []
+    },
+    "DescribeUserPool": {
+      "path": "src/action/user_pool/describe_user_pool.rs",
+      "missing": [],
+      "extra": []
+    },
+    "DescribeUserPoolClient": {
+      "path": "src/action/user_pool/describe_user_pool_client.rs",
+      "missing": [],
+      "extra": []
+    },
+    "DescribeUserPoolDomain": {
+      "path": "src/action/user_pool/describe_user_pool_domain.rs",
+      "missing": [],
+      "extra": []
+    },
+    "ForgetDevice": {
+      "path": "src/action/user/forget_device.rs",
+      "missing": [],
+      "extra": []
+    },
+    "ForgotPassword": {
+      "path": "src/action/user/forgot_password.rs",
+      "missing": [
+        "AnalyticsMetadata",
+        "ClientMetadata",
+        "SecretHash",
+        "UserContextData"
+      ],
+      "extra": []
+    },
+    "GetCSVHeader": {
+      "path": "src/action/user_pool/get_csv_header.rs",
+      "missing": [],
+      "extra": []
+    },
+    "GetDevice": {
+      "path": "src/action/user/get_device.rs",
+      "missing": [],
+      "extra": []
+    },
+    "GetGroup": {
+      "path": "src/action/group/get_group.rs",
+      "missing": [],
+      "extra": []
+    },
+    "GetIdentityProviderByIdentifier": {
+      "path": "src/action/user_pool/get_identity_provider_by_identifier.rs",
+      "missing": [
+        "IdpIdentifier"
+      ],
+      "extra": [
+        "identifier"
+      ]
+    },
+    "GetLogDeliveryConfiguration": {
+      "path": "src/action/user_pool/get_log_delivery_configuration.rs",
+      "missing": [],
+      "extra": []
+    },
+    "GetSigningCertificate": {
+      "path": "src/action/user_pool/get_signing_certificate.rs",
+      "missing": [],
+      "extra": []
+    },
+    "GetTokensFromRefreshToken": {
+      "path": "src/action/user/get_tokens_from_refresh_token.rs",
+      "missing": [],
+      "extra": []
+    },
+    "GetUICustomization": {
+      "path": "src/action/user_pool/get_ui_customization.rs",
+      "missing": [],
+      "extra": []
+    },
+    "GetUser": {
+      "path": "src/action/user/get_user.rs",
+      "missing": [],
+      "extra": []
+    },
+    "GetUserAttributeVerificationCode": {
+      "path": "src/action/user/get_user_attribute_verification_code.rs",
+      "missing": [
+        "ClientMetadata"
+      ],
+      "extra": []
+    },
+    "GetUserAuthFactors": {
+      "path": "src/action/user/get_user_auth_factors.rs",
+      "missing": [],
+      "extra": []
+    },
+    "GetUserPoolMfaConfig": {
+      "path": "src/action/user_pool/get_user_pool_mfa_config.rs",
+      "missing": [],
+      "extra": []
+    },
+    "GlobalSignOut": {
+      "path": "src/action/user/global_sign_out.rs",
+      "missing": [],
+      "extra": []
+    },
+    "InitiateAuth": {
+      "path": "src/action/user/initiate_auth.rs",
+      "missing": [
+        "Session"
+      ],
+      "extra": []
+    },
+    "ListDevices": {
+      "path": "src/action/user/list_devices.rs",
+      "missing": [],
+      "extra": []
+    },
+    "ListGroups": {
+      "path": "src/action/group/list_groups.rs",
+      "missing": [],
+      "extra": []
+    },
+    "ListIdentityProviders": {
+      "path": "src/action/user_pool/list_identity_providers.rs",
+      "missing": [],
+      "extra": []
+    },
+    "ListResourceServers": {
+      "path": "src/action/user_pool/list_resource_servers.rs",
+      "missing": [],
+      "extra": []
+    },
+    "ListTagsForResource": {
+      "path": "src/action/user_pool/list_tags_for_resource.rs",
+      "missing": [],
+      "extra": []
+    },
+    "ListTerms": {
+      "path": "src/action/user_pool/list_terms.rs",
+      "missing": [],
+      "extra": []
+    },
+    "ListUserImportJobs": {
+      "path": "src/action/user_pool/list_user_import_jobs.rs",
+      "missing": [],
+      "extra": []
+    },
+    "ListUserPoolClients": {
+      "path": "src/action/user_pool/list_user_pool_clients.rs",
+      "missing": [],
+      "extra": []
+    },
+    "ListUserPools": {
+      "path": "src/action/user_pool/list_user_pools.rs",
+      "missing": [],
+      "extra": []
+    },
+    "ListUsers": {
+      "path": "src/action/user/list_users.rs",
+      "missing": [
+        "AttributesToGet",
+        "Filter",
+        "PaginationToken"
+      ],
+      "extra": []
+    },
+    "ListUsersInGroup": {
+      "path": "src/action/group/list_users_in_group.rs",
+      "missing": [],
+      "extra": []
+    },
+    "ListWebAuthnCredentials": {
+      "path": "src/action/user/list_webauthn_credentials.rs",
+      "missing": [
+        "MaxResults",
+        "NextToken"
+      ],
+      "extra": []
+    },
+    "ResendConfirmationCode": {
+      "path": "src/action/user/resend_confirmation_code.rs",
+      "missing": [
+        "AnalyticsMetadata",
+        "ClientMetadata",
+        "SecretHash",
+        "UserContextData"
+      ],
+      "extra": []
+    },
+    "RespondToAuthChallenge": {
+      "path": "src/action/user/respond_to_auth_challenge.rs",
+      "missing": [],
+      "extra": []
+    },
+    "RevokeToken": {
+      "path": "src/action/user/revoke_token.rs",
+      "missing": [],
+      "extra": []
+    },
+    "SetLogDeliveryConfiguration": {
+      "path": "src/action/user_pool/set_log_delivery_configuration.rs",
+      "missing": [],
+      "extra": []
+    },
+    "SetRiskConfiguration": {
+      "path": "src/action/user_pool/set_risk_configuration.rs",
+      "missing": [
+        "AccountTakeoverRiskConfiguration",
+        "CompromisedCredentialsRiskConfiguration",
+        "RiskExceptionConfiguration"
+      ],
+      "extra": []
+    },
+    "SetUICustomization": {
+      "path": "src/action/user_pool/set_ui_customization.rs",
+      "missing": [],
+      "extra": []
+    },
+    "SetUserMFAPreference": {
+      "path": "src/action/user/set_user_mfa_preference.rs",
+      "missing": [
+        "EmailMfaSettings"
+      ],
+      "extra": []
+    },
+    "SetUserPoolMfaConfig": {
+      "path": "src/action/user_pool/set_user_pool_mfa_config.rs",
+      "missing": [
+        "EmailMfaConfiguration",
+        "WebAuthnConfiguration"
+      ],
+      "extra": []
+    },
+    "SetUserSettings": {
+      "path": "src/action/user/set_user_settings.rs",
+      "missing": [],
+      "extra": []
+    },
+    "SignUp": {
+      "path": "src/action/user/sign_up.rs",
+      "missing": [],
+      "extra": []
+    },
+    "StartUserImportJob": {
+      "path": "src/action/user_pool/start_user_import_job.rs",
+      "missing": [],
+      "extra": []
+    },
+    "StartWebAuthnRegistration": {
+      "path": "src/action/user/start_webauthn_registration.rs",
+      "missing": [],
+      "extra": []
+    },
+    "StopUserImportJob": {
+      "path": "src/action/user_pool/stop_user_import_job.rs",
+      "missing": [],
+      "extra": []
+    },
+    "TagResource": {
+      "path": "src/action/user_pool/tag_resource.rs",
+      "missing": [],
+      "extra": []
+    },
+    "UntagResource": {
+      "path": "src/action/user_pool/untag_resource.rs",
+      "missing": [],
+      "extra": []
+    },
+    "UpdateAuthEventFeedback": {
+      "path": "src/action/user/update_auth_event_feedback.rs",
+      "missing": [
+        "FeedbackToken",
+        "Username",
+        "UserPoolId"
+      ],
+      "extra": [
+        "access_token"
+      ]
+    },
+    "UpdateDeviceStatus": {
+      "path": "src/action/user/update_device_status.rs",
+      "missing": [],
+      "extra": []
+    },
+    "UpdateGroup": {
+      "path": "src/action/group/update_group.rs",
+      "missing": [],
+      "extra": []
+    },
+    "UpdateIdentityProvider": {
+      "path": "src/action/user_pool/update_identity_provider.rs",
+      "missing": [],
+      "extra": [
+        "provider_type"
+      ]
+    },
+    "UpdateManagedLoginBranding": {
+      "path": "src/action/user_pool/update_managed_login_branding.rs",
+      "missing": [],
+      "extra": []
+    },
+    "UpdateResourceServer": {
+      "path": "src/action/user_pool/update_resource_server.rs",
+      "missing": [],
+      "extra": []
+    },
+    "UpdateTerms": {
+      "path": "src/action/user_pool/update_terms.rs",
+      "missing": [
+        "TermsName"
+      ],
+      "extra": []
+    },
+    "UpdateUserAttributes": {
+      "path": "src/action/user/update_user_attributes.rs",
+      "missing": [
+        "ClientMetadata"
+      ],
+      "extra": []
+    },
+    "UpdateUserPool": {
+      "path": "src/action/user_pool/update_user_pool.rs",
+      "missing": [
+        "AccountRecoverySetting",
+        "AdminCreateUserConfig",
+        "AutoVerifiedAttributes",
+        "DeletionProtection",
+        "DeviceConfiguration",
+        "EmailConfiguration",
+        "EmailVerificationMessage",
+        "EmailVerificationSubject",
+        "LambdaConfig",
+        "MfaConfiguration",
+        "Policies",
+        "PoolName",
+        "SmsAuthenticationMessage",
+        "SmsConfiguration",
+        "SmsVerificationMessage",
+        "UserAttributeUpdateSettings",
+        "UserPoolAddOns",
+        "UserPoolTags",
+        "UserPoolTier",
+        "VerificationMessageTemplate"
+      ],
+      "extra": []
+    },
+    "UpdateUserPoolClient": {
+      "path": "src/action/user_pool/update_user_pool_client.rs",
+      "missing": [
+        "AnalyticsConfiguration",
+        "AuthSessionValidity",
+        "ReadAttributes",
+        "RefreshTokenRotation",
+        "WriteAttributes"
+      ],
+      "extra": []
+    },
+    "UpdateUserPoolDomain": {
+      "path": "src/action/user_pool/update_user_pool_domain.rs",
+      "missing": [],
+      "extra": []
+    },
+    "VerifySoftwareToken": {
+      "path": "src/action/user/verify_software_token.rs",
+      "missing": [],
+      "extra": []
+    },
+    "VerifyUserAttribute": {
+      "path": "src/action/user/verify_user_attribute.rs",
+      "missing": [],
+      "extra": []
+    }
+  }
+}

@@ -15,6 +15,19 @@ AWS Cognito User Pools emulator for local development.
 
 See [COVERAGE.md](COVERAGE.md) for full list.
 
+## Spec Drift Check
+
+Request syntax drift checks compare AWS Cognito spec input fields with each
+action's `Request` struct.
+
+```bash
+# Compare against baseline (used in CI)
+cargo run --quiet --bin request_spec_diff
+
+# Refresh baseline after reviewing changes
+cargo run --quiet --bin request_spec_diff -- --update-baseline
+```
+
 ## License
 
 MIT

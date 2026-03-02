@@ -27,6 +27,9 @@ jobs:
           toolchain: 1.93.1
           components: rustfmt, clippy
 
+      - name: Check Request Syntax Drift
+        run: cargo run --quiet --bin request_spec_diff
+
       - name: Format
         run: cargo fmt --check
 
