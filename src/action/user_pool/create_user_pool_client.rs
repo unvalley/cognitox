@@ -20,6 +20,8 @@ struct Request {
     user_pool_id: UserPoolId,
     client_name: String,
     generate_secret: Option<bool>,
+    #[allow(dead_code)]
+    client_secret: Option<String>,
 
     // OAuth configuration
     allowed_o_auth_flows: Option<Vec<String>>,
@@ -38,11 +40,21 @@ struct Request {
     id_token_validity: Option<i32>,
     refresh_token_validity: Option<i32>,
     token_validity_units: Option<TokenValidityUnitsInput>,
+    #[allow(dead_code)]
+    auth_session_validity: Option<i32>,
 
     // Security settings
     enable_token_revocation: Option<bool>,
     prevent_user_existence_errors: Option<String>,
     enable_propagate_additional_user_context_data: Option<bool>,
+    #[allow(dead_code)]
+    analytics_configuration: Option<Value>,
+    #[allow(dead_code)]
+    read_attributes: Option<Vec<String>>,
+    #[allow(dead_code)]
+    refresh_token_rotation: Option<Value>,
+    #[allow(dead_code)]
+    write_attributes: Option<Vec<String>>,
 }
 
 #[derive(Debug, Deserialize)]

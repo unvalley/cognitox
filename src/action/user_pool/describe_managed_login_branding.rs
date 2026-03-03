@@ -17,6 +17,8 @@ use crate::{
 struct Request {
     managed_login_branding_id: String,
     user_pool_id: UserPoolId,
+    #[allow(dead_code)]
+    return_merged_resources: Option<bool>,
 }
 
 pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {

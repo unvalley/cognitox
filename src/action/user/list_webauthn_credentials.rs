@@ -16,6 +16,10 @@ use super::helpers::verify_and_extract_user_id;
 #[serde(rename_all = "PascalCase")]
 struct Request {
     access_token: String,
+    #[allow(dead_code)]
+    max_results: Option<u32>,
+    #[allow(dead_code)]
+    next_token: Option<String>,
 }
 
 pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
@@ -30,8 +34,10 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
         .ok_or(AppError::UserNotFound)?;
 
     let credentials = storage.list_webauthn_credentials(&user_id).await;
+    let max_results = req.max_results.unwrap_or(50) as usize;
     let credentials: Vec<Value> = credentials
         .into_iter()
+        .take(max_results)
         .map(|cred| {
             json!({
                 "CredentialId": cred.credential_id,

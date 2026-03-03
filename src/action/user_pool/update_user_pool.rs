@@ -15,10 +15,29 @@ use crate::{
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "PascalCase")]
+#[allow(dead_code)]
 struct Request {
     user_pool_id: UserPoolId,
-    // Currently we only support updating the pool name as an example
-    // Additional fields can be added as needed
+    pool_name: Option<String>,
+    account_recovery_setting: Option<Value>,
+    admin_create_user_config: Option<Value>,
+    auto_verified_attributes: Option<Value>,
+    deletion_protection: Option<Value>,
+    device_configuration: Option<Value>,
+    email_configuration: Option<Value>,
+    email_verification_message: Option<Value>,
+    email_verification_subject: Option<Value>,
+    lambda_config: Option<Value>,
+    mfa_configuration: Option<Value>,
+    policies: Option<Value>,
+    sms_authentication_message: Option<Value>,
+    sms_configuration: Option<Value>,
+    sms_verification_message: Option<Value>,
+    user_attribute_update_settings: Option<Value>,
+    user_pool_add_ons: Option<Value>,
+    user_pool_tags: Option<Value>,
+    user_pool_tier: Option<Value>,
+    verification_message_template: Option<Value>,
 }
 
 #[derive(Debug, Serialize)]
@@ -31,6 +50,10 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
         .get_user_pool(&req.user_pool_id)
         .await
         .ok_or(AppError::UserPoolNotFound)?;
+
+    if let Some(pool_name) = req.pool_name {
+        pool.name = pool_name;
+    }
 
     pool.last_modified_date = Utc::now();
 

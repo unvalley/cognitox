@@ -17,6 +17,15 @@ struct Request {
     user_pool_id: UserPoolId,
     #[serde(default)]
     client_id: Option<ClientId>,
+    #[serde(default)]
+    #[allow(dead_code)]
+    account_takeover_risk_configuration: Option<Value>,
+    #[serde(default)]
+    #[allow(dead_code)]
+    compromised_credentials_risk_configuration: Option<Value>,
+    #[serde(default)]
+    #[allow(dead_code)]
+    risk_exception_configuration: Option<Value>,
 }
 
 pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {

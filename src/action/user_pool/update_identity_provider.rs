@@ -20,8 +20,6 @@ struct Request {
     user_pool_id: UserPoolId,
     provider_name: String,
     #[serde(default)]
-    provider_type: Option<String>,
-    #[serde(default)]
     provider_details: Option<HashMap<String, String>>,
     #[serde(default)]
     attribute_mapping: Option<HashMap<String, String>>,
@@ -43,9 +41,6 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
         .await
         .ok_or(AppError::IdentityProviderNotFound)?;
 
-    if let Some(provider_type) = req.provider_type {
-        provider.provider_type = provider_type;
-    }
     if let Some(provider_details) = req.provider_details {
         provider.provider_details = provider_details;
     }
@@ -98,13 +93,18 @@ mod tests {
             json!({
                 "UserPoolId": user_pool_id,
                 "ProviderName": "MyProvider",
-                "ProviderType": "SAML"
+                "ProviderDetails": {
+                    "MetadataURL": "https://example.com/metadata"
+                }
             }),
         )
         .await
         .unwrap();
 
         assert_eq!(result["IdentityProvider"]["ProviderName"], "MyProvider");
-        assert_eq!(result["IdentityProvider"]["ProviderType"], "SAML");
+        assert_eq!(
+            result["IdentityProvider"]["ProviderDetails"]["MetadataURL"],
+            "https://example.com/metadata"
+        );
     }
 }

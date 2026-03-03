@@ -19,6 +19,8 @@ struct Request {
     user_pool_id: UserPoolId,
     terms_id: String,
     #[serde(default)]
+    terms_name: Option<String>,
+    #[serde(default)]
     terms_source: Option<String>,
     #[serde(default)]
     enforcement: Option<String>,
@@ -58,6 +60,9 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
         return Err(AppError::TermsNotFound);
     }
 
+    if let Some(name) = req.terms_name {
+        terms.terms_name = name;
+    }
     if let Some(source) = req.terms_source {
         terms.terms_source = source;
     }

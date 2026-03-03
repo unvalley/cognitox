@@ -46,7 +46,11 @@ struct Request {
     #[allow(dead_code)]
     sms_mfa_configuration: Option<SmsMfaConfiguration>,
     #[allow(dead_code)]
+    email_mfa_configuration: Option<Value>,
+    #[allow(dead_code)]
     software_token_mfa_configuration: Option<SoftwareTokenMfaConfiguration>,
+    #[allow(dead_code)]
+    web_authn_configuration: Option<Value>,
 }
 
 pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {

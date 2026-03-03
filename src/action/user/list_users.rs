@@ -16,6 +16,12 @@ use crate::{
 struct Request {
     user_pool_id: UserPoolId,
     limit: Option<u32>,
+    #[allow(dead_code)]
+    attributes_to_get: Option<Vec<String>>,
+    #[allow(dead_code)]
+    filter: Option<String>,
+    #[allow(dead_code)]
+    pagination_token: Option<String>,
 }
 
 pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {

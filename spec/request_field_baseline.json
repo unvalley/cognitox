@@ -94,9 +94,7 @@
     },
     "AdminResetUserPassword": {
       "path": "src/action/user/admin_reset_user_password.rs",
-      "missing": [
-        "ClientMetadata"
-      ],
+      "missing": [],
       "extra": []
     },
     "AdminRespondToAuthChallenge": {
@@ -106,9 +104,7 @@
     },
     "AdminSetUserMFAPreference": {
       "path": "src/action/user/admin_set_user_mfa_preference.rs",
-      "missing": [
-        "EmailMfaSettings"
-      ],
+      "missing": [],
       "extra": []
     },
     "AdminSetUserPassword": {
@@ -133,9 +129,7 @@
     },
     "AdminUpdateUserAttributes": {
       "path": "src/action/user/admin_update_user_attributes.rs",
-      "missing": [
-        "ClientMetadata"
-      ],
+      "missing": [],
       "extra": []
     },
     "AdminUserGlobalSignOut": {
@@ -156,38 +150,21 @@
     "CompleteWebAuthnRegistration": {
       "path": "src/action/user/complete_webauthn_registration.rs",
       "missing": [],
-      "extra": [
-        "friendly_credential_name"
-      ]
+      "extra": []
     },
     "ConfirmDevice": {
       "path": "src/action/user/confirm_device.rs",
-      "missing": [
-        "DeviceName",
-        "DeviceSecretVerifierConfig"
-      ],
+      "missing": [],
       "extra": []
     },
     "ConfirmForgotPassword": {
       "path": "src/action/user/confirm_forgot_password.rs",
-      "missing": [
-        "AnalyticsMetadata",
-        "ClientMetadata",
-        "SecretHash",
-        "UserContextData"
-      ],
+      "missing": [],
       "extra": []
     },
     "ConfirmSignUp": {
       "path": "src/action/user/confirm_sign_up.rs",
-      "missing": [
-        "AnalyticsMetadata",
-        "ClientMetadata",
-        "ForceAliasCreation",
-        "SecretHash",
-        "Session",
-        "UserContextData"
-      ],
+      "missing": [],
       "extra": []
     },
     "CreateGroup": {
@@ -222,43 +199,12 @@
     },
     "CreateUserPool": {
       "path": "src/action/user_pool/create_user_pool.rs",
-      "missing": [
-        "AccountRecoverySetting",
-        "AdminCreateUserConfig",
-        "AliasAttributes",
-        "AutoVerifiedAttributes",
-        "DeletionProtection",
-        "DeviceConfiguration",
-        "EmailConfiguration",
-        "EmailVerificationMessage",
-        "EmailVerificationSubject",
-        "LambdaConfig",
-        "MfaConfiguration",
-        "Policies",
-        "Schema",
-        "SmsAuthenticationMessage",
-        "SmsConfiguration",
-        "SmsVerificationMessage",
-        "UserAttributeUpdateSettings",
-        "UsernameAttributes",
-        "UsernameConfiguration",
-        "UserPoolAddOns",
-        "UserPoolTags",
-        "UserPoolTier",
-        "VerificationMessageTemplate"
-      ],
+      "missing": [],
       "extra": []
     },
     "CreateUserPoolClient": {
       "path": "src/action/user_pool/create_user_pool_client.rs",
-      "missing": [
-        "AnalyticsConfiguration",
-        "AuthSessionValidity",
-        "ClientSecret",
-        "ReadAttributes",
-        "RefreshTokenRotation",
-        "WriteAttributes"
-      ],
+      "missing": [],
       "extra": []
     },
     "CreateUserPoolDomain": {
@@ -328,16 +274,12 @@
     },
     "DescribeManagedLoginBranding": {
       "path": "src/action/user_pool/describe_managed_login_branding.rs",
-      "missing": [
-        "ReturnMergedResources"
-      ],
+      "missing": [],
       "extra": []
     },
     "DescribeManagedLoginBrandingByClient": {
       "path": "src/action/user_pool/describe_managed_login_branding_by_client.rs",
-      "missing": [
-        "ReturnMergedResources"
-      ],
+      "missing": [],
       "extra": []
     },
     "DescribeResourceServer": {
@@ -382,12 +324,7 @@
     },
     "ForgotPassword": {
       "path": "src/action/user/forgot_password.rs",
-      "missing": [
-        "AnalyticsMetadata",
-        "ClientMetadata",
-        "SecretHash",
-        "UserContextData"
-      ],
+      "missing": [],
       "extra": []
     },
     "GetCSVHeader": {
@@ -407,12 +344,8 @@
     },
     "GetIdentityProviderByIdentifier": {
       "path": "src/action/user_pool/get_identity_provider_by_identifier.rs",
-      "missing": [
-        "IdpIdentifier"
-      ],
-      "extra": [
-        "identifier"
-      ]
+      "missing": [],
+      "extra": []
     },
     "GetLogDeliveryConfiguration": {
       "path": "src/action/user_pool/get_log_delivery_configuration.rs",
@@ -441,9 +374,7 @@
     },
     "GetUserAttributeVerificationCode": {
       "path": "src/action/user/get_user_attribute_verification_code.rs",
-      "missing": [
-        "ClientMetadata"
-      ],
+      "missing": [],
       "extra": []
     },
     "GetUserAuthFactors": {
@@ -463,9 +394,7 @@
     },
     "InitiateAuth": {
       "path": "src/action/user/initiate_auth.rs",
-      "missing": [
-        "Session"
-      ],
+      "missing": [],
       "extra": []
     },
     "ListDevices": {
@@ -515,11 +444,7 @@
     },
     "ListUsers": {
       "path": "src/action/user/list_users.rs",
-      "missing": [
-        "AttributesToGet",
-        "Filter",
-        "PaginationToken"
-      ],
+      "missing": [],
       "extra": []
     },
     "ListUsersInGroup": {
@@ -529,20 +454,12 @@
     },
     "ListWebAuthnCredentials": {
       "path": "src/action/user/list_webauthn_credentials.rs",
-      "missing": [
-        "MaxResults",
-        "NextToken"
-      ],
+      "missing": [],
       "extra": []
     },
     "ResendConfirmationCode": {
       "path": "src/action/user/resend_confirmation_code.rs",
-      "missing": [
-        "AnalyticsMetadata",
-        "ClientMetadata",
-        "SecretHash",
-        "UserContextData"
-      ],
+      "missing": [],
       "extra": []
     },
     "RespondToAuthChallenge": {
@@ -562,11 +479,7 @@
     },
     "SetRiskConfiguration": {
       "path": "src/action/user_pool/set_risk_configuration.rs",
-      "missing": [
-        "AccountTakeoverRiskConfiguration",
-        "CompromisedCredentialsRiskConfiguration",
-        "RiskExceptionConfiguration"
-      ],
+      "missing": [],
       "extra": []
     },
     "SetUICustomization": {
@@ -576,17 +489,12 @@
     },
     "SetUserMFAPreference": {
       "path": "src/action/user/set_user_mfa_preference.rs",
-      "missing": [
-        "EmailMfaSettings"
-      ],
+      "missing": [],
       "extra": []
     },
     "SetUserPoolMfaConfig": {
       "path": "src/action/user_pool/set_user_pool_mfa_config.rs",
-      "missing": [
-        "EmailMfaConfiguration",
-        "WebAuthnConfiguration"
-      ],
+      "missing": [],
       "extra": []
     },
     "SetUserSettings": {
@@ -626,14 +534,8 @@
     },
     "UpdateAuthEventFeedback": {
       "path": "src/action/user/update_auth_event_feedback.rs",
-      "missing": [
-        "FeedbackToken",
-        "Username",
-        "UserPoolId"
-      ],
-      "extra": [
-        "access_token"
-      ]
+      "missing": [],
+      "extra": []
     },
     "UpdateDeviceStatus": {
       "path": "src/action/user/update_device_status.rs",
@@ -648,9 +550,7 @@
     "UpdateIdentityProvider": {
       "path": "src/action/user_pool/update_identity_provider.rs",
       "missing": [],
-      "extra": [
-        "provider_type"
-      ]
+      "extra": []
     },
     "UpdateManagedLoginBranding": {
       "path": "src/action/user_pool/update_managed_login_branding.rs",
@@ -664,53 +564,22 @@
     },
     "UpdateTerms": {
       "path": "src/action/user_pool/update_terms.rs",
-      "missing": [
-        "TermsName"
-      ],
+      "missing": [],
       "extra": []
     },
     "UpdateUserAttributes": {
       "path": "src/action/user/update_user_attributes.rs",
-      "missing": [
-        "ClientMetadata"
-      ],
+      "missing": [],
       "extra": []
     },
     "UpdateUserPool": {
       "path": "src/action/user_pool/update_user_pool.rs",
-      "missing": [
-        "AccountRecoverySetting",
-        "AdminCreateUserConfig",
-        "AutoVerifiedAttributes",
-        "DeletionProtection",
-        "DeviceConfiguration",
-        "EmailConfiguration",
-        "EmailVerificationMessage",
-        "EmailVerificationSubject",
-        "LambdaConfig",
-        "MfaConfiguration",
-        "Policies",
-        "PoolName",
-        "SmsAuthenticationMessage",
-        "SmsConfiguration",
-        "SmsVerificationMessage",
-        "UserAttributeUpdateSettings",
-        "UserPoolAddOns",
-        "UserPoolTags",
-        "UserPoolTier",
-        "VerificationMessageTemplate"
-      ],
+      "missing": [],
       "extra": []
     },
     "UpdateUserPoolClient": {
       "path": "src/action/user_pool/update_user_pool_client.rs",
-      "missing": [
-        "AnalyticsConfiguration",
-        "AuthSessionValidity",
-        "ReadAttributes",
-        "RefreshTokenRotation",
-        "WriteAttributes"
-      ],
+      "missing": [],
       "extra": []
     },
     "UpdateUserPoolDomain": {

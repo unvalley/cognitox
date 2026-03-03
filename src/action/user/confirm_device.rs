@@ -16,9 +16,22 @@ use super::helpers::verify_and_extract_user_id;
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "PascalCase")]
+struct DeviceSecretVerifierConfig {
+    #[allow(dead_code)]
+    password_verifier: Option<String>,
+    #[allow(dead_code)]
+    salt: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "PascalCase")]
 struct Request {
     access_token: String,
     device_key: String,
+    #[allow(dead_code)]
+    device_name: Option<String>,
+    #[allow(dead_code)]
+    device_secret_verifier_config: Option<DeviceSecretVerifierConfig>,
 }
 
 pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {

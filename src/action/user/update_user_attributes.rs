@@ -5,6 +5,7 @@
 use chrono::Utc;
 use serde::Deserialize;
 use serde_json::{Value, json};
+use std::collections::HashMap;
 
 use crate::{
     error::{AppError, Result},
@@ -19,6 +20,8 @@ use super::helpers::verify_and_extract_user_id;
 struct Request {
     access_token: String,
     user_attributes: Vec<UserAttribute>,
+    #[allow(dead_code)]
+    client_metadata: Option<HashMap<String, String>>,
 }
 
 pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {

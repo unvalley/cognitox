@@ -20,8 +20,6 @@ struct Request {
     access_token: String,
     #[serde(default)]
     credential: Option<Value>,
-    #[serde(default)]
-    friendly_credential_name: Option<String>,
 }
 
 pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
@@ -50,13 +48,19 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
         .and_then(|id| id.as_str())
         .map(|s| s.to_string())
         .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+    let friendly_credential_name = req
+        .credential
+        .as_ref()
+        .and_then(|c| c.get("friendlyCredentialName"))
+        .and_then(Value::as_str)
+        .map(ToOwned::to_owned);
 
     storage
         .add_webauthn_credential(
             &user_id,
             WebAuthnCredential {
                 credential_id,
-                friendly_credential_name: req.friendly_credential_name,
+                friendly_credential_name,
                 relying_party_id: Some("localhost".to_string()),
                 created_at: Utc::now(),
                 authenticator_attachment: Some("platform".to_string()),

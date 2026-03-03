@@ -5,6 +5,7 @@
 use chrono::Utc;
 use serde::Deserialize;
 use serde_json::{Value, json};
+use std::collections::HashMap;
 
 use crate::{
     error::{AppError, Result},
@@ -16,10 +17,38 @@ use super::helpers::normalize_confirmation_code;
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "PascalCase")]
+struct AnalyticsMetadata {
+    #[allow(dead_code)]
+    analytics_endpoint_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+struct UserContextData {
+    #[allow(dead_code)]
+    encoded_data: Option<String>,
+    #[allow(dead_code)]
+    ip_address: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "PascalCase")]
 struct Request {
     client_id: ClientId,
     username: String,
     confirmation_code: String,
+    #[allow(dead_code)]
+    analytics_metadata: Option<AnalyticsMetadata>,
+    #[allow(dead_code)]
+    client_metadata: Option<HashMap<String, String>>,
+    #[allow(dead_code)]
+    force_alias_creation: Option<bool>,
+    #[allow(dead_code)]
+    secret_hash: Option<String>,
+    #[allow(dead_code)]
+    session: Option<String>,
+    #[allow(dead_code)]
+    user_context_data: Option<UserContextData>,
 }
 
 pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {

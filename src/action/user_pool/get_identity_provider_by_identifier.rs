@@ -16,7 +16,8 @@ use crate::{
 #[serde(rename_all = "PascalCase")]
 struct Request {
     user_pool_id: UserPoolId,
-    identifier: String,
+    #[serde(alias = "Identifier")]
+    idp_identifier: String,
 }
 
 pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
@@ -29,7 +30,7 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
         .ok_or(AppError::UserPoolNotFound)?;
 
     let provider = storage
-        .get_identity_provider_by_identifier(&req.user_pool_id, &req.identifier)
+        .get_identity_provider_by_identifier(&req.user_pool_id, &req.idp_identifier)
         .await
         .ok_or(AppError::IdentityProviderNotFound)?;
 

@@ -5,6 +5,7 @@
 use chrono::{Duration, Utc};
 use serde::Deserialize;
 use serde_json::{Value, json};
+use std::collections::HashMap;
 
 use crate::{
     error::{AppError, Result},
@@ -19,6 +20,8 @@ use super::helpers::{generate_confirmation_code, mask_email};
 struct Request {
     user_pool_id: UserPoolId,
     username: String,
+    #[allow(dead_code)]
+    client_metadata: Option<HashMap<String, String>>,
 }
 
 pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {

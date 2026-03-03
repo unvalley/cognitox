@@ -50,6 +50,7 @@ struct Request {
     auth_parameters: Option<HashMap<String, String>>,
     analytics_metadata: Option<AnalyticsMetadata>,
     user_context_data: Option<UserContextData>,
+    session: Option<String>,
     client_metadata: Option<HashMap<String, String>>,
 }
 
@@ -57,6 +58,7 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
     let req: Request = serde_json::from_value(body)
         .map_err(|e| AppError::InvalidParameter(format!("Invalid request: {}", e)))?;
     let _ = (
+        &req.session,
         &req.client_metadata,
         req.analytics_metadata
             .as_ref()

@@ -16,8 +16,32 @@ use crate::{
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "PascalCase")]
+#[allow(dead_code)]
 struct Request {
     pool_name: String,
+    account_recovery_setting: Option<Value>,
+    admin_create_user_config: Option<Value>,
+    alias_attributes: Option<Value>,
+    auto_verified_attributes: Option<Value>,
+    deletion_protection: Option<Value>,
+    device_configuration: Option<Value>,
+    email_configuration: Option<Value>,
+    email_verification_message: Option<Value>,
+    email_verification_subject: Option<Value>,
+    lambda_config: Option<Value>,
+    mfa_configuration: Option<Value>,
+    policies: Option<Value>,
+    schema: Option<Value>,
+    sms_authentication_message: Option<Value>,
+    sms_configuration: Option<Value>,
+    sms_verification_message: Option<Value>,
+    user_attribute_update_settings: Option<Value>,
+    username_attributes: Option<Value>,
+    username_configuration: Option<Value>,
+    user_pool_add_ons: Option<Value>,
+    user_pool_tags: Option<Value>,
+    user_pool_tier: Option<Value>,
+    verification_message_template: Option<Value>,
 }
 
 #[derive(Debug, Serialize)]

@@ -29,6 +29,8 @@ struct Request {
     #[allow(dead_code)]
     sms_mfa_settings: Option<MFASettings>,
     #[allow(dead_code)]
+    email_mfa_settings: Option<MFASettings>,
+    #[allow(dead_code)]
     software_token_mfa_settings: Option<MFASettings>,
 }
 
