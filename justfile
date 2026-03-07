@@ -71,8 +71,16 @@ test-one NAME:
 ui-check:
     cd ui && npm run check
 
-# Run all checks (Rust tests + UI type check)
-check-all: test ui-check
+# Run all checks (spec drift + Rust tests + UI type check)
+check-all: spec-check test ui-check
+
+# Check request/response drift against AWS API baseline
+spec-check:
+    cargo run --quiet --bin request_response_spec_diff
+
+# Update request/response baseline after reviewing diffs
+spec-baseline-update:
+    cargo run --quiet --bin request_response_spec_diff -- --update-baseline
 
 # =============================================================================
 # Lint & Format

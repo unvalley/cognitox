@@ -1,0 +1,1309 @@
+{
+  "model_sha256": "977b4883097f1cb44f05cd3a1ed2d115f9771c30c0c53347247490e613a485ed",
+  "model_url": "https://raw.githubusercontent.com/aws/aws-sdk-go-v2/main/codegen/sdk-codegen/aws-models/cognito-identity-provider.json",
+  "operations": {
+    "AddCustomAttributes": {
+      "request": [
+        "CustomAttributes",
+        "UserPoolId"
+      ],
+      "response": []
+    },
+    "AddUserPoolClientSecret": {
+      "request": [
+        "ClientId",
+        "ClientSecret",
+        "UserPoolId"
+      ],
+      "response": [
+        "ClientSecretDescriptor"
+      ]
+    },
+    "AdminAddUserToGroup": {
+      "request": [
+        "GroupName",
+        "UserPoolId",
+        "Username"
+      ],
+      "response": []
+    },
+    "AdminConfirmSignUp": {
+      "request": [
+        "ClientMetadata",
+        "UserPoolId",
+        "Username"
+      ],
+      "response": []
+    },
+    "AdminCreateUser": {
+      "request": [
+        "ClientMetadata",
+        "DesiredDeliveryMediums",
+        "ForceAliasCreation",
+        "MessageAction",
+        "TemporaryPassword",
+        "UserAttributes",
+        "UserPoolId",
+        "Username",
+        "ValidationData"
+      ],
+      "response": [
+        "User"
+      ]
+    },
+    "AdminDeleteUser": {
+      "request": [
+        "UserPoolId",
+        "Username"
+      ],
+      "response": []
+    },
+    "AdminDeleteUserAttributes": {
+      "request": [
+        "UserAttributeNames",
+        "UserPoolId",
+        "Username"
+      ],
+      "response": []
+    },
+    "AdminDisableProviderForUser": {
+      "request": [
+        "User",
+        "UserPoolId"
+      ],
+      "response": []
+    },
+    "AdminDisableUser": {
+      "request": [
+        "UserPoolId",
+        "Username"
+      ],
+      "response": []
+    },
+    "AdminEnableUser": {
+      "request": [
+        "UserPoolId",
+        "Username"
+      ],
+      "response": []
+    },
+    "AdminForgetDevice": {
+      "request": [
+        "DeviceKey",
+        "UserPoolId",
+        "Username"
+      ],
+      "response": []
+    },
+    "AdminGetDevice": {
+      "request": [
+        "DeviceKey",
+        "UserPoolId",
+        "Username"
+      ],
+      "response": [
+        "Device"
+      ]
+    },
+    "AdminGetUser": {
+      "request": [
+        "UserPoolId",
+        "Username"
+      ],
+      "response": [
+        "Enabled",
+        "MFAOptions",
+        "PreferredMfaSetting",
+        "UserAttributes",
+        "UserCreateDate",
+        "UserLastModifiedDate",
+        "UserMFASettingList",
+        "UserStatus",
+        "Username"
+      ]
+    },
+    "AdminInitiateAuth": {
+      "request": [
+        "AnalyticsMetadata",
+        "AuthFlow",
+        "AuthParameters",
+        "ClientId",
+        "ClientMetadata",
+        "ContextData",
+        "Session",
+        "UserPoolId"
+      ],
+      "response": [
+        "AuthenticationResult",
+        "AvailableChallenges",
+        "ChallengeName",
+        "ChallengeParameters",
+        "Session"
+      ]
+    },
+    "AdminLinkProviderForUser": {
+      "request": [
+        "DestinationUser",
+        "SourceUser",
+        "UserPoolId"
+      ],
+      "response": []
+    },
+    "AdminListDevices": {
+      "request": [
+        "Limit",
+        "PaginationToken",
+        "UserPoolId",
+        "Username"
+      ],
+      "response": [
+        "Devices",
+        "PaginationToken"
+      ]
+    },
+    "AdminListGroupsForUser": {
+      "request": [
+        "Limit",
+        "NextToken",
+        "UserPoolId",
+        "Username"
+      ],
+      "response": [
+        "Groups",
+        "NextToken"
+      ]
+    },
+    "AdminListUserAuthEvents": {
+      "request": [
+        "MaxResults",
+        "NextToken",
+        "UserPoolId",
+        "Username"
+      ],
+      "response": [
+        "AuthEvents",
+        "NextToken"
+      ]
+    },
+    "AdminRemoveUserFromGroup": {
+      "request": [
+        "GroupName",
+        "UserPoolId",
+        "Username"
+      ],
+      "response": []
+    },
+    "AdminResetUserPassword": {
+      "request": [
+        "ClientMetadata",
+        "UserPoolId",
+        "Username"
+      ],
+      "response": []
+    },
+    "AdminRespondToAuthChallenge": {
+      "request": [
+        "AnalyticsMetadata",
+        "ChallengeName",
+        "ChallengeResponses",
+        "ClientId",
+        "ClientMetadata",
+        "ContextData",
+        "Session",
+        "UserPoolId"
+      ],
+      "response": [
+        "AuthenticationResult",
+        "ChallengeName",
+        "ChallengeParameters",
+        "Session"
+      ]
+    },
+    "AdminSetUserMFAPreference": {
+      "request": [
+        "EmailMfaSettings",
+        "SMSMfaSettings",
+        "SoftwareTokenMfaSettings",
+        "UserPoolId",
+        "Username"
+      ],
+      "response": []
+    },
+    "AdminSetUserPassword": {
+      "request": [
+        "Password",
+        "Permanent",
+        "UserPoolId",
+        "Username"
+      ],
+      "response": []
+    },
+    "AdminSetUserSettings": {
+      "request": [
+        "MFAOptions",
+        "UserPoolId",
+        "Username"
+      ],
+      "response": []
+    },
+    "AdminUpdateAuthEventFeedback": {
+      "request": [
+        "EventId",
+        "FeedbackValue",
+        "UserPoolId",
+        "Username"
+      ],
+      "response": []
+    },
+    "AdminUpdateDeviceStatus": {
+      "request": [
+        "DeviceKey",
+        "DeviceRememberedStatus",
+        "UserPoolId",
+        "Username"
+      ],
+      "response": []
+    },
+    "AdminUpdateUserAttributes": {
+      "request": [
+        "ClientMetadata",
+        "UserAttributes",
+        "UserPoolId",
+        "Username"
+      ],
+      "response": []
+    },
+    "AdminUserGlobalSignOut": {
+      "request": [
+        "UserPoolId",
+        "Username"
+      ],
+      "response": []
+    },
+    "AssociateSoftwareToken": {
+      "request": [
+        "AccessToken",
+        "Session"
+      ],
+      "response": [
+        "SecretCode",
+        "Session"
+      ]
+    },
+    "ChangePassword": {
+      "request": [
+        "AccessToken",
+        "PreviousPassword",
+        "ProposedPassword"
+      ],
+      "response": []
+    },
+    "CompleteWebAuthnRegistration": {
+      "request": [
+        "AccessToken",
+        "Credential"
+      ],
+      "response": []
+    },
+    "ConfirmDevice": {
+      "request": [
+        "AccessToken",
+        "DeviceKey",
+        "DeviceName",
+        "DeviceSecretVerifierConfig"
+      ],
+      "response": [
+        "UserConfirmationNecessary"
+      ]
+    },
+    "ConfirmForgotPassword": {
+      "request": [
+        "AnalyticsMetadata",
+        "ClientId",
+        "ClientMetadata",
+        "ConfirmationCode",
+        "Password",
+        "SecretHash",
+        "UserContextData",
+        "Username"
+      ],
+      "response": []
+    },
+    "ConfirmSignUp": {
+      "request": [
+        "AnalyticsMetadata",
+        "ClientId",
+        "ClientMetadata",
+        "ConfirmationCode",
+        "ForceAliasCreation",
+        "SecretHash",
+        "Session",
+        "UserContextData",
+        "Username"
+      ],
+      "response": [
+        "Session"
+      ]
+    },
+    "CreateGroup": {
+      "request": [
+        "Description",
+        "GroupName",
+        "Precedence",
+        "RoleArn",
+        "UserPoolId"
+      ],
+      "response": [
+        "Group"
+      ]
+    },
+    "CreateIdentityProvider": {
+      "request": [
+        "AttributeMapping",
+        "IdpIdentifiers",
+        "ProviderDetails",
+        "ProviderName",
+        "ProviderType",
+        "UserPoolId"
+      ],
+      "response": [
+        "IdentityProvider"
+      ]
+    },
+    "CreateManagedLoginBranding": {
+      "request": [
+        "Assets",
+        "ClientId",
+        "Settings",
+        "UseCognitoProvidedValues",
+        "UserPoolId"
+      ],
+      "response": [
+        "ManagedLoginBranding"
+      ]
+    },
+    "CreateResourceServer": {
+      "request": [
+        "Identifier",
+        "Name",
+        "Scopes",
+        "UserPoolId"
+      ],
+      "response": [
+        "ResourceServer"
+      ]
+    },
+    "CreateTerms": {
+      "request": [
+        "ClientId",
+        "Enforcement",
+        "Links",
+        "TermsName",
+        "TermsSource",
+        "UserPoolId"
+      ],
+      "response": [
+        "Terms"
+      ]
+    },
+    "CreateUserImportJob": {
+      "request": [
+        "CloudWatchLogsRoleArn",
+        "JobName",
+        "UserPoolId"
+      ],
+      "response": [
+        "UserImportJob"
+      ]
+    },
+    "CreateUserPool": {
+      "request": [
+        "AccountRecoverySetting",
+        "AdminCreateUserConfig",
+        "AliasAttributes",
+        "AutoVerifiedAttributes",
+        "DeletionProtection",
+        "DeviceConfiguration",
+        "EmailConfiguration",
+        "EmailVerificationMessage",
+        "EmailVerificationSubject",
+        "LambdaConfig",
+        "MfaConfiguration",
+        "Policies",
+        "PoolName",
+        "Schema",
+        "SmsAuthenticationMessage",
+        "SmsConfiguration",
+        "SmsVerificationMessage",
+        "UserAttributeUpdateSettings",
+        "UserPoolAddOns",
+        "UserPoolTags",
+        "UserPoolTier",
+        "UsernameAttributes",
+        "UsernameConfiguration",
+        "VerificationMessageTemplate"
+      ],
+      "response": [
+        "UserPool"
+      ]
+    },
+    "CreateUserPoolClient": {
+      "request": [
+        "AccessTokenValidity",
+        "AllowedOAuthFlows",
+        "AllowedOAuthFlowsUserPoolClient",
+        "AllowedOAuthScopes",
+        "AnalyticsConfiguration",
+        "AuthSessionValidity",
+        "CallbackURLs",
+        "ClientName",
+        "ClientSecret",
+        "DefaultRedirectURI",
+        "EnablePropagateAdditionalUserContextData",
+        "EnableTokenRevocation",
+        "ExplicitAuthFlows",
+        "GenerateSecret",
+        "IdTokenValidity",
+        "LogoutURLs",
+        "PreventUserExistenceErrors",
+        "ReadAttributes",
+        "RefreshTokenRotation",
+        "RefreshTokenValidity",
+        "SupportedIdentityProviders",
+        "TokenValidityUnits",
+        "UserPoolId",
+        "WriteAttributes"
+      ],
+      "response": [
+        "UserPoolClient"
+      ]
+    },
+    "CreateUserPoolDomain": {
+      "request": [
+        "CustomDomainConfig",
+        "Domain",
+        "ManagedLoginVersion",
+        "UserPoolId"
+      ],
+      "response": [
+        "CloudFrontDomain",
+        "ManagedLoginVersion"
+      ]
+    },
+    "DeleteGroup": {
+      "request": [
+        "GroupName",
+        "UserPoolId"
+      ],
+      "response": []
+    },
+    "DeleteIdentityProvider": {
+      "request": [
+        "ProviderName",
+        "UserPoolId"
+      ],
+      "response": []
+    },
+    "DeleteManagedLoginBranding": {
+      "request": [
+        "ManagedLoginBrandingId",
+        "UserPoolId"
+      ],
+      "response": []
+    },
+    "DeleteResourceServer": {
+      "request": [
+        "Identifier",
+        "UserPoolId"
+      ],
+      "response": []
+    },
+    "DeleteTerms": {
+      "request": [
+        "TermsId",
+        "UserPoolId"
+      ],
+      "response": []
+    },
+    "DeleteUser": {
+      "request": [
+        "AccessToken"
+      ],
+      "response": []
+    },
+    "DeleteUserAttributes": {
+      "request": [
+        "AccessToken",
+        "UserAttributeNames"
+      ],
+      "response": []
+    },
+    "DeleteUserPool": {
+      "request": [
+        "UserPoolId"
+      ],
+      "response": []
+    },
+    "DeleteUserPoolClient": {
+      "request": [
+        "ClientId",
+        "UserPoolId"
+      ],
+      "response": []
+    },
+    "DeleteUserPoolClientSecret": {
+      "request": [
+        "ClientId",
+        "ClientSecretId",
+        "UserPoolId"
+      ],
+      "response": []
+    },
+    "DeleteUserPoolDomain": {
+      "request": [
+        "Domain",
+        "UserPoolId"
+      ],
+      "response": []
+    },
+    "DeleteWebAuthnCredential": {
+      "request": [
+        "AccessToken",
+        "CredentialId"
+      ],
+      "response": []
+    },
+    "DescribeIdentityProvider": {
+      "request": [
+        "ProviderName",
+        "UserPoolId"
+      ],
+      "response": [
+        "IdentityProvider"
+      ]
+    },
+    "DescribeManagedLoginBranding": {
+      "request": [
+        "ManagedLoginBrandingId",
+        "ReturnMergedResources",
+        "UserPoolId"
+      ],
+      "response": [
+        "ManagedLoginBranding"
+      ]
+    },
+    "DescribeManagedLoginBrandingByClient": {
+      "request": [
+        "ClientId",
+        "ReturnMergedResources",
+        "UserPoolId"
+      ],
+      "response": [
+        "ManagedLoginBranding"
+      ]
+    },
+    "DescribeResourceServer": {
+      "request": [
+        "Identifier",
+        "UserPoolId"
+      ],
+      "response": [
+        "ResourceServer"
+      ]
+    },
+    "DescribeRiskConfiguration": {
+      "request": [
+        "ClientId",
+        "UserPoolId"
+      ],
+      "response": [
+        "RiskConfiguration"
+      ]
+    },
+    "DescribeTerms": {
+      "request": [
+        "TermsId",
+        "UserPoolId"
+      ],
+      "response": [
+        "Terms"
+      ]
+    },
+    "DescribeUserImportJob": {
+      "request": [
+        "JobId",
+        "UserPoolId"
+      ],
+      "response": [
+        "UserImportJob"
+      ]
+    },
+    "DescribeUserPool": {
+      "request": [
+        "UserPoolId"
+      ],
+      "response": [
+        "UserPool"
+      ]
+    },
+    "DescribeUserPoolClient": {
+      "request": [
+        "ClientId",
+        "UserPoolId"
+      ],
+      "response": [
+        "UserPoolClient"
+      ]
+    },
+    "DescribeUserPoolDomain": {
+      "request": [
+        "Domain"
+      ],
+      "response": [
+        "DomainDescription"
+      ]
+    },
+    "ForgetDevice": {
+      "request": [
+        "AccessToken",
+        "DeviceKey"
+      ],
+      "response": []
+    },
+    "ForgotPassword": {
+      "request": [
+        "AnalyticsMetadata",
+        "ClientId",
+        "ClientMetadata",
+        "SecretHash",
+        "UserContextData",
+        "Username"
+      ],
+      "response": [
+        "CodeDeliveryDetails"
+      ]
+    },
+    "GetCSVHeader": {
+      "request": [
+        "UserPoolId"
+      ],
+      "response": [
+        "CSVHeader",
+        "UserPoolId"
+      ]
+    },
+    "GetDevice": {
+      "request": [
+        "AccessToken",
+        "DeviceKey"
+      ],
+      "response": [
+        "Device"
+      ]
+    },
+    "GetGroup": {
+      "request": [
+        "GroupName",
+        "UserPoolId"
+      ],
+      "response": [
+        "Group"
+      ]
+    },
+    "GetIdentityProviderByIdentifier": {
+      "request": [
+        "IdpIdentifier",
+        "UserPoolId"
+      ],
+      "response": [
+        "IdentityProvider"
+      ]
+    },
+    "GetLogDeliveryConfiguration": {
+      "request": [
+        "UserPoolId"
+      ],
+      "response": [
+        "LogDeliveryConfiguration"
+      ]
+    },
+    "GetSigningCertificate": {
+      "request": [
+        "UserPoolId"
+      ],
+      "response": [
+        "Certificate"
+      ]
+    },
+    "GetTokensFromRefreshToken": {
+      "request": [
+        "ClientId",
+        "ClientMetadata",
+        "ClientSecret",
+        "DeviceKey",
+        "RefreshToken"
+      ],
+      "response": [
+        "AuthenticationResult"
+      ]
+    },
+    "GetUICustomization": {
+      "request": [
+        "ClientId",
+        "UserPoolId"
+      ],
+      "response": [
+        "UICustomization"
+      ]
+    },
+    "GetUser": {
+      "request": [
+        "AccessToken"
+      ],
+      "response": [
+        "MFAOptions",
+        "PreferredMfaSetting",
+        "UserAttributes",
+        "UserMFASettingList",
+        "Username"
+      ]
+    },
+    "GetUserAttributeVerificationCode": {
+      "request": [
+        "AccessToken",
+        "AttributeName",
+        "ClientMetadata"
+      ],
+      "response": [
+        "CodeDeliveryDetails"
+      ]
+    },
+    "GetUserAuthFactors": {
+      "request": [
+        "AccessToken"
+      ],
+      "response": [
+        "ConfiguredUserAuthFactors",
+        "PreferredMfaSetting",
+        "UserMFASettingList",
+        "Username"
+      ]
+    },
+    "GetUserPoolMfaConfig": {
+      "request": [
+        "UserPoolId"
+      ],
+      "response": [
+        "EmailMfaConfiguration",
+        "MfaConfiguration",
+        "SmsMfaConfiguration",
+        "SoftwareTokenMfaConfiguration",
+        "WebAuthnConfiguration"
+      ]
+    },
+    "GlobalSignOut": {
+      "request": [
+        "AccessToken"
+      ],
+      "response": []
+    },
+    "InitiateAuth": {
+      "request": [
+        "AnalyticsMetadata",
+        "AuthFlow",
+        "AuthParameters",
+        "ClientId",
+        "ClientMetadata",
+        "Session",
+        "UserContextData"
+      ],
+      "response": [
+        "AuthenticationResult",
+        "AvailableChallenges",
+        "ChallengeName",
+        "ChallengeParameters",
+        "Session"
+      ]
+    },
+    "ListDevices": {
+      "request": [
+        "AccessToken",
+        "Limit",
+        "PaginationToken"
+      ],
+      "response": [
+        "Devices",
+        "PaginationToken"
+      ]
+    },
+    "ListGroups": {
+      "request": [
+        "Limit",
+        "NextToken",
+        "UserPoolId"
+      ],
+      "response": [
+        "Groups",
+        "NextToken"
+      ]
+    },
+    "ListIdentityProviders": {
+      "request": [
+        "MaxResults",
+        "NextToken",
+        "UserPoolId"
+      ],
+      "response": [
+        "NextToken",
+        "Providers"
+      ]
+    },
+    "ListResourceServers": {
+      "request": [
+        "MaxResults",
+        "NextToken",
+        "UserPoolId"
+      ],
+      "response": [
+        "NextToken",
+        "ResourceServers"
+      ]
+    },
+    "ListTagsForResource": {
+      "request": [
+        "ResourceArn"
+      ],
+      "response": [
+        "Tags"
+      ]
+    },
+    "ListTerms": {
+      "request": [
+        "MaxResults",
+        "NextToken",
+        "UserPoolId"
+      ],
+      "response": [
+        "NextToken",
+        "Terms"
+      ]
+    },
+    "ListUserImportJobs": {
+      "request": [
+        "MaxResults",
+        "PaginationToken",
+        "UserPoolId"
+      ],
+      "response": [
+        "PaginationToken",
+        "UserImportJobs"
+      ]
+    },
+    "ListUserPoolClients": {
+      "request": [
+        "MaxResults",
+        "NextToken",
+        "UserPoolId"
+      ],
+      "response": [
+        "NextToken",
+        "UserPoolClients"
+      ]
+    },
+    "ListUserPoolClientSecrets": {
+      "request": [
+        "ClientId",
+        "NextToken",
+        "UserPoolId"
+      ],
+      "response": [
+        "ClientSecrets",
+        "NextToken"
+      ]
+    },
+    "ListUserPools": {
+      "request": [
+        "MaxResults",
+        "NextToken"
+      ],
+      "response": [
+        "NextToken",
+        "UserPools"
+      ]
+    },
+    "ListUsers": {
+      "request": [
+        "AttributesToGet",
+        "Filter",
+        "Limit",
+        "PaginationToken",
+        "UserPoolId"
+      ],
+      "response": [
+        "PaginationToken",
+        "Users"
+      ]
+    },
+    "ListUsersInGroup": {
+      "request": [
+        "GroupName",
+        "Limit",
+        "NextToken",
+        "UserPoolId"
+      ],
+      "response": [
+        "NextToken",
+        "Users"
+      ]
+    },
+    "ListWebAuthnCredentials": {
+      "request": [
+        "AccessToken",
+        "MaxResults",
+        "NextToken"
+      ],
+      "response": [
+        "Credentials",
+        "NextToken"
+      ]
+    },
+    "ResendConfirmationCode": {
+      "request": [
+        "AnalyticsMetadata",
+        "ClientId",
+        "ClientMetadata",
+        "SecretHash",
+        "UserContextData",
+        "Username"
+      ],
+      "response": [
+        "CodeDeliveryDetails"
+      ]
+    },
+    "RespondToAuthChallenge": {
+      "request": [
+        "AnalyticsMetadata",
+        "ChallengeName",
+        "ChallengeResponses",
+        "ClientId",
+        "ClientMetadata",
+        "Session",
+        "UserContextData"
+      ],
+      "response": [
+        "AuthenticationResult",
+        "ChallengeName",
+        "ChallengeParameters",
+        "Session"
+      ]
+    },
+    "RevokeToken": {
+      "request": [
+        "ClientId",
+        "ClientSecret",
+        "Token"
+      ],
+      "response": []
+    },
+    "SetLogDeliveryConfiguration": {
+      "request": [
+        "LogConfigurations",
+        "UserPoolId"
+      ],
+      "response": [
+        "LogDeliveryConfiguration"
+      ]
+    },
+    "SetRiskConfiguration": {
+      "request": [
+        "AccountTakeoverRiskConfiguration",
+        "ClientId",
+        "CompromisedCredentialsRiskConfiguration",
+        "RiskExceptionConfiguration",
+        "UserPoolId"
+      ],
+      "response": [
+        "RiskConfiguration"
+      ]
+    },
+    "SetUICustomization": {
+      "request": [
+        "CSS",
+        "ClientId",
+        "ImageFile",
+        "UserPoolId"
+      ],
+      "response": [
+        "UICustomization"
+      ]
+    },
+    "SetUserMFAPreference": {
+      "request": [
+        "AccessToken",
+        "EmailMfaSettings",
+        "SMSMfaSettings",
+        "SoftwareTokenMfaSettings"
+      ],
+      "response": []
+    },
+    "SetUserPoolMfaConfig": {
+      "request": [
+        "EmailMfaConfiguration",
+        "MfaConfiguration",
+        "SmsMfaConfiguration",
+        "SoftwareTokenMfaConfiguration",
+        "UserPoolId",
+        "WebAuthnConfiguration"
+      ],
+      "response": [
+        "EmailMfaConfiguration",
+        "MfaConfiguration",
+        "SmsMfaConfiguration",
+        "SoftwareTokenMfaConfiguration",
+        "WebAuthnConfiguration"
+      ]
+    },
+    "SetUserSettings": {
+      "request": [
+        "AccessToken",
+        "MFAOptions"
+      ],
+      "response": []
+    },
+    "SignUp": {
+      "request": [
+        "AnalyticsMetadata",
+        "ClientId",
+        "ClientMetadata",
+        "Password",
+        "SecretHash",
+        "UserAttributes",
+        "UserContextData",
+        "Username",
+        "ValidationData"
+      ],
+      "response": [
+        "CodeDeliveryDetails",
+        "Session",
+        "UserConfirmed",
+        "UserSub"
+      ]
+    },
+    "StartUserImportJob": {
+      "request": [
+        "JobId",
+        "UserPoolId"
+      ],
+      "response": [
+        "UserImportJob"
+      ]
+    },
+    "StartWebAuthnRegistration": {
+      "request": [
+        "AccessToken"
+      ],
+      "response": [
+        "CredentialCreationOptions"
+      ]
+    },
+    "StopUserImportJob": {
+      "request": [
+        "JobId",
+        "UserPoolId"
+      ],
+      "response": [
+        "UserImportJob"
+      ]
+    },
+    "TagResource": {
+      "request": [
+        "ResourceArn",
+        "Tags"
+      ],
+      "response": []
+    },
+    "UntagResource": {
+      "request": [
+        "ResourceArn",
+        "TagKeys"
+      ],
+      "response": []
+    },
+    "UpdateAuthEventFeedback": {
+      "request": [
+        "EventId",
+        "FeedbackToken",
+        "FeedbackValue",
+        "UserPoolId",
+        "Username"
+      ],
+      "response": []
+    },
+    "UpdateDeviceStatus": {
+      "request": [
+        "AccessToken",
+        "DeviceKey",
+        "DeviceRememberedStatus"
+      ],
+      "response": []
+    },
+    "UpdateGroup": {
+      "request": [
+        "Description",
+        "GroupName",
+        "Precedence",
+        "RoleArn",
+        "UserPoolId"
+      ],
+      "response": [
+        "Group"
+      ]
+    },
+    "UpdateIdentityProvider": {
+      "request": [
+        "AttributeMapping",
+        "IdpIdentifiers",
+        "ProviderDetails",
+        "ProviderName",
+        "UserPoolId"
+      ],
+      "response": [
+        "IdentityProvider"
+      ]
+    },
+    "UpdateManagedLoginBranding": {
+      "request": [
+        "Assets",
+        "ManagedLoginBrandingId",
+        "Settings",
+        "UseCognitoProvidedValues",
+        "UserPoolId"
+      ],
+      "response": [
+        "ManagedLoginBranding"
+      ]
+    },
+    "UpdateResourceServer": {
+      "request": [
+        "Identifier",
+        "Name",
+        "Scopes",
+        "UserPoolId"
+      ],
+      "response": [
+        "ResourceServer"
+      ]
+    },
+    "UpdateTerms": {
+      "request": [
+        "Enforcement",
+        "Links",
+        "TermsId",
+        "TermsName",
+        "TermsSource",
+        "UserPoolId"
+      ],
+      "response": [
+        "Terms"
+      ]
+    },
+    "UpdateUserAttributes": {
+      "request": [
+        "AccessToken",
+        "ClientMetadata",
+        "UserAttributes"
+      ],
+      "response": [
+        "CodeDeliveryDetailsList"
+      ]
+    },
+    "UpdateUserPool": {
+      "request": [
+        "AccountRecoverySetting",
+        "AdminCreateUserConfig",
+        "AutoVerifiedAttributes",
+        "DeletionProtection",
+        "DeviceConfiguration",
+        "EmailConfiguration",
+        "EmailVerificationMessage",
+        "EmailVerificationSubject",
+        "LambdaConfig",
+        "MfaConfiguration",
+        "Policies",
+        "PoolName",
+        "SmsAuthenticationMessage",
+        "SmsConfiguration",
+        "SmsVerificationMessage",
+        "UserAttributeUpdateSettings",
+        "UserPoolAddOns",
+        "UserPoolId",
+        "UserPoolTags",
+        "UserPoolTier",
+        "VerificationMessageTemplate"
+      ],
+      "response": []
+    },
+    "UpdateUserPoolClient": {
+      "request": [
+        "AccessTokenValidity",
+        "AllowedOAuthFlows",
+        "AllowedOAuthFlowsUserPoolClient",
+        "AllowedOAuthScopes",
+        "AnalyticsConfiguration",
+        "AuthSessionValidity",
+        "CallbackURLs",
+        "ClientId",
+        "ClientName",
+        "DefaultRedirectURI",
+        "EnablePropagateAdditionalUserContextData",
+        "EnableTokenRevocation",
+        "ExplicitAuthFlows",
+        "IdTokenValidity",
+        "LogoutURLs",
+        "PreventUserExistenceErrors",
+        "ReadAttributes",
+        "RefreshTokenRotation",
+        "RefreshTokenValidity",
+        "SupportedIdentityProviders",
+        "TokenValidityUnits",
+        "UserPoolId",
+        "WriteAttributes"
+      ],
+      "response": [
+        "UserPoolClient"
+      ]
+    },
+    "UpdateUserPoolDomain": {
+      "request": [
+        "CustomDomainConfig",
+        "Domain",
+        "ManagedLoginVersion",
+        "UserPoolId"
+      ],
+      "response": [
+        "CloudFrontDomain",
+        "ManagedLoginVersion"
+      ]
+    },
+    "VerifySoftwareToken": {
+      "request": [
+        "AccessToken",
+        "FriendlyDeviceName",
+        "Session",
+        "UserCode"
+      ],
+      "response": [
+        "Session",
+        "Status"
+      ]
+    },
+    "VerifyUserAttribute": {
+      "request": [
+        "AccessToken",
+        "AttributeName",
+        "Code"
+      ],
+      "response": []
+    }
+  }
+}
