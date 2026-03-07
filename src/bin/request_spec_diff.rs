@@ -17,17 +17,29 @@ struct Config {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+struct ExpectedOperation {
+    request: Vec<String>,
+    response: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct ExpectedSpec {
     model_url: String,
     model_sha256: String,
-    operations: BTreeMap<String, Vec<String>>,
+    operations: BTreeMap<String, ExpectedOperation>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+struct FieldDiff {
+    missing: Vec<String>,
+    extra: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 struct OperationDiff {
     path: String,
-    missing: Vec<String>,
-    extra: Vec<String>,
+    request: FieldDiff,
+    response: FieldDiff,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -132,16 +144,17 @@ fn load_coverage_mapping(path: &Path) -> Result<Vec<(String, String)>, String> {
     Ok(rows)
 }
 
-fn extract_request_fields(path: &Path) -> Result<Vec<String>, String> {
+fn extract_struct_fields(path: &Path, struct_name: &str) -> Result<Option<Vec<String>>, String> {
     let content =
         fs::read_to_string(path).map_err(|e| format!("failed to read {}: {e}", path.display()))?;
     let lines: Vec<&str> = content.lines().collect();
 
+    let marker = format!("struct {struct_name}");
     let Some(start_index) = lines
         .iter()
-        .position(|line| line.contains("struct Request") && line.contains('{'))
+        .position(|line| line.contains(&marker) && line.contains('{'))
     else {
-        return Err(format!("`struct Request` not found in {}", path.display()));
+        return Ok(None);
     };
 
     let mut fields = Vec::new();
@@ -169,13 +182,125 @@ fn extract_request_fields(path: &Path) -> Result<Vec<String>, String> {
         }
     }
 
-    Ok(fields)
+    Ok(Some(fields))
+}
+
+fn brace_delta(line: &str) -> i32 {
+    line.chars().fold(0i32, |acc, c| match c {
+        '{' => acc + 1,
+        '}' => acc - 1,
+        _ => acc,
+    })
+}
+
+fn parse_top_level_json_object_keys(object_lines: &[String]) -> Vec<String> {
+    let mut depth = 0i32;
+    let mut keys = Vec::new();
+
+    for line in object_lines {
+        let trimmed = line.trim_start();
+        if depth == 1 && trimmed.starts_with('"') {
+            let rest = &trimmed[1..];
+            if let Some(end_quote) = rest.find('"') {
+                let key = &rest[..end_quote];
+                let after_quote = &rest[end_quote + 1..];
+                if after_quote.trim_start().starts_with(':') {
+                    keys.push(key.to_string());
+                }
+            }
+        }
+        depth += brace_delta(line);
+    }
+
+    keys.sort();
+    keys.dedup();
+    keys
+}
+
+fn extract_json_response_fields(path: &Path) -> Result<Option<Vec<String>>, String> {
+    let content =
+        fs::read_to_string(path).map_err(|e| format!("failed to read {}: {e}", path.display()))?;
+    let lines: Vec<&str> = content.lines().collect();
+
+    let mut object_lines = Vec::new();
+    let mut collecting = false;
+    let mut depth = 0i32;
+
+    for line in lines {
+        if !collecting {
+            let Some(ok_pos) = line.find("Ok(json!(") else {
+                continue;
+            };
+            let remain = &line[ok_pos + "Ok(json!(".len()..];
+            let Some(obj_start) = remain.find('{') else {
+                continue;
+            };
+
+            let fragment = &remain[obj_start..];
+            object_lines.push(fragment.to_string());
+            depth += brace_delta(fragment);
+            collecting = true;
+            if depth <= 0 {
+                break;
+            }
+            continue;
+        }
+
+        object_lines.push(line.to_string());
+        depth += brace_delta(line);
+        if depth <= 0 {
+            break;
+        }
+    }
+
+    if object_lines.is_empty() {
+        return Ok(None);
+    }
+
+    Ok(Some(parse_top_level_json_object_keys(&object_lines)))
+}
+
+fn extract_response_fields(path: &Path) -> Result<Vec<String>, String> {
+    if let Some(fields) = extract_struct_fields(path, "Response")? {
+        return Ok(fields);
+    }
+
+    if let Some(fields) = extract_json_response_fields(path)? {
+        return Ok(fields);
+    }
+
+    Ok(Vec::new())
 }
 
 fn load_expected(path: &Path) -> Result<ExpectedSpec, String> {
     let content =
         fs::read_to_string(path).map_err(|e| format!("failed to read {}: {e}", path.display()))?;
     serde_json::from_str(&content).map_err(|e| format!("failed to parse {}: {e}", path.display()))
+}
+
+fn build_field_diff(expected_fields: &[String], actual_fields: &[String]) -> FieldDiff {
+    let expected_by_norm: BTreeMap<String, String> = expected_fields
+        .iter()
+        .map(|field| (normalize_key(field), field.clone()))
+        .collect();
+    let actual_by_norm: BTreeMap<String, String> = actual_fields
+        .iter()
+        .map(|field| (normalize_key(field), field.clone()))
+        .collect();
+
+    let expected_keys: BTreeSet<_> = expected_by_norm.keys().cloned().collect();
+    let actual_keys: BTreeSet<_> = actual_by_norm.keys().cloned().collect();
+
+    let missing = expected_keys
+        .difference(&actual_keys)
+        .filter_map(|key| expected_by_norm.get(key).cloned())
+        .collect::<Vec<_>>();
+    let extra = actual_keys
+        .difference(&expected_keys)
+        .filter_map(|key| actual_by_norm.get(key).cloned())
+        .collect::<Vec<_>>();
+
+    FieldDiff { missing, extra }
 }
 
 fn generate_report(
@@ -189,39 +314,24 @@ fn generate_report(
     };
 
     for (operation_name, operation_path) in coverage_rows {
-        let expected_fields = expected
+        let expected_op = expected
             .operations
             .get(operation_name)
             .ok_or_else(|| format!("operation `{operation_name}` not found in expected file"))?;
-        let actual_fields = extract_request_fields(Path::new(operation_path))?;
 
-        let expected_by_norm: BTreeMap<String, String> = expected_fields
-            .iter()
-            .map(|field| (normalize_key(field), field.clone()))
-            .collect();
-        let actual_by_norm: BTreeMap<String, String> = actual_fields
-            .into_iter()
-            .map(|field| (normalize_key(&field), field))
-            .collect();
+        let request_fields = extract_struct_fields(Path::new(operation_path), "Request")?
+            .ok_or_else(|| format!("`struct Request` not found in {}", operation_path))?;
+        let response_fields = extract_response_fields(Path::new(operation_path))?;
 
-        let expected_keys: BTreeSet<_> = expected_by_norm.keys().cloned().collect();
-        let actual_keys: BTreeSet<_> = actual_by_norm.keys().cloned().collect();
-
-        let missing = expected_keys
-            .difference(&actual_keys)
-            .filter_map(|key| expected_by_norm.get(key).cloned())
-            .collect::<Vec<_>>();
-        let extra = actual_keys
-            .difference(&expected_keys)
-            .filter_map(|key| actual_by_norm.get(key).cloned())
-            .collect::<Vec<_>>();
+        let request = build_field_diff(&expected_op.request, &request_fields);
+        let response = build_field_diff(&expected_op.response, &response_fields);
 
         report.operations.insert(
             operation_name.clone(),
             OperationDiff {
                 path: operation_path.clone(),
-                missing,
-                extra,
+                request,
+                response,
             },
         );
     }
@@ -229,20 +339,35 @@ fn generate_report(
     Ok(report)
 }
 
-fn summarize_drift(report: &DriftReport) -> (usize, usize, usize) {
+fn summarize_drift(report: &DriftReport) -> (usize, usize, usize, usize, usize) {
     let mut drift_ops = 0usize;
-    let mut missing_total = 0usize;
-    let mut extra_total = 0usize;
+    let mut req_missing_total = 0usize;
+    let mut req_extra_total = 0usize;
+    let mut resp_missing_total = 0usize;
+    let mut resp_extra_total = 0usize;
 
     for details in report.operations.values() {
-        if !details.missing.is_empty() || !details.extra.is_empty() {
+        let has_request_drift =
+            !details.request.missing.is_empty() || !details.request.extra.is_empty();
+        let has_response_drift =
+            !details.response.missing.is_empty() || !details.response.extra.is_empty();
+        if has_request_drift || has_response_drift {
             drift_ops += 1;
-            missing_total += details.missing.len();
-            extra_total += details.extra.len();
         }
+
+        req_missing_total += details.request.missing.len();
+        req_extra_total += details.request.extra.len();
+        resp_missing_total += details.response.missing.len();
+        resp_extra_total += details.response.extra.len();
     }
 
-    (drift_ops, missing_total, extra_total)
+    (
+        drift_ops,
+        req_missing_total,
+        req_extra_total,
+        resp_missing_total,
+        resp_extra_total,
+    )
 }
 
 fn compare_with_baseline(report: &DriftReport, baseline_path: &Path) -> Result<(), String> {
@@ -300,8 +425,20 @@ fn compare_with_baseline(report: &DriftReport, baseline_path: &Path) -> Result<(
         let before = &baseline.operations[op];
         let after = &report.operations[op];
         eprintln!(
-            "{op}: baseline missing={:?} extra={:?} => current missing={:?} extra={:?}",
-            before.missing, before.extra, after.missing, after.extra
+            concat!(
+                "{}: ",
+                "baseline request(missing={:?}, extra={:?}) response(missing={:?}, extra={:?}) ",
+                "=> current request(missing={:?}, extra={:?}) response(missing={:?}, extra={:?})"
+            ),
+            op,
+            before.request.missing,
+            before.request.extra,
+            before.response.missing,
+            before.response.extra,
+            after.request.missing,
+            after.request.extra,
+            after.response.missing,
+            after.response.extra
         );
     }
     if changed.len() > 20 {
@@ -316,10 +453,14 @@ fn run(config: Config) -> Result<(), String> {
     let expected = load_expected(&config.expected_path)?;
     let report = generate_report(&expected, &coverage_rows)?;
 
-    let (drift_ops, missing_total, extra_total) = summarize_drift(&report);
+    let (drift_ops, req_missing, req_extra, resp_missing, resp_extra) = summarize_drift(&report);
     println!(
-        "Request drift summary: operations_with_drift={}, missing_fields={}, extra_fields={}",
-        drift_ops, missing_total, extra_total
+        concat!(
+            "Request/Response drift summary: operations_with_drift={}, ",
+            "request_missing_fields={}, request_extra_fields={}, ",
+            "response_missing_fields={}, response_extra_fields={}"
+        ),
+        drift_ops, req_missing, req_extra, resp_missing, resp_extra
     );
 
     if config.update_baseline {
@@ -342,10 +483,18 @@ fn run(config: Config) -> Result<(), String> {
         }
         eprintln!("Drift detected in strict mode.");
         for (operation, details) in &report.operations {
-            if !details.missing.is_empty() || !details.extra.is_empty() {
+            let has_request_drift =
+                !details.request.missing.is_empty() || !details.request.extra.is_empty();
+            let has_response_drift =
+                !details.response.missing.is_empty() || !details.response.extra.is_empty();
+            if has_request_drift || has_response_drift {
                 eprintln!(
-                    "- {operation}: missing={:?} extra={:?} ({})",
-                    details.missing, details.extra, details.path
+                    "- {operation}: request(missing={:?}, extra={:?}) response(missing={:?}, extra={:?}) ({})",
+                    details.request.missing,
+                    details.request.extra,
+                    details.response.missing,
+                    details.response.extra,
+                    details.path
                 );
             }
         }

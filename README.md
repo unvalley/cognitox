@@ -17,8 +17,8 @@ See [COVERAGE.md](COVERAGE.md) for full list.
 
 ## Spec Drift Check
 
-Request syntax drift checks compare AWS Cognito spec input fields with each
-action's `Request` struct.
+Spec drift checks compare AWS Cognito request/response fields with each
+action's `Request` / `Response` structure (and JSON response shape fallback).
 
 ```bash
 # Compare against baseline (used in CI)

@@ -74,11 +74,11 @@ ui-check:
 # Run all checks (spec drift + Rust tests + UI type check)
 check-all: spec-check test ui-check
 
-# Check request struct drift against AWS request syntax baseline
+# Check request/response drift against AWS API baseline
 spec-check:
     cargo run --quiet --bin request_spec_diff
 
-# Update request syntax baseline after reviewing diffs
+# Update request/response baseline after reviewing diffs
 spec-baseline-update:
     cargo run --quiet --bin request_spec_diff -- --update-baseline
 
