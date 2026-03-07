@@ -22,10 +22,10 @@ action's `Request` / `Response` structure (and JSON response shape fallback).
 
 ```bash
 # Compare against baseline (used in CI)
-cargo run --quiet --bin request_spec_diff
+cargo run --quiet --bin request_response_spec_diff
 
 # Refresh baseline after reviewing changes
-cargo run --quiet --bin request_spec_diff -- --update-baseline
+cargo run --quiet --bin request_response_spec_diff -- --update-baseline
 ```
 
 ## License

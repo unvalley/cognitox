@@ -99,7 +99,7 @@ fn parse_args() -> Result<Config, String> {
             }
             "--help" | "-h" => {
                 return Err(
-                    "usage: cargo run --bin request_spec_diff -- [--strict] [--update-baseline] [--coverage-path PATH] [--expected-path PATH] [--baseline-path PATH]"
+                    "usage: cargo run --bin request_response_spec_diff -- [--strict] [--update-baseline] [--coverage-path PATH] [--expected-path PATH] [--baseline-path PATH]"
                         .to_string(),
                 );
             }
@@ -445,7 +445,7 @@ fn compare_with_baseline(report: &DriftReport, baseline_path: &Path) -> Result<(
         eprintln!("... and {} more changed operations", changed.len() - 20);
     }
 
-    Err("baseline mismatch detected. update after review with:\n  cargo run --bin request_spec_diff -- --update-baseline".to_string())
+    Err("baseline mismatch detected. update after review with:\n  cargo run --bin request_response_spec_diff -- --update-baseline".to_string())
 }
 
 fn run(config: Config) -> Result<(), String> {

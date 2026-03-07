@@ -76,11 +76,11 @@ check-all: spec-check test ui-check
 
 # Check request/response drift against AWS API baseline
 spec-check:
-    cargo run --quiet --bin request_spec_diff
+    cargo run --quiet --bin request_response_spec_diff
 
 # Update request/response baseline after reviewing diffs
 spec-baseline-update:
-    cargo run --quiet --bin request_spec_diff -- --update-baseline
+    cargo run --quiet --bin request_response_spec_diff -- --update-baseline
 
 # =============================================================================
 # Lint & Format
