@@ -1,6 +1,6 @@
 {
-  "model_sha256": "6954ae190918d03b4f081acbf3b77c287b3252bf399614b35e14fdbe894d47d3",
-  "model_url": "https://raw.githubusercontent.com/boto/botocore/develop/botocore/data/cognito-idp/2016-04-18/service-2.json",
+  "model_sha256": "977b4883097f1cb44f05cd3a1ed2d115f9771c30c0c53347247490e613a485ed",
+  "model_url": "https://raw.githubusercontent.com/aws/aws-sdk-go-v2/main/codegen/sdk-codegen/aws-models/cognito-identity-provider.json",
   "operations": {
     "AddCustomAttributes": [
       "CustomAttributes",
