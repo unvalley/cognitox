@@ -4,7 +4,7 @@
 //! If `DATA_FILE` is set, state is loaded from/saved to that file.
 
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     fs,
     path::{Path, PathBuf},
     sync::Arc,
@@ -310,8 +310,145 @@ impl Storage {
     }
 
     pub async fn delete_user_pool(&self, id: &UserPoolId) -> Option<UserPool> {
-        let mut store = self.pool_store.write().await;
-        store.user_pools.remove(id)
+        let (removed_pool, client_ids) = {
+            let mut store = self.pool_store.write().await;
+            let removed_pool = store.user_pools.remove(id)?;
+
+            let client_ids: HashSet<ClientId> = store
+                .user_pool_clients
+                .values()
+                .filter(|client| &client.user_pool_id == id)
+                .map(|client| client.client_id.clone())
+                .collect();
+
+            store
+                .user_pool_clients
+                .retain(|_, client| &client.user_pool_id != id);
+            store
+                .user_pool_domains
+                .retain(|_, domain| &domain.user_pool_id != id);
+            store
+                .user_pool_id_to_domain
+                .retain(|pool_id, _| pool_id != id);
+            store
+                .identity_providers
+                .retain(|(pool_id, _), _| pool_id != id);
+            store
+                .resource_servers
+                .retain(|(pool_id, _), _| pool_id != id);
+            store
+                .user_import_jobs
+                .retain(|_, job| &job.user_pool_id != id);
+
+            let stale_terms: HashSet<String> = store
+                .terms_documents
+                .iter()
+                .filter(|(_, terms)| &terms.user_pool_id == id)
+                .map(|(terms_id, _)| terms_id.clone())
+                .collect();
+            store
+                .terms_documents
+                .retain(|terms_id, _| !stale_terms.contains(terms_id));
+            store.terms_name_index.retain(|(pool_id, _, _), terms_id| {
+                pool_id != id && !stale_terms.contains(terms_id)
+            });
+
+            store
+                .ui_customizations
+                .retain(|(pool_id, _), _| pool_id != id);
+            store
+                .risk_configurations
+                .retain(|(pool_id, _), _| pool_id != id);
+            store.log_delivery_configurations.remove(id);
+
+            (removed_pool, client_ids)
+        };
+
+        let user_ids = {
+            let mut store = self.principal_store.write().await;
+            let user_ids: HashSet<UserId> = store
+                .users
+                .values()
+                .filter(|user| &user.user_pool_id == id)
+                .map(|user| user.id)
+                .collect();
+
+            store.users.retain(|user_id, _| !user_ids.contains(user_id));
+            store
+                .username_index
+                .retain(|(pool_id, _), user_id| pool_id != id && !user_ids.contains(user_id));
+            store
+                .devices
+                .retain(|(user_id, _), _| !user_ids.contains(user_id));
+            store
+                .confirmation_codes
+                .retain(|user_id, _| !user_ids.contains(user_id));
+            store.refresh_tokens.retain(|_, token| {
+                !user_ids.contains(&token.user_id) && !client_ids.contains(&token.client_id)
+            });
+            store
+                .software_token_sessions
+                .retain(|_, (user_id, _)| !user_ids.contains(user_id));
+            store
+                .user_auth_factors
+                .retain(|user_id, _| !user_ids.contains(user_id));
+            store
+                .auth_events
+                .retain(|_, event| !user_ids.contains(&event.user_id));
+            store
+                .user_auth_event_index
+                .retain(|user_id, _| !user_ids.contains(user_id));
+            store.authorization_codes.retain(|_, code| {
+                !user_ids.contains(&code.user_id) && !client_ids.contains(&code.client_id)
+            });
+            store
+                .password_reset_codes
+                .retain(|user_id, _| !user_ids.contains(user_id));
+            store
+                .webauthn_credentials
+                .retain(|user_id, _| !user_ids.contains(user_id));
+            store
+                .webauthn_registration_challenges
+                .retain(|user_id, _| !user_ids.contains(user_id));
+
+            user_ids
+        };
+
+        {
+            let mut store = self.group_store.write().await;
+            store.groups.retain(|(pool_id, _), _| pool_id != id);
+            store
+                .user_groups
+                .retain(|user_id, _| !user_ids.contains(user_id));
+        }
+
+        {
+            let mut store = self.branding_store.write().await;
+            let branding_ids: HashSet<BrandingId> = store
+                .managed_login_brandings
+                .values()
+                .filter(|branding| {
+                    &branding.user_pool_id == id
+                        || branding
+                            .client_id
+                            .as_ref()
+                            .is_some_and(|client_id| client_ids.contains(client_id))
+                })
+                .map(|branding| branding.branding_id.clone())
+                .collect();
+
+            store
+                .managed_login_brandings
+                .retain(|branding_id, _| !branding_ids.contains(branding_id));
+            store.user_pool_brandings.retain(|pool_id, branding_id| {
+                pool_id != id && !branding_ids.contains(branding_id)
+            });
+            store.client_brandings.retain(|client_id, branding_id| {
+                !client_ids.contains(client_id) && !branding_ids.contains(branding_id)
+            });
+        }
+
+        Some(removed_pool)
     }
 
     pub async fn list_user_pools(&self) -> Vec<UserPool> {
@@ -347,8 +484,53 @@ impl Storage {
     }
 
     pub async fn delete_user_pool_client(&self, client_id: &ClientId) -> Option<UserPoolClient> {
-        let mut store = self.pool_store.write().await;
-        store.user_pool_clients.remove(client_id)
+        let removed = {
+            let mut store = self.pool_store.write().await;
+            let removed = store.user_pool_clients.remove(client_id)?;
+
+            let stale_terms: HashSet<String> = store
+                .terms_documents
+                .iter()
+                .filter(|(_, terms)| &terms.client_id == client_id)
+                .map(|(terms_id, _)| terms_id.clone())
+                .collect();
+            store
+                .terms_documents
+                .retain(|terms_id, _| !stale_terms.contains(terms_id));
+            store
+                .terms_name_index
+                .retain(|(_, indexed_client_id, _), terms_id| {
+                    indexed_client_id != client_id && !stale_terms.contains(terms_id)
+                });
+
+            store
+                .ui_customizations
+                .retain(|(_, indexed_client_id), _| indexed_client_id.as_ref() != Some(client_id));
+            store
+                .risk_configurations
+                .retain(|(_, indexed_client_id), _| indexed_client_id.as_ref() != Some(client_id));
+
+            removed
+        };
+
+        {
+            let mut store = self.principal_store.write().await;
+            store
+                .refresh_tokens
+                .retain(|_, token| &token.client_id != client_id);
+            store
+                .authorization_codes
+                .retain(|_, code| &code.client_id != client_id);
+        }
+
+        {
+            let mut store = self.branding_store.write().await;
+            if let Some(branding_id) = store.client_brandings.remove(client_id) {
+                store.managed_login_brandings.remove(&branding_id);
+            }
+        }
+
+        Some(removed)
     }
 
     pub async fn list_user_pool_clients(&self, user_pool_id: &UserPoolId) -> Vec<UserPoolClient> {
