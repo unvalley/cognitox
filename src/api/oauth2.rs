@@ -6,7 +6,7 @@
 use axum::{
     Form, Json,
     extract::{Query, State},
-    http::{StatusCode, header},
+    http::{HeaderMap, StatusCode, header},
     response::{IntoResponse, Redirect},
 };
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
@@ -82,6 +82,19 @@ pub struct TokenResponse {
     pub scope: Option<String>,
 }
 
+fn prefers_json_redirect(headers: &HeaderMap) -> bool {
+    headers
+        .get("x-requested-with")
+        .and_then(|value| value.to_str().ok())
+        .map(|value| value.eq_ignore_ascii_case("XMLHttpRequest"))
+        .unwrap_or(false)
+        || headers
+            .get(header::ACCEPT)
+            .and_then(|value| value.to_str().ok())
+            .map(|value| value.contains("application/json"))
+            .unwrap_or(false)
+}
+
 /// GET /oauth2/authorize - Authorization endpoint
 ///
 /// For testing purposes, this endpoint can directly authenticate users
@@ -89,6 +102,7 @@ pub struct TokenResponse {
 /// In production, this would redirect to a login page.
 pub async fn authorize(
     State(storage): State<Storage>,
+    headers: HeaderMap,
     Query(params): Query<AuthorizeParams>,
 ) -> Result<impl IntoResponse, OAuthError> {
     // Parse and validate client_id
@@ -194,6 +208,10 @@ pub async fn authorize(
                 redirect_url.push_str(&format!("code={}", code));
                 if let Some(state) = &params.state {
                     redirect_url.push_str(&format!("&state={}", state));
+                }
+
+                if prefers_json_redirect(&headers) {
+                    return Ok(Json(json!({ "redirectUrl": redirect_url })).into_response());
                 }
 
                 return Ok(Redirect::temporary(&redirect_url).into_response());

@@ -130,14 +130,23 @@ impl TestClient {
 
     /// Make a GET request
     pub async fn get(&self, uri: &str) -> TestResponse {
+        self.get_with_headers(uri, &[]).await
+    }
+
+    /// Make a GET request with additional headers
+    pub async fn get_with_headers(&self, uri: &str, headers: &[(&str, &str)]) -> TestResponse {
         let app = api::create_router(self.storage.clone());
 
-        let request = Request::builder()
+        let mut request = Request::builder()
             .method("GET")
             .uri(uri)
-            .header("host", "localhost:9229")
-            .body(Body::empty())
-            .unwrap();
+            .header("host", "localhost:9229");
+
+        for (name, value) in headers {
+            request = request.header(*name, *value);
+        }
+
+        let request = request.body(Body::empty()).unwrap();
 
         let response = app.oneshot(request).await.unwrap();
         let status = response.status();

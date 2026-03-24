@@ -30,7 +30,61 @@
   let success: string | undefined = $state(undefined)
   let loading: boolean = $state(true)
 
-  function parseQueryParams(): void {
+  function getBasePath(pathname: string): string {
+    if (pathname === '/ui' || pathname.startsWith('/ui/')) {
+      return '/ui'
+    }
+
+    return ''
+  }
+
+  function getPageFromPath(pathname: string): Page {
+    if (pathname.endsWith('/signup')) {
+      return 'signup'
+    }
+
+    if (pathname.endsWith('/confirm')) {
+      return 'confirm'
+    }
+
+    if (pathname.endsWith('/forgot-password')) {
+      return 'forgot-password'
+    }
+
+    if (pathname.endsWith('/reset-password')) {
+      return 'reset-password'
+    }
+
+    return 'login'
+  }
+
+  function buildSearchParams(params?: { username?: string }): URLSearchParams {
+    const searchParams = new URLSearchParams()
+    searchParams.set('response_type', oauth.response_type)
+    searchParams.set('client_id', oauth.client_id)
+    searchParams.set('redirect_uri', oauth.redirect_uri)
+    searchParams.set('scope', oauth.scope || 'openid')
+    if (oauth.state) searchParams.set('state', oauth.state)
+    if (oauth.nonce) searchParams.set('nonce', oauth.nonce)
+    if (oauth.code_challenge) searchParams.set('code_challenge', oauth.code_challenge)
+    if (oauth.code_challenge_method) searchParams.set('code_challenge_method', oauth.code_challenge_method)
+    if (params?.username) {
+      searchParams.set('username', params.username)
+    } else if (username) {
+      searchParams.set('username', username)
+    }
+
+    return searchParams
+  }
+
+  function getPagePath(pageName: Page): string {
+    const suffix = pageName === 'login' ? '' : `/${pageName}`
+    const basePath = getBasePath(window.location.pathname)
+
+    return `${basePath}${suffix || '/'}`
+  }
+
+  function syncFromLocation(): void {
     const params = new URLSearchParams(window.location.search)
 
     oauth = {
@@ -45,20 +99,7 @@
     }
 
     username = params.get('username') || ''
-
-    // Determine page from path
-    const path = window.location.pathname
-    if (path.includes('signup')) {
-      page = 'signup'
-    } else if (path.includes('confirm')) {
-      page = 'confirm'
-    } else if (path.includes('forgot-password')) {
-      page = 'forgot-password'
-    } else if (path.includes('reset-password')) {
-      page = 'reset-password'
-    } else {
-      page = 'login'
-    }
+    page = getPageFromPath(window.location.pathname)
   }
 
   function navigate(newPage: Page, params?: { username?: string }) {
@@ -69,24 +110,14 @@
     error = undefined
     success = undefined
 
-    // Update URL
-    const searchParams = new URLSearchParams()
-    searchParams.set('response_type', oauth.response_type)
-    searchParams.set('client_id', oauth.client_id)
-    searchParams.set('redirect_uri', oauth.redirect_uri)
-    searchParams.set('scope', oauth.scope || 'openid')
-    if (oauth.state) searchParams.set('state', oauth.state)
-    if (oauth.nonce) searchParams.set('nonce', oauth.nonce)
-    if (oauth.code_challenge) searchParams.set('code_challenge', oauth.code_challenge)
-    if (oauth.code_challenge_method) searchParams.set('code_challenge_method', oauth.code_challenge_method)
-    if (params?.username) searchParams.set('username', params.username)
+    const searchParams = buildSearchParams(params)
+    const nextUrl = `${getPagePath(newPage)}?${searchParams.toString()}`
 
-    const newPath = `/${newPage === 'login' ? '' : newPage}`
-    window.history.pushState({}, '', `${newPath}?${searchParams}`)
+    window.history.pushState({ page: newPage }, '', nextUrl)
   }
 
   onMount(async () => {
-    parseQueryParams()
+    syncFromLocation()
 
     if (oauth.client_id) {
       branding = await getBranding(oauth.client_id)
@@ -100,7 +131,18 @@
     document.documentElement.style.setProperty('--button-text-color', branding.buttonTextColor)
     document.title = branding.pageTitle
 
+    const handlePopState = () => {
+      error = undefined
+      success = undefined
+      syncFromLocation()
+    }
+
+    window.addEventListener('popstate', handlePopState)
     loading = false
+
+    return () => {
+      window.removeEventListener('popstate', handlePopState)
+    }
   })
 
   function setError(msg: string) {

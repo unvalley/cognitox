@@ -1,6 +1,9 @@
 import type { OAuthParams, Branding, UserPool, User, UserPoolClient, ManagedLoginBranding } from './types'
 
-const API_BASE = 'http://localhost:9229'
+const API_BASE =
+  typeof window !== 'undefined' && window.location.port === '9229'
+    ? window.location.origin
+    : 'http://localhost:9229'
 
 export async function login(
   username: string,
@@ -25,7 +28,21 @@ export async function login(
     const response = await fetch(`${API_BASE}/oauth2/authorize?${params}`, {
       method: 'GET',
       redirect: 'manual',
+      headers: {
+        Accept: 'application/json',
+        'X-Requested-With': 'XMLHttpRequest',
+      },
     })
+
+    const contentType = response.headers.get('content-type') || ''
+
+    if (response.ok && contentType.includes('application/json')) {
+      const data = await response.json()
+      if (data.redirectUrl) {
+        return { success: true, redirectUrl: data.redirectUrl }
+      }
+      return { success: false, error: data.error_description || data.error || 'Login failed' }
+    }
 
     if (response.type === 'opaqueredirect' || response.status === 302 || response.status === 307) {
       const location = response.headers.get('Location')
@@ -349,12 +366,18 @@ export async function createUserPoolClient(
   oauthFlows?: string[],
   oauthScopes?: string[]
 ): Promise<UserPoolClient> {
+  const hasOAuthConfig =
+    Boolean(callbackUrls && callbackUrls.length > 0) ||
+    Boolean(oauthFlows && oauthFlows.length > 0) ||
+    Boolean(oauthScopes && oauthScopes.length > 0)
+
   const data = await cognitoRequest<{ UserPoolClient: UserPoolClient }>('CreateUserPoolClient', {
     UserPoolId: userPoolId,
     ClientName: clientName,
     ...(callbackUrls && { CallbackURLs: callbackUrls }),
     ...(oauthFlows && { AllowedOAuthFlows: oauthFlows }),
     ...(oauthScopes && { AllowedOAuthScopes: oauthScopes }),
+    ...(hasOAuthConfig && { AllowedOAuthFlowsUserPoolClient: true }),
   })
   return data.UserPoolClient
 }

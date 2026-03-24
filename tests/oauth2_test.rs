@@ -222,6 +222,34 @@ async fn test_authorization_code_flow() {
 }
 
 #[tokio::test]
+async fn test_authorization_code_flow_returns_json_redirect_for_xhr_login() {
+    let client = TestClient::new();
+    let (_, client_id, username, password) = setup_user_and_client(&client).await;
+
+    let auth_url = format!(
+        "/oauth2/authorize?response_type=code&client_id={}&redirect_uri={}&scope={}&username={}&password={}",
+        client_id, "https://example.com/callback", "openid%20email", username, password
+    );
+
+    let response = client
+        .get_with_headers(
+            &auth_url,
+            &[
+                ("accept", "application/json"),
+                ("x-requested-with", "XMLHttpRequest"),
+            ],
+        )
+        .await;
+
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let body: serde_json::Value = response.json().await.unwrap();
+    let redirect_url = body["redirectUrl"].as_str().unwrap();
+    assert!(redirect_url.contains("code="));
+    assert!(redirect_url.starts_with("https://example.com/callback"));
+}
+
+#[tokio::test]
 async fn test_authorization_code_flow_with_pkce() {
     let client = TestClient::new();
     let (_, client_id, username, password) = setup_user_and_client(&client).await;
