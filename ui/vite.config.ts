@@ -1,14 +1,14 @@
 import { defineConfig } from 'vite'
-import { svelte } from '@sveltejs/vite-plugin-svelte'
+import preact from '@preact/preset-vite'
+import tailwindcss from '@tailwindcss/vite'
 import { resolve } from 'path'
 
 export default defineConfig({
   base: './',
-  plugins: [svelte()],
+  plugins: [preact(), tailwindcss()],
   server: {
     port: 5173,
     proxy: {
-      // Proxy API requests to Rust server
       '/oauth2': 'http://localhost:9229',
       '/.well-known': 'http://localhost:9229',
     }
