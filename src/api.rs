@@ -23,7 +23,7 @@ async fn jwks() -> Json<Value> {
 }
 
 pub fn create_router(storage: Storage) -> Router {
-    // Svelte UI static files (if available)
+    // Preact UI static files (if available)
     let ui_service =
         ServeDir::new("ui/dist").not_found_service(ServeFile::new("ui/dist/index.html"));
 
@@ -65,7 +65,7 @@ pub fn create_router(storage: Storage) -> Router {
             "/reset-password",
             get(hosted_ui::reset_password_page).post(hosted_ui::reset_password_submit),
         )
-        // Svelte UI (modern mode) - serves SPA at /ui/*
+        // Preact UI (modern mode) - serves SPA at /ui/*
         .nest_service("/ui", ui_service)
         // Admin UI - serves SPA at /admin/*
         .nest_service("/admin", admin_service)
