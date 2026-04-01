@@ -728,7 +728,7 @@ pub async fn login_submit(State(storage): State<Storage>, Form(form): Form<Login
         .map(String::from)
         .collect();
 
-    let code = Uuid::new_v4().to_string();
+    let code = Uuid::now_v7().to_string();
     let auth_code = AuthorizationCode {
         code: code.clone(),
         user_id: user.id,
@@ -819,7 +819,7 @@ pub async fn signup_submit(
 
     // Create user
     let now = Utc::now();
-    let user_id = Uuid::new_v4();
+    let user_id = Uuid::now_v7();
     let code = generate_confirmation_code();
 
     let password_hash = match hash_password(&form.password) {

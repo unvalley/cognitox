@@ -51,7 +51,7 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
                 // If switching to custom domain, generate CloudFront distribution
                 if domain.cloud_front_distribution.is_none() {
                     domain.cloud_front_distribution =
-                        Some(format!("E{}", uuid::Uuid::new_v4().simple()));
+                        Some(format!("E{}", uuid::Uuid::now_v7().simple()));
                 }
             }
 

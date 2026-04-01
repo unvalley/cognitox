@@ -47,7 +47,7 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
     };
 
     let secret_code = generate_secret_code();
-    let session = Uuid::new_v4().to_string();
+    let session = Uuid::now_v7().to_string();
     storage
         .save_software_token_session(session.clone(), &user_id, secret_code.clone())
         .await;

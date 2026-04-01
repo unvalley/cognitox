@@ -130,7 +130,7 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
                     .map_err(AppError::Internal)?;
 
             // Generate refresh token (UUID-based, stored in database)
-            let refresh_token = Uuid::new_v4().to_string();
+            let refresh_token = Uuid::now_v7().to_string();
 
             let refresh = RefreshToken {
                 token: refresh_token.clone(),
@@ -142,7 +142,7 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
 
             storage
                 .create_auth_event(AuthEvent {
-                    event_id: Uuid::new_v4().to_string(),
+                    event_id: Uuid::now_v7().to_string(),
                     user_id: user.id,
                     event_type: "SignIn".to_string(),
                     creation_date: Utc::now(),

@@ -75,7 +75,7 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
     let cloud_front_distribution = if custom_domain_config.is_some() {
         // For custom domains, we'd normally create a CloudFront distribution
         // For emulation, we generate a fake distribution ID
-        Some(format!("E{}", uuid::Uuid::new_v4().simple()))
+        Some(format!("E{}", uuid::Uuid::now_v7().simple()))
     } else {
         None
     };

@@ -86,7 +86,7 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
     }
 
     let now = Utc::now();
-    let branding_id = Uuid::new_v4().to_string();
+    let branding_id = Uuid::now_v7().to_string();
 
     let settings = req.settings.map(|s| BrandingSettings {
         colors: s.colors.map(|c| BrandingColorSettings {

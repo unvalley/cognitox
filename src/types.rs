@@ -28,13 +28,8 @@ impl UserPoolId {
     /// Create a new UserPoolId for local development
     /// Format: `local_{random_alphanumeric}`
     pub fn new_local() -> Self {
-        let random_part: String = uuid::Uuid::new_v4()
-            .to_string()
-            .replace("-", "")
-            .chars()
-            .take(9)
-            .collect();
-        Self(format!("local_{}", random_part))
+        let id = uuid::Uuid::now_v7().simple().to_string();
+        Self(format!("local_{}", id))
     }
 
     /// Get the inner string value

@@ -126,7 +126,7 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
                         "USER_ID_FOR_SRP": user.id.to_string(),
                         "userAttributes": "{}"
                     },
-                    "Session": Uuid::new_v4().to_string()
+                    "Session": Uuid::now_v7().to_string()
                 }));
             }
 
@@ -152,7 +152,7 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
                 generate_id_token(&user, req.client_id.as_str(), &req.user_pool_id, &groups)
                     .map_err(AppError::Internal)?;
 
-            let refresh_token = Uuid::new_v4().to_string();
+            let refresh_token = Uuid::now_v7().to_string();
             let refresh = RefreshToken {
                 token: refresh_token.clone(),
                 user_id: user.id,
@@ -163,7 +163,7 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
 
             storage
                 .create_auth_event(AuthEvent {
-                    event_id: Uuid::new_v4().to_string(),
+                    event_id: Uuid::now_v7().to_string(),
                     user_id: user.id,
                     event_type: "SignIn".to_string(),
                     creation_date: Utc::now(),

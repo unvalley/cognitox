@@ -100,7 +100,7 @@ impl JwtKeys {
         };
 
         let key_id = std::env::var("COGNITOX_JWT_KEY_ID")
-            .unwrap_or_else(|_| uuid::Uuid::new_v4().to_string());
+            .unwrap_or_else(|_| uuid::Uuid::now_v7().to_string());
 
         Self::from_rsa_keys(private_key, public_key, key_id).map(Some)
     }
@@ -113,7 +113,7 @@ impl JwtKeys {
         let private_key =
             RsaPrivateKey::new(&mut rng, 2048).expect("Failed to generate RSA key pair");
         let public_key = RsaPublicKey::from(&private_key);
-        let key_id = uuid::Uuid::new_v4().to_string();
+        let key_id = uuid::Uuid::now_v7().to_string();
 
         Self::from_rsa_keys(private_key, public_key, key_id)
             .expect("Failed to create JWT keys from generated RSA key pair")
@@ -321,7 +321,7 @@ mod tests {
     fn test_jwt_generation_and_verification() {
         let user_pool_id = UserPoolId::new("local_test123").unwrap();
         let user = User {
-            id: uuid::Uuid::new_v4(),
+            id: uuid::Uuid::now_v7(),
             user_pool_id: user_pool_id.clone(),
             username: "testuser".to_string(),
             email: Some("test@example.com".to_string()),

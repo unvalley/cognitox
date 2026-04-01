@@ -29,7 +29,7 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
         .await
         .ok_or(AppError::UserNotFound)?;
 
-    let challenge = uuid::Uuid::new_v4().to_string();
+    let challenge = uuid::Uuid::now_v7().to_string();
     storage
         .save_webauthn_challenge(&user_id, challenge.clone())
         .await;

@@ -61,7 +61,7 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
         user_pool_id: req.user_pool_id,
         client_id: req.client_id,
         css: req.css,
-        css_version: uuid::Uuid::new_v4().to_string(),
+        css_version: uuid::Uuid::now_v7().to_string(),
         image_url: req
             .image_file
             .map(|_| "/ui/customization/logo.png".to_string()),

@@ -188,7 +188,7 @@ pub async fn authorize(
                 }
 
                 // Generate authorization code
-                let code = Uuid::new_v4().to_string();
+                let code = Uuid::now_v7().to_string();
                 let auth_code = AuthorizationCode {
                     code: code.clone(),
                     user_id: user.id,
@@ -467,7 +467,7 @@ pub async fn token(
             };
 
             // Generate refresh token
-            let refresh_token_str = Uuid::new_v4().to_string();
+            let refresh_token_str = Uuid::now_v7().to_string();
             let refresh = RefreshToken {
                 token: refresh_token_str.clone(),
                 user_id: user.id,
@@ -675,7 +675,7 @@ pub async fn token(
                 "client_{}_{}_{}",
                 client_id,
                 now.timestamp(),
-                Uuid::new_v4()
+                Uuid::now_v7()
             );
 
             Ok(Json(TokenResponse {

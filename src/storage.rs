@@ -1338,7 +1338,7 @@ mod tests {
     use crate::types::{UserPool, UserPoolId};
 
     fn temp_data_file() -> PathBuf {
-        std::env::temp_dir().join(format!("cognitox-storage-{}.json", uuid::Uuid::new_v4()))
+        std::env::temp_dir().join(format!("cognitox-storage-{}.json", uuid::Uuid::now_v7()))
     }
 
     #[tokio::test]

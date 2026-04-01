@@ -67,7 +67,7 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
 
     let now = Utc::now();
     let terms = TermsDocument {
-        terms_id: uuid::Uuid::new_v4().to_string(),
+        terms_id: uuid::Uuid::now_v7().to_string(),
         user_pool_id: req.user_pool_id,
         client_id: req.client_id,
         terms_name: req.terms_name,

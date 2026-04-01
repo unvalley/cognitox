@@ -49,7 +49,7 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
 
     let now = Utc::now();
     let job = UserImportJob {
-        job_id: uuid::Uuid::new_v4().to_string(),
+        job_id: uuid::Uuid::now_v7().to_string(),
         user_pool_id: req.user_pool_id,
         job_name: req.job_name,
         cloud_watch_logs_role_arn: req.cloud_watch_logs_role_arn,

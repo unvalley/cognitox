@@ -49,7 +49,7 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
         .and_then(|c| c.get("id"))
         .and_then(|id| id.as_str())
         .map(|s| s.to_string())
-        .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+        .unwrap_or_else(|| uuid::Uuid::now_v7().to_string());
 
     storage
         .add_webauthn_credential(

@@ -73,10 +73,10 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
     }
 
     let now = Utc::now();
-    let user_id = Uuid::new_v4();
+    let user_id = Uuid::now_v7();
     let password = req
         .temporary_password
-        .unwrap_or_else(|| Uuid::new_v4().to_string());
+        .unwrap_or_else(|| Uuid::now_v7().to_string());
 
     let email = req.user_attributes.as_ref().and_then(|attrs| {
         attrs

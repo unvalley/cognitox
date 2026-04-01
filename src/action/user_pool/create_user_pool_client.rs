@@ -82,7 +82,7 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
     let now = Utc::now();
     let client_id = ClientId::generate();
     let client_secret = if req.generate_secret.unwrap_or(false) {
-        Some(Uuid::new_v4().to_string())
+        Some(Uuid::now_v7().to_string())
     } else {
         None
     };
