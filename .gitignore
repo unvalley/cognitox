@@ -25,3 +25,9 @@ target
 
 /target
 /ref
+
+# Node
+node_modules/
+
+# Cognitox data
+data.json
