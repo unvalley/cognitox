@@ -43,19 +43,19 @@ export function Signup({ oauth, branding, error, navigate, setError }: Props) {
       <form onSubmit={handleSubmit}>
         <div class="form-control mb-4">
           <label class="label"><span class="label-text">Username</span></label>
-          <input type="text" class="input input-bordered" value={username} onInput={e => setUsername((e.target as HTMLInputElement).value)} required disabled={submitting} autoComplete="username" />
+          <input type="text" class="input input-bordered w-full" value={username} onInput={e => setUsername((e.target as HTMLInputElement).value)} required disabled={submitting} autoComplete="username" />
         </div>
         <div class="form-control mb-4">
           <label class="label"><span class="label-text">Email</span></label>
-          <input type="email" class="input input-bordered" value={email} onInput={e => setEmail((e.target as HTMLInputElement).value)} required disabled={submitting} autoComplete="email" />
+          <input type="email" class="input input-bordered w-full" value={email} onInput={e => setEmail((e.target as HTMLInputElement).value)} required disabled={submitting} autoComplete="email" />
         </div>
         <div class="form-control mb-4">
           <label class="label"><span class="label-text">Password</span></label>
-          <input type="password" class="input input-bordered" value={password} onInput={e => setPassword((e.target as HTMLInputElement).value)} required minLength={8} disabled={submitting} autoComplete="new-password" />
+          <input type="password" class="input input-bordered w-full" value={password} onInput={e => setPassword((e.target as HTMLInputElement).value)} required minLength={8} disabled={submitting} autoComplete="new-password" />
         </div>
         <div class="form-control mb-4">
           <label class="label"><span class="label-text">Confirm Password</span></label>
-          <input type="password" class="input input-bordered" value={passwordConfirm} onInput={e => setPasswordConfirm((e.target as HTMLInputElement).value)} required minLength={8} disabled={submitting} autoComplete="new-password" />
+          <input type="password" class="input input-bordered w-full" value={passwordConfirm} onInput={e => setPasswordConfirm((e.target as HTMLInputElement).value)} required minLength={8} disabled={submitting} autoComplete="new-password" />
         </div>
         <button type="submit" class="btn btn-primary w-full" disabled={submitting} style={{ backgroundColor: 'var(--button-color)', color: 'var(--button-text-color)' }}>
           {submitting ? <><span class="loading loading-spinner loading-sm"></span> Creating account...</> : 'Sign Up'}

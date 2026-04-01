@@ -43,15 +43,15 @@ export function ResetPassword({ oauth, branding, username, error, navigate, setE
       <form onSubmit={handleSubmit}>
         <div class="form-control mb-4">
           <label class="label"><span class="label-text">Reset Code</span></label>
-          <input type="text" class="input input-bordered" value={code} onInput={e => setCode((e.target as HTMLInputElement).value)} required disabled={submitting} placeholder="Enter 6-digit code" autoComplete="one-time-code" />
+          <input type="text" class="input input-bordered w-full" value={code} onInput={e => setCode((e.target as HTMLInputElement).value)} required disabled={submitting} placeholder="Enter 6-digit code" autoComplete="one-time-code" />
         </div>
         <div class="form-control mb-4">
           <label class="label"><span class="label-text">New Password</span></label>
-          <input type="password" class="input input-bordered" value={newPassword} onInput={e => setNewPassword((e.target as HTMLInputElement).value)} required minLength={8} disabled={submitting} autoComplete="new-password" />
+          <input type="password" class="input input-bordered w-full" value={newPassword} onInput={e => setNewPassword((e.target as HTMLInputElement).value)} required minLength={8} disabled={submitting} autoComplete="new-password" />
         </div>
         <div class="form-control mb-4">
           <label class="label"><span class="label-text">Confirm New Password</span></label>
-          <input type="password" class="input input-bordered" value={newPasswordConfirm} onInput={e => setNewPasswordConfirm((e.target as HTMLInputElement).value)} required minLength={8} disabled={submitting} autoComplete="new-password" />
+          <input type="password" class="input input-bordered w-full" value={newPasswordConfirm} onInput={e => setNewPasswordConfirm((e.target as HTMLInputElement).value)} required minLength={8} disabled={submitting} autoComplete="new-password" />
         </div>
         <button type="submit" class="btn btn-primary w-full" disabled={submitting} style={{ backgroundColor: 'var(--button-color)', color: 'var(--button-text-color)' }}>
           {submitting ? <><span class="loading loading-spinner loading-sm"></span> Resetting...</> : 'Reset Password'}

@@ -1,19 +1,36 @@
 import { useState, useEffect } from 'preact/hooks'
-import type { AdminPage, UserPool } from '../lib/types'
-import { listUserPools } from '../lib/api'
+import type { UserPool, User, UserPoolClient } from '../lib/types'
+import { formatDateShort } from '../lib/types'
+import { listUserPools, listUsers, listUserPoolClients } from '../lib/api'
 
 interface Props {
-  navigate: (page: AdminPage, context?: { userPool?: UserPool }) => void
+  navigate: (path: string, context?: { userPool?: UserPool; user?: User; client?: UserPoolClient }) => void
 }
 
 export function Dashboard({ navigate }: Props) {
   const [userPools, setUserPools] = useState<UserPool[]>([])
+  const [totalUsers, setTotalUsers] = useState(0)
+  const [totalClients, setTotalClients] = useState(0)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
     listUserPools()
-      .then(pools => setUserPools(pools))
+      .then(async pools => {
+        setUserPools(pools)
+        // Fetch counts for all pools in parallel
+        const counts = await Promise.all(
+          pools.map(async pool => {
+            const [users, clients] = await Promise.all([
+              listUsers(pool.Id).catch(() => []),
+              listUserPoolClients(pool.Id).catch(() => []),
+            ])
+            return { users: users.length, clients: clients.length }
+          })
+        )
+        setTotalUsers(counts.reduce((sum, c) => sum + c.users, 0))
+        setTotalClients(counts.reduce((sum, c) => sum + c.clients, 0))
+      })
       .catch(e => setError(e instanceof Error ? e.message : 'Failed to load data'))
       .finally(() => setLoading(false))
   }, [])
@@ -38,11 +55,11 @@ export function Dashboard({ navigate }: Props) {
             </div>
             <div class="stat">
               <div class="stat-title">Total Users</div>
-              <div class="stat-value text-primary">0</div>
+              <div class="stat-value text-primary">{totalUsers}</div>
             </div>
             <div class="stat">
               <div class="stat-title">App Clients</div>
-              <div class="stat-value text-primary">0</div>
+              <div class="stat-value text-primary">{totalClients}</div>
             </div>
           </div>
 
@@ -52,7 +69,7 @@ export function Dashboard({ navigate }: Props) {
               {userPools.length === 0 ? (
                 <div class="text-center py-8 text-base-content/60">
                   <p class="mb-4">No user pools yet.</p>
-                  <button class="btn btn-primary" onClick={() => navigate('user-pools')}>Create User Pool</button>
+                  <button class="btn btn-primary" onClick={() => navigate('/admin/pools')}>Create User Pool</button>
                 </div>
               ) : (
                 <>
@@ -71,9 +88,9 @@ export function Dashboard({ navigate }: Props) {
                           <tr key={pool.Id}>
                             <td>{pool.Name}</td>
                             <td><code class="badge badge-ghost text-xs">{pool.Id}</code></td>
-                            <td>{new Date(pool.CreationDate).toLocaleDateString()}</td>
+                            <td>{formatDateShort(pool.CreationDate)}</td>
                             <td>
-                              <button class="btn btn-ghost btn-sm" onClick={() => navigate('user-pool-detail', { userPool: pool })}>View</button>
+                              <button class="btn btn-ghost btn-sm" onClick={() => navigate(`/admin/pools/${pool.Id}`, { userPool: pool })}>View</button>
                             </td>
                           </tr>
                         ))}
@@ -81,19 +98,10 @@ export function Dashboard({ navigate }: Props) {
                     </table>
                   </div>
                   {userPools.length > 5 && (
-                    <button class="btn btn-link" onClick={() => navigate('user-pools')}>View all {userPools.length} user pools</button>
+                    <button class="btn btn-link" onClick={() => navigate('/admin/pools')}>View all {userPools.length} user pools</button>
                   )}
                 </>
               )}
-            </div>
-          </div>
-
-          <div class="card bg-base-100 shadow">
-            <div class="card-body">
-              <h2 class="card-title">Quick Actions</h2>
-              <div class="flex gap-3 flex-wrap">
-                <button class="btn btn-primary" onClick={() => navigate('user-pools')}>Manage User Pools</button>
-              </div>
             </div>
           </div>
         </>

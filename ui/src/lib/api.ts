@@ -248,6 +248,41 @@ export async function getBranding(clientId: string): Promise<Branding> {
 }
 
 // ============================================================================
+// Standalone Login (no OAuth - direct token auth)
+// ============================================================================
+
+export async function standaloneLogin(
+  username: string,
+  password: string,
+  clientId: string
+): Promise<{ success: boolean; tokens?: { AccessToken: string; IdToken: string; RefreshToken: string; ExpiresIn: number }; error?: string }> {
+  try {
+    const response = await fetch(`${API_BASE}/`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-amz-json-1.1',
+        'X-Amz-Target': 'AWSCognitoIdentityProviderService.InitiateAuth',
+      },
+      body: JSON.stringify({
+        AuthFlow: 'USER_PASSWORD_AUTH',
+        ClientId: clientId,
+        AuthParameters: { USERNAME: username, PASSWORD: password },
+      }),
+    })
+
+    const data = await response.json()
+
+    if (response.ok && data.AuthenticationResult) {
+      return { success: true, tokens: data.AuthenticationResult }
+    }
+
+    return { success: false, error: data.message || data.__type || 'Login failed' }
+  } catch (e) {
+    return { success: false, error: 'Network error' }
+  }
+}
+
+// ============================================================================
 // Admin API Functions
 // ============================================================================
 
@@ -350,6 +385,39 @@ export async function adminDisableUser(userPoolId: string, username: string): Pr
   })
 }
 
+export async function adminUpdateUserAttributes(
+  userPoolId: string,
+  username: string,
+  attributes: { Name: string; Value: string }[]
+): Promise<void> {
+  await cognitoRequest<Record<string, never>>('AdminUpdateUserAttributes', {
+    UserPoolId: userPoolId,
+    Username: username,
+    UserAttributes: attributes,
+  })
+}
+
+export async function adminSetUserPassword(
+  userPoolId: string,
+  username: string,
+  password: string,
+  permanent: boolean
+): Promise<void> {
+  await cognitoRequest<Record<string, never>>('AdminSetUserPassword', {
+    UserPoolId: userPoolId,
+    Username: username,
+    Password: password,
+    Permanent: permanent,
+  })
+}
+
+export async function adminConfirmSignUp(userPoolId: string, username: string): Promise<void> {
+  await cognitoRequest<Record<string, never>>('AdminConfirmSignUp', {
+    UserPoolId: userPoolId,
+    Username: username,
+  })
+}
+
 // User Pool Client Operations
 export async function listUserPoolClients(userPoolId: string): Promise<UserPoolClient[]> {
   const data = await cognitoRequest<{ UserPoolClients: UserPoolClient[] }>('ListUserPoolClients', {
@@ -389,6 +457,26 @@ export async function describeUserPoolClient(
   const data = await cognitoRequest<{ UserPoolClient: UserPoolClient }>('DescribeUserPoolClient', {
     UserPoolId: userPoolId,
     ClientId: clientId,
+  })
+  return data.UserPoolClient
+}
+
+export async function updateUserPoolClient(
+  userPoolId: string,
+  clientId: string,
+  updates: {
+    ClientName?: string
+    CallbackURLs?: string[]
+    LogoutURLs?: string[]
+    AllowedOAuthFlows?: string[]
+    AllowedOAuthScopes?: string[]
+    AllowedOAuthFlowsUserPoolClient?: boolean
+  }
+): Promise<UserPoolClient> {
+  const data = await cognitoRequest<{ UserPoolClient: UserPoolClient }>('UpdateUserPoolClient', {
+    UserPoolId: userPoolId,
+    ClientId: clientId,
+    ...updates,
   })
   return data.UserPoolClient
 }

@@ -1,9 +1,10 @@
 import { useState, useEffect } from 'preact/hooks'
-import type { AdminPage, UserPool } from '../lib/types'
+import type { UserPool, User, UserPoolClient } from '../lib/types'
+import { formatDate } from '../lib/types'
 import { listUserPools, createUserPool, deleteUserPool } from '../lib/api'
 
 interface Props {
-  navigate: (page: AdminPage, context?: { userPool?: UserPool }) => void
+  navigate: (path: string, context?: { userPool?: UserPool; user?: User; client?: UserPoolClient }) => void
 }
 
 export function UserPoolList({ navigate }: Props) {
@@ -91,14 +92,14 @@ export function UserPoolList({ navigate }: Props) {
                 {userPools.map(pool => (
                   <tr key={pool.Id}>
                     <td>
-                      <button class="link link-primary" onClick={() => navigate('user-pool-detail', { userPool: pool })}>{pool.Name}</button>
+                      <button class="link link-primary" onClick={() => navigate(`/admin/pools/${pool.Id}`, { userPool: pool })}>{pool.Name}</button>
                     </td>
                     <td><code class="badge badge-ghost text-xs">{pool.Id}</code></td>
-                    <td>{new Date(pool.CreationDate).toLocaleString()}</td>
-                    <td>{new Date(pool.LastModifiedDate).toLocaleString()}</td>
+                    <td>{formatDate(pool.CreationDate)}</td>
+                    <td>{formatDate(pool.LastModifiedDate)}</td>
                     <td>
                       <div class="flex gap-2">
-                        <button class="btn btn-ghost btn-sm" onClick={() => navigate('user-pool-detail', { userPool: pool })}>View</button>
+                        <button class="btn btn-ghost btn-sm" onClick={() => navigate(`/admin/pools/${pool.Id}`, { userPool: pool })}>View</button>
                         <button class="btn btn-error btn-ghost btn-sm" onClick={() => handleDelete(pool)}>Delete</button>
                       </div>
                     </td>

@@ -1,10 +1,10 @@
 import { useState, useEffect } from 'preact/hooks'
-import type { AdminPage, UserPool, UserPoolClient } from '../lib/types'
+import type { UserPool, User, UserPoolClient } from '../lib/types'
 import { listUserPoolClients, createUserPoolClient, deleteUserPoolClient } from '../lib/api'
 
 interface Props {
   userPool: UserPool
-  navigate: (page: AdminPage, context?: { userPool?: UserPool; client?: UserPoolClient }) => void
+  navigate: (path: string, context?: { userPool?: UserPool; user?: User; client?: UserPoolClient }) => void
 }
 
 export function ClientList({ userPool, navigate }: Props) {
@@ -60,8 +60,8 @@ export function ClientList({ userPool, navigate }: Props) {
       <div class="mb-8">
         <div class="breadcrumbs text-sm mb-2">
           <ul>
-            <li><button class="link link-primary" onClick={() => navigate('user-pools')}>User Pools</button></li>
-            <li><button class="link link-primary" onClick={() => navigate('user-pool-detail', { userPool })}>{userPool.Name}</button></li>
+            <li><button class="link link-primary" onClick={() => navigate('/admin/pools')}>User Pools</button></li>
+            <li><button class="link link-primary" onClick={() => navigate(`/admin/pools/${userPool.Id}`)}>{userPool.Name}</button></li>
             <li>App Clients</li>
           </ul>
         </div>
@@ -104,13 +104,13 @@ export function ClientList({ userPool, navigate }: Props) {
                 {clients.map(client => (
                   <tr key={client.ClientId}>
                     <td>
-                      <button class="link link-primary" onClick={() => navigate('client-detail', { userPool, client })}>{client.ClientName}</button>
+                      <button class="link link-primary" onClick={() => navigate(`/admin/pools/${userPool.Id}/clients/${client.ClientId}`, { client })}>{client.ClientName}</button>
                     </td>
                     <td><code class="badge badge-ghost text-xs">{client.ClientId}</code></td>
                     <td>{client.AllowedOAuthFlows?.join(', ') || '-'}</td>
                     <td>
                       <div class="flex gap-2">
-                        <button class="btn btn-ghost btn-sm" onClick={() => navigate('client-detail', { userPool, client })}>View</button>
+                        <button class="btn btn-ghost btn-sm" onClick={() => navigate(`/admin/pools/${userPool.Id}/clients/${client.ClientId}`, { client })}>View</button>
                         <button class="btn btn-error btn-ghost btn-sm" onClick={() => handleDelete(client)}>Delete</button>
                       </div>
                     </td>

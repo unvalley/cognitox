@@ -27,11 +27,17 @@ pub fn create_router(storage: Storage) -> Router {
     let ui_service =
         ServeDir::new("ui/dist").not_found_service(ServeFile::new("ui/dist/index.html"));
 
-    // Admin UI static files
-    let admin_service =
-        ServeDir::new("ui/dist").not_found_service(ServeFile::new("ui/dist/admin.html"));
+    // Admin UI static files - disable index.html auto-serve so admin.html is used via fallback
+    let admin_service = ServeDir::new("ui/dist")
+        .append_index_html_on_directories(false)
+        .not_found_service(ServeFile::new("ui/dist/admin.html"));
+
+    // Static assets served from root /assets/* for SPA deep links
+    let assets_service = ServeDir::new("ui/dist/assets");
 
     Router::new()
+        // Static assets (must be before SPA routes)
+        .nest_service("/assets", assets_service)
         // Health check
         .route("/health", get(health))
         // OpenID Connect Discovery

@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'preact/hooks'
 import type { Page, OAuthParams, Branding } from './lib/types'
-import { getBranding } from './lib/api'
+import { getBranding, listUserPools, listUserPoolClients } from './lib/api'
 import { Login } from './routes/Login'
 import { Signup } from './routes/Signup'
 import { Confirm } from './routes/Confirm'
@@ -116,8 +116,26 @@ export function App() {
     const oauthParams = syncFromLocation()
 
     ;(async () => {
-      if (oauthParams.client_id) {
-        const b = await getBranding(oauthParams.client_id)
+      let clientId = oauthParams.client_id
+
+      // Auto-detect a client_id if not provided
+      if (!clientId) {
+        try {
+          const pools = await listUserPools()
+          if (pools.length > 0) {
+            const clients = await listUserPoolClients(pools[0].Id)
+            if (clients.length > 0) {
+              clientId = clients[0].ClientId
+              setOauth(prev => ({ ...prev, client_id: clientId }))
+            }
+          }
+        } catch {
+          // Ignore - will show login without OAuth
+        }
+      }
+
+      if (clientId) {
+        const b = await getBranding(clientId)
         setBranding(b)
         document.documentElement.style.setProperty('--primary-color', b.primaryColor)
         document.documentElement.style.setProperty('--background-color', b.backgroundColor)
@@ -146,22 +164,11 @@ export function App() {
     return <div class="flex items-center justify-center min-h-screen"><span class="loading loading-spinner loading-lg"></span></div>
   }
 
-  if (!oauth.client_id) {
-    return (
-      <div class="flex items-center justify-center min-h-screen p-5" style={{ backgroundColor: 'var(--background-color)' }}>
-        <div class="card bg-base-100 shadow-lg">
-          <div class="card-body text-center">
-            <h1 class="text-xl font-bold text-error">Missing Parameters</h1>
-            <p>client_id and redirect_uri are required.</p>
-          </div>
-        </div>
-      </div>
-    )
-  }
+  const isStandalone = !oauth.redirect_uri
 
   return (
     <div class="flex items-center justify-center min-h-screen p-5" style={{ backgroundColor: 'var(--background-color)' }}>
-      {page === 'login' && <Login oauth={oauth} branding={branding} error={error} navigate={navigate} setError={setError} />}
+      {page === 'login' && <Login oauth={oauth} branding={branding} error={error} navigate={navigate} setError={setError} standalone={isStandalone} />}
       {page === 'signup' && <Signup oauth={oauth} branding={branding} error={error} navigate={navigate} setError={setError} />}
       {page === 'confirm' && <Confirm oauth={oauth} branding={branding} username={username} error={error} success={success} navigate={navigate} setError={setError} setSuccess={setSuccess} />}
       {page === 'forgot-password' && <ForgotPassword oauth={oauth} branding={branding} error={error} navigate={navigate} />}

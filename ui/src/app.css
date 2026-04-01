@@ -12,4 +12,170 @@
   --card-background: #ffffff;
   --button-color: #007bff;
   --button-text-color: #ffffff;
+
+  /* Animation curves */
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+  --ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
+}
+
+/* Card entrance animation */
+.card {
+  animation: cardEnter 400ms var(--ease-out) both;
+}
+
+@keyframes cardEnter {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Button press feedback */
+.btn {
+  transition: transform 160ms var(--ease-out);
+}
+
+.btn:active:not(:disabled) {
+  transform: scale(0.97);
+}
+
+/* Ensure consistent form element widths */
+.form-control .input,
+.form-control .select,
+.form-control .textarea {
+  width: 100%;
+}
+
+/* Input focus transitions */
+.input,
+.select,
+.textarea {
+  transition: border-color 150ms ease-out, box-shadow 150ms ease-out;
+}
+
+.input:focus,
+.select:focus,
+.textarea:focus {
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary-color) 15%, transparent);
+}
+
+/* Alert entrance */
+.alert {
+  animation: alertEnter 300ms var(--ease-out) both;
+}
+
+@keyframes alertEnter {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Modal entrance */
+.modal-box {
+  animation: modalEnter 250ms var(--ease-out) both;
+}
+
+@keyframes modalEnter {
+  from {
+    opacity: 0;
+    transform: scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.modal-backdrop {
+  animation: backdropEnter 200ms ease both;
+}
+
+@keyframes backdropEnter {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+/* Link hover - only for pointer devices */
+@media (hover: hover) and (pointer: fine) {
+  .link:hover {
+    opacity: 0.8;
+  }
+
+  .btn-ghost:hover {
+    transition: background-color 150ms ease;
+  }
+}
+
+/* Stagger animation for stat cards */
+.stat {
+  animation: fadeUp 400ms var(--ease-out) both;
+}
+
+.stat:nth-child(1) { animation-delay: 0ms; }
+.stat:nth-child(2) { animation-delay: 60ms; }
+.stat:nth-child(3) { animation-delay: 120ms; }
+
+@keyframes fadeUp {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Table row stagger */
+tbody tr {
+  animation: rowEnter 300ms var(--ease-out) both;
+}
+
+tbody tr:nth-child(1) { animation-delay: 0ms; }
+tbody tr:nth-child(2) { animation-delay: 30ms; }
+tbody tr:nth-child(3) { animation-delay: 60ms; }
+tbody tr:nth-child(4) { animation-delay: 90ms; }
+tbody tr:nth-child(5) { animation-delay: 120ms; }
+
+@keyframes rowEnter {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* Badge transitions */
+.badge {
+  transition: background-color 200ms ease, color 200ms ease;
+}
+
+/* Toggle transition */
+.toggle {
+  transition: background-color 200ms var(--ease-in-out);
+}
+
+/* Reduced motion */
+@media (prefers-reduced-motion: reduce) {
+  .card,
+  .alert,
+  .modal-box,
+  .stat,
+  tbody tr {
+    animation: none;
+  }
+
+  .btn {
+    transition: none;
+  }
 }

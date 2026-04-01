@@ -42,7 +42,7 @@ export function Confirm({ oauth, branding, username, error, success, navigate, s
       <form onSubmit={handleSubmit}>
         <div class="form-control mb-4">
           <label class="label"><span class="label-text">Confirmation Code</span></label>
-          <input type="text" class="input input-bordered" value={code} onInput={e => setCode((e.target as HTMLInputElement).value)} required disabled={submitting} placeholder="Enter 6-digit code" autoComplete="one-time-code" />
+          <input type="text" class="input input-bordered w-full" value={code} onInput={e => setCode((e.target as HTMLInputElement).value)} required disabled={submitting} placeholder="Enter 6-digit code" autoComplete="one-time-code" />
         </div>
         <button type="submit" class="btn btn-primary w-full" disabled={submitting} style={{ backgroundColor: 'var(--button-color)', color: 'var(--button-text-color)' }}>
           {submitting ? <><span class="loading loading-spinner loading-sm"></span> Confirming...</> : 'Confirm'}

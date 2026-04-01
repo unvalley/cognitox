@@ -1,10 +1,11 @@
 import { useState, useEffect } from 'preact/hooks'
-import type { AdminPage, UserPool, User, UserPoolClient } from '../lib/types'
+import type { UserPool, User, UserPoolClient } from '../lib/types'
+import { formatDate } from '../lib/types'
 import { describeUserPool, listUsers, listUserPoolClients } from '../lib/api'
 
 interface Props {
   userPool: UserPool
-  navigate: (page: AdminPage, context?: { userPool?: UserPool; user?: User; client?: UserPoolClient }) => void
+  navigate: (path: string, context?: { userPool?: UserPool; user?: User; client?: UserPoolClient }) => void
 }
 
 export function UserPoolDetail({ userPool, navigate }: Props) {
@@ -34,7 +35,7 @@ export function UserPoolDetail({ userPool, navigate }: Props) {
       <div class="mb-8">
         <div class="breadcrumbs text-sm mb-2">
           <ul>
-            <li><button class="link link-primary" onClick={() => navigate('user-pools')}>User Pools</button></li>
+            <li><button class="link link-primary" onClick={() => navigate('/admin/pools')}>User Pools</button></li>
             <li>{userPool.Name}</li>
           </ul>
         </div>
@@ -56,8 +57,8 @@ export function UserPoolDetail({ userPool, navigate }: Props) {
                   <tbody>
                     <tr><td class="font-medium text-base-content/60 w-36">Pool ID</td><td><code class="text-sm">{pool.Id}</code></td></tr>
                     <tr><td class="font-medium text-base-content/60">Name</td><td>{pool.Name}</td></tr>
-                    <tr><td class="font-medium text-base-content/60">Created</td><td>{new Date(pool.CreationDate).toLocaleString()}</td></tr>
-                    <tr><td class="font-medium text-base-content/60">Last Modified</td><td>{new Date(pool.LastModifiedDate).toLocaleString()}</td></tr>
+                    <tr><td class="font-medium text-base-content/60">Created</td><td>{formatDate(pool.CreationDate)}</td></tr>
+                    <tr><td class="font-medium text-base-content/60">Last Modified</td><td>{formatDate(pool.LastModifiedDate)}</td></tr>
                     {pool.Domain && <tr><td class="font-medium text-base-content/60">Domain</td><td>{pool.Domain}</td></tr>}
                   </tbody>
                 </table>
@@ -69,7 +70,7 @@ export function UserPoolDetail({ userPool, navigate }: Props) {
             <div class="card-body">
               <div class="flex justify-between items-center">
                 <h2 class="card-title">Users ({users.length})</h2>
-                <button class="btn btn-ghost btn-sm" onClick={() => navigate('users', { userPool })}>Manage</button>
+                <button class="btn btn-ghost btn-sm" onClick={() => navigate(`/admin/pools/${userPool.Id}/users`)}>Manage</button>
               </div>
               {users.length === 0 ? (
                 <p class="text-base-content/60 text-sm">No users yet</p>
@@ -77,14 +78,14 @@ export function UserPoolDetail({ userPool, navigate }: Props) {
                 <ul class="space-y-2">
                   {users.slice(0, 5).map(user => (
                     <li key={user.Username} class="flex justify-between items-center py-2 border-b border-base-200 last:border-0">
-                      <button class="link link-primary text-sm" onClick={() => navigate('user-detail', { userPool, user })}>{user.Username}</button>
+                      <button class="link link-primary text-sm" onClick={() => navigate(`/admin/pools/${userPool.Id}/users/${user.Username}`, { user })}>{user.Username}</button>
                       <span class={`badge badge-sm ${user.UserStatus === 'CONFIRMED' ? 'badge-success' : 'badge-ghost'}`}>{user.UserStatus}</span>
                     </li>
                   ))}
                 </ul>
               )}
               {users.length > 5 && (
-                <button class="btn btn-link btn-sm" onClick={() => navigate('users', { userPool })}>View all {users.length} users</button>
+                <button class="btn btn-link btn-sm" onClick={() => navigate(`/admin/pools/${userPool.Id}/users`)}>View all {users.length} users</button>
               )}
             </div>
           </div>
@@ -93,7 +94,7 @@ export function UserPoolDetail({ userPool, navigate }: Props) {
             <div class="card-body">
               <div class="flex justify-between items-center">
                 <h2 class="card-title">App Clients ({clients.length})</h2>
-                <button class="btn btn-ghost btn-sm" onClick={() => navigate('clients', { userPool })}>Manage</button>
+                <button class="btn btn-ghost btn-sm" onClick={() => navigate(`/admin/pools/${userPool.Id}/clients`)}>Manage</button>
               </div>
               {clients.length === 0 ? (
                 <p class="text-base-content/60 text-sm">No app clients yet</p>
@@ -101,14 +102,14 @@ export function UserPoolDetail({ userPool, navigate }: Props) {
                 <ul class="space-y-2">
                   {clients.slice(0, 5).map(client => (
                     <li key={client.ClientId} class="flex justify-between items-center py-2 border-b border-base-200 last:border-0">
-                      <button class="link link-primary text-sm" onClick={() => navigate('client-detail', { userPool, client })}>{client.ClientName}</button>
+                      <button class="link link-primary text-sm" onClick={() => navigate(`/admin/pools/${userPool.Id}/clients/${client.ClientId}`, { client })}>{client.ClientName}</button>
                       <code class="badge badge-ghost text-xs">{client.ClientId}</code>
                     </li>
                   ))}
                 </ul>
               )}
               {clients.length > 5 && (
-                <button class="btn btn-link btn-sm" onClick={() => navigate('clients', { userPool })}>View all {clients.length} clients</button>
+                <button class="btn btn-link btn-sm" onClick={() => navigate(`/admin/pools/${userPool.Id}/clients`)}>View all {clients.length} clients</button>
               )}
             </div>
           </div>
@@ -117,7 +118,7 @@ export function UserPoolDetail({ userPool, navigate }: Props) {
             <div class="card-body">
               <div class="flex justify-between items-center">
                 <h2 class="card-title">Branding</h2>
-                <button class="btn btn-ghost btn-sm" onClick={() => navigate('branding', { userPool })}>Configure</button>
+                <button class="btn btn-ghost btn-sm" onClick={() => navigate(`/admin/pools/${userPool.Id}/branding`)}>Configure</button>
               </div>
               <p class="text-base-content/60 text-sm">Customize the hosted UI appearance</p>
             </div>

@@ -88,3 +88,34 @@ export type AdminPage =
   | 'clients'
   | 'client-detail'
   | 'branding'
+
+/**
+ * Format a UNIX timestamp (seconds) to a localized date-time string.
+ */
+export function formatDate(timestamp: string | number): string {
+  const ts = typeof timestamp === 'string' ? Number(timestamp) : timestamp
+  if (!ts || isNaN(ts)) return '-'
+  // API returns seconds, Date expects milliseconds
+  const date = new Date(ts < 1e12 ? ts * 1000 : ts)
+  return date.toLocaleString(undefined, {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  })
+}
+
+/**
+ * Format a UNIX timestamp (seconds) to a short localized date string.
+ */
+export function formatDateShort(timestamp: string | number): string {
+  const ts = typeof timestamp === 'string' ? Number(timestamp) : timestamp
+  if (!ts || isNaN(ts)) return '-'
+  const date = new Date(ts < 1e12 ? ts * 1000 : ts)
+  return date.toLocaleDateString(undefined, {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+  })
+}

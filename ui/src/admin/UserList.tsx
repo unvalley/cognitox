@@ -1,10 +1,11 @@
 import { useState, useEffect } from 'preact/hooks'
-import type { AdminPage, UserPool, User } from '../lib/types'
+import type { UserPool, User, UserPoolClient } from '../lib/types'
+import { formatDate } from '../lib/types'
 import { listUsers, adminCreateUser, adminDeleteUser, adminEnableUser, adminDisableUser } from '../lib/api'
 
 interface Props {
   userPool: UserPool
-  navigate: (page: AdminPage, context?: { userPool?: UserPool; user?: User }) => void
+  navigate: (path: string, context?: { userPool?: UserPool; user?: User; client?: UserPoolClient }) => void
 }
 
 export function UserList({ userPool, navigate }: Props) {
@@ -74,8 +75,8 @@ export function UserList({ userPool, navigate }: Props) {
       <div class="mb-8">
         <div class="breadcrumbs text-sm mb-2">
           <ul>
-            <li><button class="link link-primary" onClick={() => navigate('user-pools')}>User Pools</button></li>
-            <li><button class="link link-primary" onClick={() => navigate('user-pool-detail', { userPool })}>{userPool.Name}</button></li>
+            <li><button class="link link-primary" onClick={() => navigate('/admin/pools')}>User Pools</button></li>
+            <li><button class="link link-primary" onClick={() => navigate(`/admin/pools/${userPool.Id}`)}>{userPool.Name}</button></li>
             <li>Users</li>
           </ul>
         </div>
@@ -120,7 +121,7 @@ export function UserList({ userPool, navigate }: Props) {
                 {users.map(user => (
                   <tr key={user.Username}>
                     <td>
-                      <button class="link link-primary" onClick={() => navigate('user-detail', { userPool, user })}>{user.Username}</button>
+                      <button class="link link-primary" onClick={() => navigate(`/admin/pools/${userPool.Id}/users/${user.Username}`, { user })}>{user.Username}</button>
                     </td>
                     <td>{getEmail(user)}</td>
                     <td>
@@ -134,10 +135,10 @@ export function UserList({ userPool, navigate }: Props) {
                         onChange={() => handleToggleEnabled(user)}
                       />
                     </td>
-                    <td>{new Date(user.UserCreateDate).toLocaleString()}</td>
+                    <td>{formatDate(user.UserCreateDate)}</td>
                     <td>
                       <div class="flex gap-2">
-                        <button class="btn btn-ghost btn-sm" onClick={() => navigate('user-detail', { userPool, user })}>View</button>
+                        <button class="btn btn-ghost btn-sm" onClick={() => navigate(`/admin/pools/${userPool.Id}/users/${user.Username}`, { user })}>View</button>
                         <button class="btn btn-error btn-ghost btn-sm" onClick={() => handleDelete(user)}>Delete</button>
                       </div>
                     </td>

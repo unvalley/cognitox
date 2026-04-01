@@ -1,10 +1,10 @@
 import { useState, useEffect } from 'preact/hooks'
-import type { AdminPage, UserPool, UserPoolClient } from '../lib/types'
+import type { UserPool, User, UserPoolClient } from '../lib/types'
 import { listUserPoolClients, createManagedLoginBranding, updateManagedLoginBranding } from '../lib/api'
 
 interface Props {
   userPool: UserPool
-  navigate: (page: AdminPage, context?: { userPool?: UserPool }) => void
+  navigate: (path: string, context?: { userPool?: UserPool; user?: User; client?: UserPoolClient }) => void
 }
 
 export function BrandingEditor({ userPool, navigate }: Props) {
@@ -81,8 +81,8 @@ export function BrandingEditor({ userPool, navigate }: Props) {
       <div class="mb-8">
         <div class="breadcrumbs text-sm mb-2">
           <ul>
-            <li><button class="link link-primary" onClick={() => navigate('user-pools')}>User Pools</button></li>
-            <li><button class="link link-primary" onClick={() => navigate('user-pool-detail', { userPool })}>{userPool.Name}</button></li>
+            <li><button class="link link-primary" onClick={() => navigate('/admin/pools')}>User Pools</button></li>
+            <li><button class="link link-primary" onClick={() => navigate(`/admin/pools/${userPool.Id}`)}>{userPool.Name}</button></li>
             <li>Branding</li>
           </ul>
         </div>
@@ -105,37 +105,37 @@ export function BrandingEditor({ userPool, navigate }: Props) {
           <div class="card-body items-center text-center py-16">
             <h2 class="card-title">No App Clients</h2>
             <p class="text-base-content/60">Create an app client first to configure branding.</p>
-            <button class="btn btn-primary mt-4" onClick={() => navigate('clients', { userPool })}>Create Client</button>
+            <button class="btn btn-primary mt-4" onClick={() => navigate(`/admin/pools/${userPool.Id}/clients`)}>Create Client</button>
           </div>
         </div>
       ) : (
         <div class="grid grid-cols-1 xl:grid-cols-[1fr_400px] gap-8">
           <div class="card bg-base-100 shadow">
             <div class="card-body">
-              <h2 class="text-lg font-semibold border-b border-base-200 pb-2 mb-4">App Client</h2>
-              <div class="form-control mb-6">
-                <label class="label"><span class="label-text">Select Client</span></label>
+              <h2 class="text-lg font-semibold border-b border-base-200 pb-2 mb-5">App Client</h2>
+              <div class="form-control mb-8">
+                <label class="label pb-1.5"><span class="label-text">Select Client</span></label>
                 <select class="select select-bordered" value={selectedClientId} onChange={e => setSelectedClientId((e.target as HTMLSelectElement).value)}>
                   {clients.map(c => <option key={c.ClientId} value={c.ClientId}>{c.ClientName}</option>)}
                 </select>
               </div>
 
-              <h2 class="text-lg font-semibold border-b border-base-200 pb-2 mb-4">Text Content</h2>
-              <div class="form-control mb-3">
-                <label class="label"><span class="label-text">Page Title</span></label>
+              <h2 class="text-lg font-semibold border-b border-base-200 pb-2 mb-5">Text Content</h2>
+              <div class="form-control mb-5">
+                <label class="label pb-1.5"><span class="label-text">Page Title</span></label>
                 <input type="text" class="input input-bordered" value={pageTitle} onInput={e => setPageTitle((e.target as HTMLInputElement).value)} />
               </div>
-              <div class="form-control mb-3">
-                <label class="label"><span class="label-text">Sign In Header</span></label>
+              <div class="form-control mb-5">
+                <label class="label pb-1.5"><span class="label-text">Sign In Header</span></label>
                 <input type="text" class="input input-bordered" value={signInHeader} onInput={e => setSignInHeader((e.target as HTMLInputElement).value)} />
               </div>
-              <div class="form-control mb-6">
-                <label class="label"><span class="label-text">Sign In Subheader</span></label>
+              <div class="form-control mb-8">
+                <label class="label pb-1.5"><span class="label-text">Sign In Subheader</span></label>
                 <input type="text" class="input input-bordered" value={signInSubheader} onInput={e => setSignInSubheader((e.target as HTMLInputElement).value)} />
               </div>
 
-              <h2 class="text-lg font-semibold border-b border-base-200 pb-2 mb-4">Colors</h2>
-              <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 mb-6">
+              <h2 class="text-lg font-semibold border-b border-base-200 pb-2 mb-5">Colors</h2>
+              <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5 mb-8">
                 {colorFields.map(({ label, value, setter }) => (
                   <div key={label} class="form-control">
                     <label class="label"><span class="label-text">{label}</span></label>

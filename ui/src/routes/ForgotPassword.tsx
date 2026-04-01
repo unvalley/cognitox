@@ -31,7 +31,7 @@ export function ForgotPassword({ oauth, branding, error, navigate }: Props) {
       <form onSubmit={handleSubmit}>
         <div class="form-control mb-4">
           <label class="label"><span class="label-text">Username</span></label>
-          <input type="text" class="input input-bordered" value={username} onInput={e => setUsername((e.target as HTMLInputElement).value)} required disabled={submitting} autoComplete="username" />
+          <input type="text" class="input input-bordered w-full" value={username} onInput={e => setUsername((e.target as HTMLInputElement).value)} required disabled={submitting} autoComplete="username" />
         </div>
         <button type="submit" class="btn btn-primary w-full" disabled={submitting} style={{ backgroundColor: 'var(--button-color)', color: 'var(--button-text-color)' }}>
           {submitting ? <><span class="loading loading-spinner loading-sm"></span> Sending...</> : 'Send Reset Code'}
