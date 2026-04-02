@@ -573,14 +573,18 @@ const RESET_PASSWORD_TEMPLATE: &str = r#"{% extends "base" %}
 /// Initialize Tera templates
 fn create_tera() -> Tera {
     let mut tera = Tera::default();
-    tera.add_raw_template("base", BASE_TEMPLATE).unwrap();
-    tera.add_raw_template("login", LOGIN_TEMPLATE).unwrap();
-    tera.add_raw_template("signup", SIGNUP_TEMPLATE).unwrap();
-    tera.add_raw_template("confirm", CONFIRM_TEMPLATE).unwrap();
+    tera.add_raw_template("base", BASE_TEMPLATE)
+        .expect("invalid base template");
+    tera.add_raw_template("login", LOGIN_TEMPLATE)
+        .expect("invalid login template");
+    tera.add_raw_template("signup", SIGNUP_TEMPLATE)
+        .expect("invalid signup template");
+    tera.add_raw_template("confirm", CONFIRM_TEMPLATE)
+        .expect("invalid confirm template");
     tera.add_raw_template("forgot_password", FORGOT_PASSWORD_TEMPLATE)
-        .unwrap();
+        .expect("invalid forgot_password template");
     tera.add_raw_template("reset_password", RESET_PASSWORD_TEMPLATE)
-        .unwrap();
+        .expect("invalid reset_password template");
     tera
 }
 
