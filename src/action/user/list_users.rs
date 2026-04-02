@@ -22,6 +22,11 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
     let req: Request = serde_json::from_value(body)
         .map_err(|e| AppError::InvalidParameter(format!("Invalid request: {}", e)))?;
 
+    storage
+        .get_user_pool(&req.user_pool_id)
+        .await
+        .ok_or(AppError::UserPoolNotFound)?;
+
     let users = storage.list_users(&req.user_pool_id).await;
     let limit = req.limit.unwrap_or(60) as usize;
 

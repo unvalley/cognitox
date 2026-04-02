@@ -145,7 +145,10 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
             user.user_status = UserStatus::Confirmed;
             user.last_modified_date = Utc::now();
 
-            let _ = storage.update_user(user.clone()).await;
+            storage
+                .update_user(user.clone())
+                .await
+                .ok_or(AppError::UserNotFound)?;
 
             let groups = storage.get_groups_for_user(&user.id).await;
 
