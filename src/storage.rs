@@ -12,10 +12,11 @@ use std::{
 };
 
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64_STANDARD};
+use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio::sync::RwLock;
-use tracing::error;
+use tracing::{debug, error};
 
 use crate::types::{
     AuthEvent, AuthorizationCode, BrandingId, ClientId, ConfirmationCode, Device, DomainPrefix,
@@ -130,6 +131,7 @@ impl Storage {
             persistence,
         };
         storage.start_auto_persist_loop();
+        storage.start_cleanup_loop();
         Ok(storage)
     }
 
@@ -192,6 +194,80 @@ impl Storage {
                 last_snapshot = Some(snapshot);
             }
         });
+    }
+
+    fn start_cleanup_loop(&self) {
+        let Ok(handle) = tokio::runtime::Handle::try_current() else {
+            return;
+        };
+
+        let principal_store = Arc::downgrade(&self.principal_store);
+        handle.spawn(async move {
+            loop {
+                tokio::time::sleep(Duration::from_secs(60)).await;
+                let Some(principal_store) = principal_store.upgrade() else {
+                    break;
+                };
+                Self::cleanup_expired_data(&principal_store).await;
+            }
+        });
+    }
+
+    async fn cleanup_expired_data(principal_store: &RwLock<PrincipalStore>) {
+        let now = Utc::now();
+        let mut store = principal_store.write().await;
+
+        let expired_confirmations: Vec<_> = store
+            .confirmation_codes
+            .iter()
+            .filter(|(_, code)| code.expires_at < now)
+            .map(|(id, _)| *id)
+            .collect();
+        let confirmation_count = expired_confirmations.len();
+        for id in expired_confirmations {
+            store.confirmation_codes.remove(&id);
+        }
+
+        let expired_refresh: Vec<_> = store
+            .refresh_tokens
+            .iter()
+            .filter(|(_, token)| token.expires_at < now)
+            .map(|(key, _)| key.clone())
+            .collect();
+        let refresh_count = expired_refresh.len();
+        for key in expired_refresh {
+            store.refresh_tokens.remove(&key);
+        }
+
+        let expired_reset: Vec<_> = store
+            .password_reset_codes
+            .iter()
+            .filter(|(_, code)| code.expires_at < now)
+            .map(|(id, _)| *id)
+            .collect();
+        let reset_count = expired_reset.len();
+        for id in expired_reset {
+            store.password_reset_codes.remove(&id);
+        }
+
+        let expired_auth_codes: Vec<_> = store
+            .authorization_codes
+            .iter()
+            .filter(|(_, code)| code.expires_at < now)
+            .map(|(key, _)| key.clone())
+            .collect();
+        let auth_code_count = expired_auth_codes.len();
+        for key in expired_auth_codes {
+            store.authorization_codes.remove(&key);
+        }
+
+        let total = confirmation_count + refresh_count + reset_count + auth_code_count;
+        if total > 0 {
+            debug!(
+                "Cleaned up {} expired entries (confirmations: {}, refresh_tokens: {}, password_resets: {}, auth_codes: {})",
+                total, confirmation_count, refresh_count, reset_count, auth_code_count
+            );
+        }
     }
 
     async fn capture_state(
