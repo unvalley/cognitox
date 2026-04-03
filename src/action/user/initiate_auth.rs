@@ -110,7 +110,9 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
             }
 
             if !verify_password(password, &user.password_hash) {
-                return Err(AppError::InvalidPassword);
+                return Err(AppError::NotAuthorized(
+                    "Incorrect username or password.".to_string(),
+                ));
             }
 
             // Get user groups
