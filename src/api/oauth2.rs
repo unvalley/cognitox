@@ -255,6 +255,13 @@ pub async fn authorize(
                     });
                 }
 
+                if user.user_status != UserStatus::Confirmed {
+                    return Err(OAuthError {
+                        error: "access_denied".to_string(),
+                        error_description: Some("User not confirmed".to_string()),
+                    });
+                }
+
                 if !verify_password(password, &user.password_hash) {
                     return Err(OAuthError {
                         error: "access_denied".to_string(),

@@ -24,6 +24,20 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
         .map_err(|e| AppError::InvalidParameter(format!("Invalid request: {}", e)))?;
 
     storage
+        .get_user_pool(&req.user_pool_id)
+        .await
+        .ok_or(AppError::UserPoolNotFound)?;
+
+    let client = storage
+        .get_user_pool_client(&req.client_id)
+        .await
+        .ok_or(AppError::UserPoolClientNotFound)?;
+
+    if client.user_pool_id != req.user_pool_id {
+        return Err(AppError::UserPoolClientNotFound);
+    }
+
+    storage
         .delete_user_pool_client(&req.client_id)
         .await
         .ok_or(AppError::UserPoolClientNotFound)?;
