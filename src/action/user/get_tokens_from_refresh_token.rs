@@ -8,7 +8,10 @@ use serde_json::{Value, json};
 
 use crate::{
     error::{AppError, Result},
-    jwt::{generate_access_token, generate_id_token},
+    jwt::{
+        generate_access_token, generate_id_token, resolve_access_token_expiry,
+        resolve_id_token_expiry,
+    },
     storage::Storage,
     types::ClientId,
 };
@@ -77,22 +80,32 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
 
     let groups = storage.get_groups_for_user(&user.id).await;
 
+    let access_expiry = resolve_access_token_expiry(&client);
+    let id_expiry = resolve_id_token_expiry(&client);
+
     let access_token = generate_access_token(
         &user,
         req.client_id.as_str(),
         &client.user_pool_id,
         &groups,
         &client.allowed_oauth_scopes,
+        access_expiry,
     )
     .map_err(AppError::Internal)?;
-    let id_token = generate_id_token(&user, req.client_id.as_str(), &client.user_pool_id, &groups)
-        .map_err(AppError::Internal)?;
+    let id_token = generate_id_token(
+        &user,
+        req.client_id.as_str(),
+        &client.user_pool_id,
+        &groups,
+        id_expiry,
+    )
+    .map_err(AppError::Internal)?;
 
     Ok(json!({
         "AuthenticationResult": {
             "AccessToken": access_token,
             "IdToken": id_token,
-            "ExpiresIn": 3600,
+            "ExpiresIn": access_expiry.num_seconds(),
             "TokenType": "Bearer"
         }
     }))

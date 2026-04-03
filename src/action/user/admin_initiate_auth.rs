@@ -4,14 +4,17 @@
 
 use std::collections::HashMap;
 
-use chrono::{Duration, Utc};
+use chrono::Utc;
 use serde::Deserialize;
 use serde_json::{Value, json};
 use uuid::Uuid;
 
 use crate::{
     error::{AppError, Result},
-    jwt::{generate_access_token, generate_id_token},
+    jwt::{
+        generate_access_token, generate_id_token, resolve_access_token_expiry,
+        resolve_id_token_expiry, resolve_refresh_token_expiry,
+    },
     storage::Storage,
     types::{AuthEvent, ClientId, RefreshToken, UserPoolId, UserStatus},
 };
@@ -140,24 +143,34 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
 
             let groups = storage.get_groups_for_user(&user.id).await;
 
+            let access_expiry = resolve_access_token_expiry(&client);
+            let id_expiry = resolve_id_token_expiry(&client);
+            let refresh_expiry = resolve_refresh_token_expiry(&client);
+
             let access_token = generate_access_token(
                 &user,
                 req.client_id.as_str(),
                 &req.user_pool_id,
                 &groups,
                 &client.allowed_oauth_scopes,
+                access_expiry,
             )
             .map_err(AppError::Internal)?;
-            let id_token =
-                generate_id_token(&user, req.client_id.as_str(), &req.user_pool_id, &groups)
-                    .map_err(AppError::Internal)?;
+            let id_token = generate_id_token(
+                &user,
+                req.client_id.as_str(),
+                &req.user_pool_id,
+                &groups,
+                id_expiry,
+            )
+            .map_err(AppError::Internal)?;
 
             let refresh_token = Uuid::new_v4().to_string();
             let refresh = RefreshToken {
                 token: refresh_token.clone(),
                 user_id: user.id,
                 client_id: req.client_id.clone(),
-                expires_at: Utc::now() + Duration::days(30),
+                expires_at: Utc::now() + refresh_expiry,
             };
             storage.save_refresh_token(refresh).await;
 
@@ -179,7 +192,7 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
                     "AccessToken": access_token,
                     "IdToken": id_token,
                     "RefreshToken": refresh_token,
-                    "ExpiresIn": 3600,
+                    "ExpiresIn": access_expiry.num_seconds(),
                     "TokenType": "Bearer"
                 }
             }))
@@ -217,23 +230,32 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
 
             let groups = storage.get_groups_for_user(&user.id).await;
 
+            let access_expiry = resolve_access_token_expiry(&client);
+            let id_expiry = resolve_id_token_expiry(&client);
+
             let access_token = generate_access_token(
                 &user,
                 req.client_id.as_str(),
                 &req.user_pool_id,
                 &groups,
                 &client.allowed_oauth_scopes,
+                access_expiry,
             )
             .map_err(AppError::Internal)?;
-            let id_token =
-                generate_id_token(&user, req.client_id.as_str(), &req.user_pool_id, &groups)
-                    .map_err(AppError::Internal)?;
+            let id_token = generate_id_token(
+                &user,
+                req.client_id.as_str(),
+                &req.user_pool_id,
+                &groups,
+                id_expiry,
+            )
+            .map_err(AppError::Internal)?;
 
             Ok(json!({
                 "AuthenticationResult": {
                     "AccessToken": access_token,
                     "IdToken": id_token,
-                    "ExpiresIn": 3600,
+                    "ExpiresIn": access_expiry.num_seconds(),
                     "TokenType": "Bearer"
                 }
             }))
