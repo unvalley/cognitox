@@ -16,7 +16,7 @@ use rsa::{RsaPrivateKey, RsaPublicKey};
 use serde::{Deserialize, Serialize};
 use std::{fs, sync::OnceLock};
 
-use crate::types::{User, UserPoolId};
+use crate::types::{User, UserPoolClient, UserPoolId};
 
 /// Global JWT key pair (generated once at startup)
 static JWT_KEYS: OnceLock<JwtKeys> = OnceLock::new();
@@ -189,6 +189,7 @@ pub fn generate_id_token(
     client_id: &str,
     user_pool_id: &UserPoolId,
     groups: &[String],
+    expiry: Duration,
 ) -> Result<String, String> {
     let keys = get_jwt_keys();
     let now = Utc::now();
@@ -199,7 +200,7 @@ pub fn generate_id_token(
         aud: client_id.to_string(),
         iss: format!("https://cognito-idp.local.amazonaws.com/{}", user_pool_id),
         iat: now.timestamp(),
-        exp: (now + Duration::hours(1)).timestamp(),
+        exp: (now + expiry).timestamp(),
         auth_time,
         token_use: "id".to_string(),
         email: user.email.clone(),
@@ -224,6 +225,7 @@ pub fn generate_access_token(
     user_pool_id: &UserPoolId,
     groups: &[String],
     scopes: &[String],
+    expiry: Duration,
 ) -> Result<String, String> {
     let keys = get_jwt_keys();
     let now = Utc::now();
@@ -239,7 +241,7 @@ pub fn generate_access_token(
         sub: user.id.to_string(),
         iss: format!("https://cognito-idp.local.amazonaws.com/{}", user_pool_id),
         iat: now.timestamp(),
-        exp: (now + Duration::hours(1)).timestamp(),
+        exp: (now + expiry).timestamp(),
         auth_time,
         token_use: "access".to_string(),
         client_id: client_id.to_string(),
@@ -313,6 +315,58 @@ pub fn extract_user_id_from_token(token: &str) -> Option<uuid::Uuid> {
     uuid::Uuid::parse_str(sub).ok()
 }
 
+fn resolve_duration(value: Option<i32>, unit: Option<&str>, default: Duration) -> Duration {
+    match value {
+        Some(v) => {
+            let v = v as i64;
+            match unit {
+                Some("seconds") => Duration::seconds(v),
+                Some("minutes") => Duration::minutes(v),
+                Some("hours") => Duration::hours(v),
+                Some("days") => Duration::days(v),
+                _ => default,
+            }
+        }
+        None => default,
+    }
+}
+
+/// Resolve access token validity duration from UserPoolClient config.
+/// AWS default: 1 hour, default unit: hours.
+pub fn resolve_access_token_expiry(client: &UserPoolClient) -> Duration {
+    let default = Duration::hours(1);
+    let unit = client
+        .token_validity_units
+        .as_ref()
+        .and_then(|u| u.access_token.as_deref())
+        .unwrap_or("hours");
+    resolve_duration(client.access_token_validity, Some(unit), default)
+}
+
+/// Resolve ID token validity duration from UserPoolClient config.
+/// AWS default: 1 hour, default unit: hours.
+pub fn resolve_id_token_expiry(client: &UserPoolClient) -> Duration {
+    let default = Duration::hours(1);
+    let unit = client
+        .token_validity_units
+        .as_ref()
+        .and_then(|u| u.id_token.as_deref())
+        .unwrap_or("hours");
+    resolve_duration(client.id_token_validity, Some(unit), default)
+}
+
+/// Resolve refresh token validity duration from UserPoolClient config.
+/// AWS default: 30 days, default unit: days.
+pub fn resolve_refresh_token_expiry(client: &UserPoolClient) -> Duration {
+    let default = Duration::days(30);
+    let unit = client
+        .token_validity_units
+        .as_ref()
+        .and_then(|u| u.refresh_token.as_deref())
+        .unwrap_or("days");
+    resolve_duration(client.refresh_token_validity, Some(unit), default)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -337,10 +391,18 @@ mod tests {
         let client_id = "test_client_id";
         let groups = vec!["admin".to_string()];
 
-        let access_token = generate_access_token(&user, client_id, &user_pool_id, &groups, &[])
-            .expect("Failed to generate access token");
-        let id_token = generate_id_token(&user, client_id, &user_pool_id, &groups)
-            .expect("Failed to generate ID token");
+        let access_token = generate_access_token(
+            &user,
+            client_id,
+            &user_pool_id,
+            &groups,
+            &[],
+            Duration::hours(1),
+        )
+        .expect("Failed to generate access token");
+        let id_token =
+            generate_id_token(&user, client_id, &user_pool_id, &groups, Duration::hours(1))
+                .expect("Failed to generate ID token");
 
         // Verify tokens
         let access_result = verify_access_token(&access_token);

@@ -18,7 +18,10 @@ use uuid::Uuid;
 
 use crate::{
     error::OAuthError,
-    jwt::{generate_access_token, generate_id_token, verify_access_token},
+    jwt::{
+        generate_access_token, generate_id_token, resolve_access_token_expiry,
+        resolve_id_token_expiry, resolve_refresh_token_expiry, verify_access_token,
+    },
     storage::Storage,
     types::{AuthorizationCode, ClientId, RefreshToken, UserStatus},
 };
@@ -263,12 +266,17 @@ pub async fn authorize(
                 }
 
                 let groups = storage.get_groups_for_user(&user.id).await;
+
+                let access_expiry = resolve_access_token_expiry(&client);
+                let id_expiry = resolve_id_token_expiry(&client);
+
                 let access_token = generate_access_token(
                     &user,
                     &params.client_id,
                     &client.user_pool_id,
                     &groups,
                     &scopes,
+                    access_expiry,
                 )
                 .map_err(|e| OAuthError {
                     error: "server_error".to_string(),
@@ -276,17 +284,24 @@ pub async fn authorize(
                 })?;
 
                 let mut redirect_url = format!(
-                    "{}#access_token={}&token_type=Bearer&expires_in=3600",
-                    params.redirect_uri, access_token
+                    "{}#access_token={}&token_type=Bearer&expires_in={}",
+                    params.redirect_uri,
+                    access_token,
+                    access_expiry.num_seconds()
                 );
 
                 if scopes.contains(&"openid".to_string()) {
-                    let id_token =
-                        generate_id_token(&user, &params.client_id, &client.user_pool_id, &groups)
-                            .map_err(|e| OAuthError {
-                                error: "server_error".to_string(),
-                                error_description: Some(e),
-                            })?;
+                    let id_token = generate_id_token(
+                        &user,
+                        &params.client_id,
+                        &client.user_pool_id,
+                        &groups,
+                        id_expiry,
+                    )
+                    .map_err(|e| OAuthError {
+                        error: "server_error".to_string(),
+                        error_description: Some(e),
+                    })?;
                     redirect_url.push_str(&format!("&id_token={}", id_token));
                 }
 
@@ -441,6 +456,10 @@ pub async fn token(
 
             let groups = storage.get_groups_for_user(&user.id).await;
 
+            let access_expiry = resolve_access_token_expiry(&client);
+            let id_expiry = resolve_id_token_expiry(&client);
+            let refresh_expiry = resolve_refresh_token_expiry(&client);
+
             // Generate tokens
             let access_token = generate_access_token(
                 &user,
@@ -448,6 +467,7 @@ pub async fn token(
                 &client.user_pool_id,
                 &groups,
                 &auth_code.scope,
+                access_expiry,
             )
             .map_err(|e| OAuthError {
                 error: "server_error".to_string(),
@@ -456,11 +476,17 @@ pub async fn token(
 
             let id_token = if auth_code.scope.contains(&"openid".to_string()) {
                 Some(
-                    generate_id_token(&user, client_id.as_str(), &client.user_pool_id, &groups)
-                        .map_err(|e| OAuthError {
-                            error: "server_error".to_string(),
-                            error_description: Some(e),
-                        })?,
+                    generate_id_token(
+                        &user,
+                        client_id.as_str(),
+                        &client.user_pool_id,
+                        &groups,
+                        id_expiry,
+                    )
+                    .map_err(|e| OAuthError {
+                        error: "server_error".to_string(),
+                        error_description: Some(e),
+                    })?,
                 )
             } else {
                 None
@@ -472,14 +498,14 @@ pub async fn token(
                 token: refresh_token_str.clone(),
                 user_id: user.id,
                 client_id: client_id.clone(),
-                expires_at: Utc::now() + Duration::days(30),
+                expires_at: Utc::now() + refresh_expiry,
             };
             storage.save_refresh_token(refresh).await;
 
             Ok(Json(TokenResponse {
                 access_token,
                 token_type: "Bearer".to_string(),
-                expires_in: 3600,
+                expires_in: access_expiry.num_seconds(),
                 refresh_token: Some(refresh_token_str),
                 id_token,
                 scope: Some(auth_code.scope.join(" ")),
@@ -567,12 +593,16 @@ pub async fn token(
                 .map(String::from)
                 .collect();
 
+            let access_expiry = resolve_access_token_expiry(&client);
+            let id_expiry = resolve_id_token_expiry(&client);
+
             let access_token = generate_access_token(
                 &user,
                 stored_token.client_id.as_str(),
                 &client.user_pool_id,
                 &groups,
                 &scopes,
+                access_expiry,
             )
             .map_err(|e| OAuthError {
                 error: "server_error".to_string(),
@@ -586,6 +616,7 @@ pub async fn token(
                         stored_token.client_id.as_str(),
                         &client.user_pool_id,
                         &groups,
+                        id_expiry,
                     )
                     .map_err(|e| OAuthError {
                         error: "server_error".to_string(),
@@ -599,7 +630,7 @@ pub async fn token(
             Ok(Json(TokenResponse {
                 access_token,
                 token_type: "Bearer".to_string(),
-                expires_in: 3600,
+                expires_in: access_expiry.num_seconds(),
                 refresh_token: None, // Don't issue new refresh token
                 id_token,
                 scope: Some(scopes.join(" ")),
@@ -669,6 +700,7 @@ pub async fn token(
                 .collect();
 
             let now = Utc::now();
+            let access_expiry = resolve_access_token_expiry(&client);
 
             // Use a simple token format for client_credentials
             let access_token = format!(
@@ -681,7 +713,7 @@ pub async fn token(
             Ok(Json(TokenResponse {
                 access_token,
                 token_type: "Bearer".to_string(),
-                expires_in: 3600,
+                expires_in: access_expiry.num_seconds(),
                 refresh_token: None,
                 id_token: None,
                 scope: if scopes.is_empty() {
