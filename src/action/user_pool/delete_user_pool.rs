@@ -35,7 +35,9 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::action::user_pool::create_user_pool;
+    use crate::action::group::create_group;
+    use crate::action::user::sign_up;
+    use crate::action::user_pool::{create_user_pool, create_user_pool_client};
     use serde_json::json;
 
     #[tokio::test]
@@ -58,6 +60,82 @@ mod tests {
         assert!(
             storage
                 .get_user_pool(&pool_id.parse().unwrap())
+                .await
+                .is_none()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_delete_user_pool_cascades_related_data() {
+        let storage = Storage::new();
+
+        // Create user pool
+        let pool = create_user_pool::handler(&storage, json!({"PoolName": "cascade-test"}))
+            .await
+            .unwrap();
+        let pool_id = pool["UserPool"]["Id"].as_str().unwrap().to_string();
+
+        // Create client
+        let client = create_user_pool_client::handler(
+            &storage,
+            json!({
+                "UserPoolId": pool_id,
+                "ClientName": "test-client"
+            }),
+        )
+        .await
+        .unwrap();
+        let client_id = client["UserPoolClient"]["ClientId"]
+            .as_str()
+            .unwrap()
+            .to_string();
+
+        // Create user
+        let sign_up_result = sign_up::handler(
+            &storage,
+            json!({
+                "ClientId": client_id,
+                "Username": "testuser",
+                "Password": "Password123!"
+            }),
+        )
+        .await
+        .unwrap();
+        let user_sub = sign_up_result["UserSub"].as_str().unwrap();
+        let user_id: uuid::Uuid = user_sub.parse().unwrap();
+
+        // Create group
+        create_group::handler(
+            &storage,
+            json!({
+                "UserPoolId": pool_id,
+                "GroupName": "test-group"
+            }),
+        )
+        .await
+        .unwrap();
+
+        // Delete the user pool
+        let result = handler(&storage, json!({"UserPoolId": pool_id})).await;
+        assert!(result.is_ok());
+
+        // Verify all related data is cleaned up
+        assert!(
+            storage
+                .get_user_pool(&pool_id.parse().unwrap())
+                .await
+                .is_none()
+        );
+        assert!(
+            storage
+                .get_user_pool_client(&client_id.parse().unwrap())
+                .await
+                .is_none()
+        );
+        assert!(storage.get_user(&user_id).await.is_none());
+        assert!(
+            storage
+                .get_group(&pool_id.parse().unwrap(), &"test-group".to_string())
                 .await
                 .is_none()
         );
