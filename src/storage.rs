@@ -310,8 +310,104 @@ impl Storage {
     }
 
     pub async fn delete_user_pool(&self, id: &UserPoolId) -> Option<UserPool> {
-        let mut store = self.pool_store.write().await;
-        store.user_pools.remove(id)
+        // Acquire all write locks (always in same order to prevent deadlocks)
+        let mut pool_store = self.pool_store.write().await;
+        let mut principal_store = self.principal_store.write().await;
+        let mut group_store = self.group_store.write().await;
+        let mut branding_store = self.branding_store.write().await;
+
+        let pool = pool_store.user_pools.remove(id)?;
+
+        // Clean up pool_store: clients, domain, identity providers, resource servers, etc.
+        let client_ids: Vec<ClientId> = pool_store
+            .user_pool_clients
+            .iter()
+            .filter(|(_, c)| &c.user_pool_id == id)
+            .map(|(cid, _)| cid.clone())
+            .collect();
+        for cid in &client_ids {
+            pool_store.user_pool_clients.remove(cid);
+            branding_store.client_brandings.remove(cid);
+        }
+
+        if let Some(domain_prefix) = pool_store.user_pool_id_to_domain.remove(id) {
+            pool_store.user_pool_domains.remove(&domain_prefix);
+        }
+
+        pool_store
+            .identity_providers
+            .retain(|(pool_id, _), _| pool_id != id);
+        pool_store
+            .resource_servers
+            .retain(|(pool_id, _), _| pool_id != id);
+        pool_store
+            .user_import_jobs
+            .retain(|_, job| job.user_pool_id != *id);
+        pool_store
+            .terms_documents
+            .retain(|_, doc| doc.user_pool_id != *id);
+        pool_store
+            .terms_name_index
+            .retain(|(pool_id, _, _), _| pool_id != id);
+        pool_store
+            .ui_customizations
+            .retain(|(pool_id, _), _| pool_id != id);
+        pool_store
+            .risk_configurations
+            .retain(|(pool_id, _), _| pool_id != id);
+        pool_store.log_delivery_configurations.remove(id);
+
+        // Clean up principal_store: users and all user-associated data
+        let user_ids: Vec<UserId> = principal_store
+            .users
+            .iter()
+            .filter(|(_, u)| &u.user_pool_id == id)
+            .map(|(uid, _)| *uid)
+            .collect();
+        for uid in &user_ids {
+            principal_store.users.remove(uid);
+            principal_store.confirmation_codes.remove(uid);
+            principal_store.password_reset_codes.remove(uid);
+            principal_store
+                .devices
+                .retain(|(device_uid, _), _| device_uid != uid);
+            principal_store.webauthn_credentials.remove(uid);
+            principal_store.webauthn_registration_challenges.remove(uid);
+            principal_store.user_auth_factors.remove(uid);
+
+            // Clean up auth events for this user
+            if let Some(event_ids) = principal_store.user_auth_event_index.remove(uid) {
+                for event_id in event_ids {
+                    principal_store.auth_events.remove(&event_id);
+                }
+            }
+        }
+
+        principal_store
+            .username_index
+            .retain(|(pool_id, _), _| pool_id != id);
+        principal_store
+            .refresh_tokens
+            .retain(|_, token| !user_ids.contains(&token.user_id));
+        principal_store
+            .software_token_sessions
+            .retain(|_, (uid, _)| !user_ids.contains(uid));
+        principal_store
+            .authorization_codes
+            .retain(|_, code| !client_ids.contains(&code.client_id));
+
+        // Clean up group_store
+        group_store.groups.retain(|(pool_id, _), _| pool_id != id);
+        for uid in &user_ids {
+            group_store.user_groups.remove(uid);
+        }
+
+        // Clean up branding_store
+        if let Some(branding_id) = branding_store.user_pool_brandings.remove(id) {
+            branding_store.managed_login_brandings.remove(&branding_id);
+        }
+
+        Some(pool)
     }
 
     pub async fn list_user_pools(&self) -> Vec<UserPool> {
