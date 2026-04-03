@@ -138,7 +138,9 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
             }
 
             if !verify_password(password, &user.password_hash) {
-                return Err(AppError::InvalidPassword);
+                return Err(AppError::NotAuthorized(
+                    "Incorrect username or password.".to_string(),
+                ));
             }
 
             let groups = storage.get_groups_for_user(&user.id).await;
@@ -433,7 +435,7 @@ mod tests {
         .await;
 
         assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), AppError::InvalidPassword));
+        assert!(matches!(result.unwrap_err(), AppError::NotAuthorized(_)));
     }
 
     #[tokio::test]

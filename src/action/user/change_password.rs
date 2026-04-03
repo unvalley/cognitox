@@ -38,7 +38,9 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
         .ok_or(AppError::UserNotFound)?;
 
     if !verify_password(&req.previous_password, &user.password_hash) {
-        return Err(AppError::InvalidPassword);
+        return Err(AppError::NotAuthorized(
+            "Incorrect username or password.".to_string(),
+        ));
     }
 
     user.password_hash = hash_password(&req.proposed_password).map_err(AppError::Internal)?;

@@ -134,6 +134,9 @@ pub enum AppError {
     #[error("Storage error: {0}")]
     Storage(String),
 
+    #[error("Not authorized: {0}")]
+    NotAuthorized(String),
+
     #[error("Not implemented: {0}")]
     NotImplemented(String),
 }
@@ -193,6 +196,7 @@ impl IntoResponse for AppError {
             AppError::InvalidParameter(_) => (StatusCode::BAD_REQUEST, "InvalidParameterException"),
             AppError::Internal(_) => (StatusCode::INTERNAL_SERVER_ERROR, "InternalErrorException"),
             AppError::Storage(_) => (StatusCode::INTERNAL_SERVER_ERROR, "InternalErrorException"),
+            AppError::NotAuthorized(_) => (StatusCode::UNAUTHORIZED, "NotAuthorizedException"),
             AppError::NotImplemented(_) => (StatusCode::NOT_IMPLEMENTED, "NotImplementedException"),
         };
 
