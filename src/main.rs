@@ -1,4 +1,4 @@
-use std::net::SocketAddr;
+use std::{net::SocketAddr, sync::Arc};
 
 use cognito_emulator::{api, storage::Storage};
 use tower_http::{
@@ -22,13 +22,13 @@ async fn main() {
     dotenvy::dotenv().ok();
 
     // Initialize storage
-    let storage = Storage::try_new().unwrap_or_else(|e| {
+    let storage = Arc::new(Storage::try_new().unwrap_or_else(|e| {
         tracing::error!("Failed to initialize storage: {e}");
         std::process::exit(1);
-    });
+    }));
 
     // Build router
-    let app = api::create_router(storage)
+    let app = api::create_router((*storage).clone())
         .layer(TraceLayer::new_for_http())
         .layer(
             CorsLayer::new()
@@ -49,7 +49,19 @@ async fn main() {
     let listener = tokio::net::TcpListener::bind(addr)
         .await
         .expect("failed to bind TCP listener");
+
+    let shutdown_storage = storage.clone();
     axum::serve(listener, app)
+        .with_graceful_shutdown(async move {
+            tokio::signal::ctrl_c()
+                .await
+                .expect("failed to listen for ctrl+c");
+            tracing::info!("Shutdown signal received, flushing persistence...");
+            if let Err(e) = shutdown_storage.flush_persistence().await {
+                tracing::error!("Failed to flush persistence on shutdown: {e}");
+            }
+            tracing::info!("Shutdown complete");
+        })
         .await
         .expect("server exited with error");
 }
