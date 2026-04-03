@@ -5,7 +5,7 @@
 </div>
 <br />
 
-AWS Cognito User Pools emulator for local development.
+Amazon Cognito User Pools emulator for local development.
 
 
 ## Configuration
@@ -22,7 +22,7 @@ See [COVERAGE.md](COVERAGE.md) for full list.
 
 ## Spec Drift Check
 
-Spec drift checks compare AWS Cognito request/response fields with each
+Spec drift checks compare Amazon Cognito request/response fields with each
 action's `Request` / `Response` structure (and JSON response shape fallback).
 
 ```bash
