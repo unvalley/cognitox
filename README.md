@@ -1,8 +1,9 @@
 # cognitox
 
 <div align="center">
-  <img width="80%" src="./public/icon-512-rounded.png" />
+<img width="100px" height="100px" src="./public/icon-512-rounded.png" />
 </div>
+<br />
 
 AWS Cognito User Pools emulator for local development.
 
