@@ -2,7 +2,7 @@
 name = "cognito-emulator"
 version = "0.1.0"
 edition = "2024"
-rust-version = "1.93.1"
+rust-version = "1.94.1"
 description = "AWS Cognito User Pools emulator for local development"
 license = "MIT"
 readme = "README.md"

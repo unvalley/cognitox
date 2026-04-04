@@ -12,7 +12,7 @@ COPY ui/ ./
 RUN pnpm run build
 
 # Dependency planner
-FROM rust:1.93.1-alpine AS chef
+FROM rust:1.94.1-alpine AS chef
 RUN apk add --no-cache musl-dev perl make && \
     cargo install cargo-chef --locked
 WORKDIR /app

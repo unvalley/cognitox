@@ -24,7 +24,7 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
         with:
-          toolchain: 1.93.1
+          toolchain: 1.94.1
           components: rustfmt, clippy
 
       - name: Check Request Syntax Drift
@@ -48,7 +48,7 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
         with:
-          toolchain: 1.93.1
+          toolchain: 1.94.1
 
       - name: Cargo publish dry-run
         run: cargo publish --dry-run
