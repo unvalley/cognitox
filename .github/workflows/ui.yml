@@ -12,7 +12,7 @@ on:
 
 jobs:
   build:
-    name: Build UI
+    name: Build & Check UI
     runs-on: ubuntu-latest
 
     steps:
@@ -27,6 +27,9 @@ jobs:
 
       - name: Install dependencies
         run: cd ui && npm ci
+
+      - name: TypeScript type check
+        run: cd ui && npm run check
 
       - name: Build
         run: cd ui && npm run build
