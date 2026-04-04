@@ -1,0 +1,14 @@
+{
+  "name": "cognitox-demo-aws-sdk-js",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "demo": "tsx demo.ts"
+  },
+  "dependencies": {
+    "@aws-sdk/client-cognito-identity-provider": "^3.750.0"
+  },
+  "devDependencies": {
+    "tsx": "^4.19.0"
+  }
+}
