@@ -7,10 +7,6 @@
 
 Amazon Cognito User Pools emulator for local development.
 
-- **Spec drift detection** -- automated checks against the AWS API surface
-- **Hosted UI & Admin Console** -- built-in login/signup pages and pool management UI
-- **Zero AWS dependency** -- runs entirely offline, no credentials needed
-
 > **Warning**: cognitox is designed for **local development and testing only**.
 > It is not suitable for production use. CORS is fully open (`Allow-Origin: *`) and
 > there is no authentication on the admin endpoints.
