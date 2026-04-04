@@ -56,6 +56,10 @@ tera = "1"
 # URL encoding
 urlencoding = "2"
 
+[profile.release]
+strip = true
+lto = true
+
 [dev-dependencies]
 tokio-test = "0.4"
 reqwest = { version = "0.12", features = ["json"] }

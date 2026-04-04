@@ -3,60 +3,41 @@ FROM node:24-alpine AS ui-builder
 
 WORKDIR /app/ui
 
-# Copy package files
 COPY ui/package.json ui/package-lock.json ./
-
-# Install dependencies
 RUN npm ci
 
-# Copy UI source
 COPY ui/ ./
-
-# Build UI
 RUN npm run build
 
-# Rust build stage
-FROM rust:1.93.1-alpine AS builder
-
-RUN apk add --no-cache musl-dev perl make
-
+# Dependency planner
+FROM rust:1.93.1-alpine AS chef
+RUN apk add --no-cache musl-dev perl make && \
+    cargo install cargo-chef --locked
 WORKDIR /app
 
-# Copy manifests
+FROM chef AS planner
 COPY Cargo.toml Cargo.lock ./
-
-# Create dummy main.rs to cache dependencies
-RUN mkdir src && \
-    echo "fn main() {}" > src/main.rs && \
-    echo "pub fn dummy() {}" > src/lib.rs
-
-# Build dependencies (this layer will be cached)
-RUN cargo build --release && \
-    rm -rf src
-
-# Copy actual source code
 COPY src ./src
+RUN cargo chef prepare --recipe-path recipe.json
 
-# Build the actual binary
-RUN touch src/main.rs src/lib.rs && \
-    cargo build --release
+# Dependency builder (cached unless Cargo.toml/Cargo.lock change)
+FROM chef AS builder
+COPY --from=planner /app/recipe.json recipe.json
+RUN cargo chef cook --release --recipe-path recipe.json
 
-# Runtime stage
+COPY Cargo.toml Cargo.lock ./
+COPY src ./src
+RUN cargo build --release --bin cognito-emulator
+
+# Runtime
 FROM alpine:3.20
 
-RUN apk add --no-cache ca-certificates
-
 WORKDIR /app
 
-# Copy UI dist from ui-builder
 COPY --from=ui-builder /app/ui/dist /app/ui/dist
-
-# Copy the binary from builder
 COPY --from=builder /app/target/release/cognito-emulator /app/cognito-emulator
 
-# Default port
 ENV PORT=9229
-
 EXPOSE 9229
 
 USER nobody
