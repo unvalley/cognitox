@@ -2,8 +2,14 @@
 name = "cognito-emulator"
 version = "0.1.0"
 edition = "2024"
+rust-version = "1.93.1"
 description = "AWS Cognito User Pools emulator for local development"
 license = "MIT"
+readme = "README.md"
+homepage = "https://github.com/unvalley/cognitox"
+repository = "https://github.com/unvalley/cognitox"
+keywords = ["aws", "cognito", "emulator", "testing", "local"]
+categories = ["development-tools::testing", "web-programming"]
 
 [dependencies]
 # Web framework
