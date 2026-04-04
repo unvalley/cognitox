@@ -27,12 +27,6 @@ docker build -t cognitox .
 docker run -p 9229:9229 cognitox
 ```
 
-### With Docker Compose
-
-```bash
-docker compose up
-```
-
 ### With Cargo
 
 ```bash
