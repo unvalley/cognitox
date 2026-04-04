@@ -16,20 +16,21 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: "22"
-          cache: npm
-          cache-dependency-path: ui/package-lock.json
+
+      - name: Enable pnpm
+        run: corepack enable && corepack prepare pnpm@latest --activate
 
       - name: Install dependencies
-        run: cd ui && npm ci
+        run: cd ui && pnpm install --frozen-lockfile
 
       - name: TypeScript type check
-        run: cd ui && npm run check
+        run: cd ui && pnpm run check
 
       - name: Build
-        run: cd ui && npm run build
+        run: cd ui && pnpm run build

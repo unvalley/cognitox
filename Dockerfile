@@ -1,13 +1,15 @@
 # UI build stage
 FROM node:24-alpine AS ui-builder
 
+RUN corepack enable && corepack prepare pnpm@latest --activate
+
 WORKDIR /app/ui
 
-COPY ui/package.json ui/package-lock.json ./
-RUN npm ci
+COPY ui/package.json ui/pnpm-lock.yaml ./
+RUN pnpm install --frozen-lockfile
 
 COPY ui/ ./
-RUN npm run build
+RUN pnpm run build
 
 # Dependency planner
 FROM rust:1.93.1-alpine AS chef
@@ -30,7 +32,7 @@ COPY src ./src
 RUN cargo build --release --bin cognito-emulator
 
 # Runtime
-FROM alpine:3.20
+FROM alpine:3.21
 
 WORKDIR /app
 

@@ -10,14 +10,14 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "preact": "^10.25.4",
+    "preact": "^10.29.1",
     "preact-iso": "^2.11.1"
   },
   "devDependencies": {
-    "@preact/preset-vite": "^2.9.4",
-    "@tailwindcss/vite": "^4.1.4",
-    "daisyui": "^5.0.35",
-    "tailwindcss": "^4.1.4",
+    "@preact/preset-vite": "^2.10.5",
+    "@tailwindcss/vite": "^4.2.2",
+    "daisyui": "^5.5.19",
+    "tailwindcss": "^4.2.2",
     "typescript": "^5.9.3",
     "vite": "^7.3.1"
   }
