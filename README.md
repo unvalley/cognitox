@@ -16,9 +16,6 @@ Amazon Cognito User Pools emulator for local development.
 ### With Docker
 
 ```bash
-docker run -p 9229:9229 ghcr.io/unvalley/cognitox:latest
-
-# Or build locally
 docker build -t cognitox .
 docker run -p 9229:9229 cognitox
 ```
