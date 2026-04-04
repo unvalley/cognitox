@@ -51,6 +51,7 @@ export interface User {
   UserCreateDate: string
   UserLastModifiedDate: string
   Attributes: UserAttribute[]
+  UserAttributes?: UserAttribute[]
 }
 
 export interface UserAttribute {

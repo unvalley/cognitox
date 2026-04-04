@@ -147,7 +147,7 @@ export function UserDetail({ userPool, user: initialUser, navigate }: Props) {
   }
 
   const isUnconfirmed = user?.UserStatus === 'UNCONFIRMED' || user?.UserStatus === 'FORCE_CHANGE_PASSWORD'
-  const attrs = user?.Attributes || user?.UserAttributes || []
+  const attrs: UserAttribute[] = user?.Attributes || user?.UserAttributes || []
 
   return (
     <div class="max-w-6xl">

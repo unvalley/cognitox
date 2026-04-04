@@ -19,7 +19,7 @@ dev:
 watch:
     cargo watch -x run
 
-# Run the Svelte UI dev server (hot reload)
+# Run the UI dev server (hot reload)
 ui-dev:
     cd ui && npm run dev
 
@@ -41,7 +41,7 @@ build:
 build-release:
     cargo build --release
 
-# Build the Svelte UI
+# Build the UI
 ui-build:
     cd ui && npm run build
 
@@ -67,7 +67,7 @@ test-verbose:
 test-one NAME:
     cargo test {{NAME}}
 
-# Run Svelte type checking
+# Run TypeScript type checking for UI
 ui-check:
     cd ui && npm run check
 
