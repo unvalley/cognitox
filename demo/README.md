@@ -6,6 +6,7 @@ Example applications that run against cognitox.
 |-----------|-------------|
 | [aws-sdk-js/](aws-sdk-js/) | Full user lifecycle using `@aws-sdk/client-cognito-identity-provider` |
 | [aws-sdk-python/](aws-sdk-python/) | Full user lifecycle using `boto3` |
+| [aws-sdk-rust/](aws-sdk-rust/) | Full user lifecycle using `aws-sdk-cognitoidentityprovider` |
 | [oauth-app/](oauth-app/) | OAuth 2.0 Authorization Code flow web app |
 
 ## Prerequisites
@@ -20,8 +21,8 @@ cargo run   # or: docker run -p 9229:9229 cognitox
 
 ```bash
 cd aws-sdk-js
-npm install
-npm run demo
+pnpm install
+pnpm run demo
 ```
 
 ## AWS SDK for Python
@@ -30,6 +31,13 @@ npm run demo
 cd aws-sdk-python
 pip install -r requirements.txt
 python demo.py
+```
+
+## AWS SDK for Rust
+
+```bash
+cd aws-sdk-rust
+cargo run
 ```
 
 ## OAuth App

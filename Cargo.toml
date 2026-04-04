@@ -10,6 +10,7 @@ homepage = "https://github.com/unvalley/cognitox"
 repository = "https://github.com/unvalley/cognitox"
 keywords = ["aws", "cognito", "emulator", "testing", "local"]
 categories = ["development-tools::testing", "web-programming"]
+default-run = "cognito-emulator"
 
 [dependencies]
 # Web framework
