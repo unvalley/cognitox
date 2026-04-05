@@ -1,6 +1,6 @@
-use std::{net::SocketAddr, sync::Arc};
+use std::{net::SocketAddr, path::PathBuf, sync::Arc};
 
-use clap::Parser;
+use bpaf::Bpaf;
 use cognito_emulator::{api, storage::Storage};
 use tower_http::{
     cors::{Any, CorsLayer},
@@ -13,23 +13,22 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 /// Implements all 119 cognito-idp API operations so you can develop and
 /// test Cognito-dependent applications without connecting to AWS.
 ///
-/// Admin Console:  http://localhost:<PORT>/admin/
-/// Hosted UI:      http://localhost:<PORT>/login?...
-/// Health check:   http://localhost:<PORT>/health
-#[derive(Parser)]
-#[command(name = "cognitox", version, about, long_about)]
+///   Admin Console:  http://localhost:<PORT>/admin/
+///   Hosted UI:      http://localhost:<PORT>/login?...
+///   Health check:   http://localhost:<PORT>/health
+#[derive(Debug, Clone, Bpaf)]
+#[bpaf(options, version)]
 struct Cli {
     /// Port to listen on
-    #[arg(short, long, default_value_t = 9229, env = "PORT")]
+    #[bpaf(short, long, env("PORT"), fallback(9229), display_fallback)]
     port: u16,
 
-    /// Path to persist emulator state (JSON snapshot).
-    /// If set, state survives restarts.
-    #[arg(short, long, env = "DATA_FILE")]
-    data_file: Option<String>,
+    /// Path to persist emulator state (JSON snapshot). If set, state survives restarts.
+    #[bpaf(short, long, env("DATA_FILE"), argument("FILE"))]
+    data_file: Option<PathBuf>,
 
     /// Log level filter (e.g. "debug", "cognito_emulator=debug,tower_http=info")
-    #[arg(short, long, env = "RUST_LOG")]
+    #[bpaf(short, long, env("RUST_LOG"), argument("FILTER"))]
     log_level: Option<String>,
 }
 
@@ -38,7 +37,7 @@ async fn main() {
     // Load environment variables (before CLI parsing so env vars are available)
     dotenvy::dotenv().ok();
 
-    let cli = Cli::parse();
+    let cli = cli().run();
 
     // Initialize logging
     let log_filter = cli
@@ -53,11 +52,12 @@ async fn main() {
         .init();
 
     // Initialize storage
-    let data_file = cli.data_file.map(std::path::PathBuf::from);
-    let storage = Arc::new(Storage::try_with_data_file(data_file).unwrap_or_else(|e| {
-        tracing::error!("Failed to initialize storage: {e}");
-        std::process::exit(1);
-    }));
+    let storage = Arc::new(
+        Storage::try_with_data_file(cli.data_file).unwrap_or_else(|e| {
+            tracing::error!("Failed to initialize storage: {e}");
+            std::process::exit(1);
+        }),
+    );
 
     // Build router
     let app = api::create_router((*storage).clone())
