@@ -1,7 +1,8 @@
-//! In-memory storage for Cognito entities with optional file persistence.
+//! In-memory storage for Cognito entities with pluggable persistence backends.
 //!
 //! This module provides thread-safe in-memory storage for user pools, clients, and users.
-//! If `DATA_FILE` is set, state is loaded from/saved to that file.
+//! Persistence is handled by a [`PersistenceBackend`] trait, allowing different storage
+//! modes (memory-only, file-based, etc.) to be selected via [`StorageConfig`].
 
 use std::{
     collections::HashMap,
@@ -17,6 +18,7 @@ use serde_json::Value;
 use tokio::sync::RwLock;
 use tracing::error;
 
+use crate::config::{StorageConfig, StorageMode};
 use crate::types::{
     AuthEvent, AuthorizationCode, BrandingId, ClientId, ConfirmationCode, Device, DomainPrefix,
     Group, GroupName, IdentityProvider, ManagedLoginBranding, PasswordResetCode, RefreshToken,
@@ -24,13 +26,108 @@ use crate::types::{
     UserPoolClient, UserPoolDomain, UserPoolId, WebAuthnCredential,
 };
 
-#[derive(Debug, Clone)]
+// ==================== Persistence Backend Trait ====================
+
+/// Trait for storage persistence backends.
+///
+/// Implementations control how (and whether) the in-memory state is loaded
+/// and saved. This enables pluggable storage modes (memory-only, file, WAL, etc.).
+pub(crate) trait PersistenceBackend: Send + Sync + 'static {
+    /// Load persisted state. Returns default state if no prior data exists.
+    fn load(&self) -> Result<PersistedStorageState, String>;
+
+    /// Save the given state snapshot.
+    fn save(&self, state: &PersistedStorageState) -> Result<(), String>;
+
+    /// Return the flush interval if this backend needs a periodic flush loop.
+    /// Returning `None` means no background flushing (e.g. memory-only).
+    fn flush_interval(&self) -> Option<Duration>;
+
+    /// Human-readable description for logging.
+    fn describe(&self) -> &str;
+}
+
+/// No-op persistence backend for pure in-memory mode.
+struct NullBackend;
+
+impl PersistenceBackend for NullBackend {
+    fn load(&self) -> Result<PersistedStorageState, String> {
+        Ok(PersistedStorageState::default())
+    }
+
+    fn save(&self, _state: &PersistedStorageState) -> Result<(), String> {
+        Ok(())
+    }
+
+    fn flush_interval(&self) -> Option<Duration> {
+        None
+    }
+
+    fn describe(&self) -> &str {
+        "memory (no persistence)"
+    }
+}
+
+/// File-based persistence backend using bincode + base64 snapshots.
+struct FileBackend {
+    data_file: PathBuf,
+    flush_interval: Duration,
+}
+
+impl PersistenceBackend for FileBackend {
+    fn load(&self) -> Result<PersistedStorageState, String> {
+        match fs::read_to_string(&self.data_file) {
+            Ok(content) => decode_snapshot(&content),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                Ok(PersistedStorageState::default())
+            }
+            Err(e) => Err(format!(
+                "Failed to read data file {:?}: {}",
+                self.data_file, e
+            )),
+        }
+    }
+
+    fn save(&self, state: &PersistedStorageState) -> Result<(), String> {
+        let snapshot = encode_snapshot(state)?;
+        write_snapshot_file(&self.data_file, &snapshot)
+    }
+
+    fn flush_interval(&self) -> Option<Duration> {
+        Some(self.flush_interval)
+    }
+
+    fn describe(&self) -> &str {
+        "persistent (file)"
+    }
+}
+
+/// Build a persistence backend from configuration.
+fn build_backend(config: &StorageConfig) -> Arc<dyn PersistenceBackend> {
+    match &config.mode {
+        StorageMode::Memory => Arc::new(NullBackend),
+        StorageMode::Persistent { data_file } => Arc::new(FileBackend {
+            data_file: data_file.clone(),
+            flush_interval: Duration::from_millis(config.flush_interval_ms()),
+        }),
+    }
+}
+
+#[derive(Clone)]
 pub struct Storage {
     pool_store: Arc<RwLock<PoolStore>>,
     principal_store: Arc<RwLock<PrincipalStore>>,
     group_store: Arc<RwLock<GroupStore>>,
     branding_store: Arc<RwLock<BrandingStore>>,
-    persistence: Option<Arc<PersistenceConfig>>,
+    backend: Arc<dyn PersistenceBackend>,
+}
+
+impl std::fmt::Debug for Storage {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Storage")
+            .field("backend", &self.backend.describe())
+            .finish_non_exhaustive()
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -80,16 +177,11 @@ struct BrandingStore {
 }
 
 #[derive(Debug, Serialize, Deserialize, Default)]
-struct PersistedStorageState {
+pub(crate) struct PersistedStorageState {
     pool_store: PoolStore,
     principal_store: PrincipalStore,
     group_store: GroupStore,
     branding_store: BrandingStore,
-}
-
-#[derive(Debug)]
-struct PersistenceConfig {
-    data_file: PathBuf,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -99,42 +191,94 @@ struct PersistedSnapshot {
     payload: String,
 }
 
-impl PersistedSnapshot {
-    const CURRENT_VERSION: u32 = 1;
-    const CURRENT_ENCODING: &'static str = "bincode+base64";
+const SNAPSHOT_VERSION: u32 = 1;
+const SNAPSHOT_ENCODING: &str = "bincode+base64";
+
+fn decode_snapshot(content: &str) -> Result<PersistedStorageState, String> {
+    let snapshot: PersistedSnapshot =
+        serde_json::from_str(content).map_err(|e| format!("Invalid JSON snapshot: {e}"))?;
+
+    if snapshot.version != SNAPSHOT_VERSION {
+        return Err(format!(
+            "Unsupported snapshot version: {}",
+            snapshot.version
+        ));
+    }
+
+    if snapshot.encoding != SNAPSHOT_ENCODING {
+        return Err(format!(
+            "Unsupported snapshot encoding: {}",
+            snapshot.encoding
+        ));
+    }
+
+    let payload = BASE64_STANDARD
+        .decode(snapshot.payload.as_bytes())
+        .map_err(|e| format!("Invalid snapshot payload encoding: {e}"))?;
+
+    bincode::deserialize::<PersistedStorageState>(&payload)
+        .map_err(|e| format!("Failed to deserialize snapshot payload: {e}"))
+}
+
+fn encode_snapshot(state: &PersistedStorageState) -> Result<Vec<u8>, String> {
+    let payload =
+        bincode::serialize(state).map_err(|e| format!("Failed to serialize storage state: {e}"))?;
+    let snapshot = PersistedSnapshot {
+        version: SNAPSHOT_VERSION,
+        encoding: SNAPSHOT_ENCODING.to_string(),
+        payload: BASE64_STANDARD.encode(payload),
+    };
+
+    serde_json::to_vec_pretty(&snapshot).map_err(|e| format!("Failed to encode snapshot: {e}"))
+}
+
+fn write_snapshot_file(path: &Path, data: &[u8]) -> Result<(), String> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|e| format!("Failed to create persistence directory {:?}: {}", parent, e))?;
+    }
+
+    let tmp_path = path.with_extension("tmp");
+    fs::write(&tmp_path, data)
+        .map_err(|e| format!("Failed to write temp snapshot {:?}: {}", tmp_path, e))?;
+    fs::rename(&tmp_path, path)
+        .map_err(|e| format!("Failed to atomically move snapshot to {:?}: {}", path, e))
 }
 
 impl Storage {
+    /// Create a new memory-only storage (no persistence).
+    /// Convenient default for tests and simple usage.
     pub fn new() -> Self {
-        Self::try_new().expect("Failed to initialize storage")
+        Self::with_config(StorageConfig::default()).expect("Failed to initialize storage")
     }
 
-    pub fn try_new() -> Result<Self, String> {
-        let data_file = std::env::var("DATA_FILE").ok().map(PathBuf::from);
-        Self::try_with_data_file(data_file)
-    }
-
-    pub fn try_with_data_file(data_file: Option<PathBuf>) -> Result<Self, String> {
-        let persistence = data_file.map(|data_file| Arc::new(PersistenceConfig { data_file }));
-        let initial_state = if let Some(config) = &persistence {
-            Self::load_from_file(&config.data_file)?
-        } else {
-            PersistedStorageState::default()
-        };
+    /// Create storage from a [`StorageConfig`].
+    pub fn with_config(config: StorageConfig) -> Result<Self, String> {
+        let backend = build_backend(&config);
+        let initial_state = backend.load()?;
 
         let storage = Self {
             pool_store: Arc::new(RwLock::new(initial_state.pool_store)),
             principal_store: Arc::new(RwLock::new(initial_state.principal_store)),
             group_store: Arc::new(RwLock::new(initial_state.group_store)),
             branding_store: Arc::new(RwLock::new(initial_state.branding_store)),
-            persistence,
+            backend,
         };
         storage.start_auto_persist_loop();
         Ok(storage)
     }
 
+    /// Backward-compatible constructor: `None` → memory, `Some(path)` → persistent with default interval.
+    pub fn try_with_data_file(data_file: Option<PathBuf>) -> Result<Self, String> {
+        let config = match data_file {
+            Some(path) => StorageConfig::persistent(path),
+            None => StorageConfig::memory(),
+        };
+        Self::with_config(config)
+    }
+
     fn start_auto_persist_loop(&self) {
-        let Some(config) = &self.persistence else {
+        let Some(interval) = self.backend.flush_interval() else {
             return;
         };
 
@@ -146,11 +290,11 @@ impl Storage {
         let principal_store = Arc::downgrade(&self.principal_store);
         let group_store = Arc::downgrade(&self.group_store);
         let branding_store = Arc::downgrade(&self.branding_store);
-        let data_file = config.data_file.clone();
+        let backend = Arc::clone(&self.backend);
         handle.spawn(async move {
             let mut last_snapshot: Option<Vec<u8>> = None;
             loop {
-                tokio::time::sleep(Duration::from_millis(500)).await;
+                tokio::time::sleep(interval).await;
                 let Some(pool_store) = pool_store.upgrade() else {
                     break;
                 };
@@ -171,7 +315,7 @@ impl Storage {
                 )
                 .await;
                 let snapshot = {
-                    match Storage::encode_snapshot(&state) {
+                    match encode_snapshot(&state) {
                         Ok(snapshot) => snapshot,
                         Err(e) => {
                             error!("Failed to serialize storage snapshot: {e}");
@@ -184,8 +328,8 @@ impl Storage {
                     continue;
                 }
 
-                if let Err(e) = Storage::write_snapshot_file(&data_file, &snapshot) {
-                    error!("Failed to persist storage snapshot to {:?}: {e}", data_file);
+                if let Err(e) = backend.save(&state) {
+                    error!("Failed to persist storage snapshot: {e}");
                     continue;
                 }
 
@@ -213,72 +357,8 @@ impl Storage {
         }
     }
 
-    fn load_from_file(path: &Path) -> Result<PersistedStorageState, String> {
-        match fs::read_to_string(path) {
-            Ok(content) => Self::decode_snapshot(&content),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                Ok(PersistedStorageState::default())
-            }
-            Err(e) => Err(format!("Failed to read data file {:?}: {}", path, e)),
-        }
-    }
-
-    fn decode_snapshot(content: &str) -> Result<PersistedStorageState, String> {
-        let snapshot: PersistedSnapshot =
-            serde_json::from_str(content).map_err(|e| format!("Invalid JSON snapshot: {e}"))?;
-
-        if snapshot.version != PersistedSnapshot::CURRENT_VERSION {
-            return Err(format!(
-                "Unsupported snapshot version: {}",
-                snapshot.version
-            ));
-        }
-
-        if snapshot.encoding != PersistedSnapshot::CURRENT_ENCODING {
-            return Err(format!(
-                "Unsupported snapshot encoding: {}",
-                snapshot.encoding
-            ));
-        }
-
-        let payload = BASE64_STANDARD
-            .decode(snapshot.payload.as_bytes())
-            .map_err(|e| format!("Invalid snapshot payload encoding: {e}"))?;
-
-        bincode::deserialize::<PersistedStorageState>(&payload)
-            .map_err(|e| format!("Failed to deserialize snapshot payload: {e}"))
-    }
-
-    fn encode_snapshot(state: &PersistedStorageState) -> Result<Vec<u8>, String> {
-        let payload = bincode::serialize(state)
-            .map_err(|e| format!("Failed to serialize storage state: {e}"))?;
-        let snapshot = PersistedSnapshot {
-            version: PersistedSnapshot::CURRENT_VERSION,
-            encoding: PersistedSnapshot::CURRENT_ENCODING.to_string(),
-            payload: BASE64_STANDARD.encode(payload),
-        };
-
-        serde_json::to_vec_pretty(&snapshot).map_err(|e| format!("Failed to encode snapshot: {e}"))
-    }
-
-    fn write_snapshot_file(path: &Path, data: &[u8]) -> Result<(), String> {
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent).map_err(|e| {
-                format!("Failed to create persistence directory {:?}: {}", parent, e)
-            })?;
-        }
-
-        let tmp_path = path.with_extension("tmp");
-        fs::write(&tmp_path, data)
-            .map_err(|e| format!("Failed to write temp snapshot {:?}: {}", tmp_path, e))?;
-        fs::rename(&tmp_path, path)
-            .map_err(|e| format!("Failed to atomically move snapshot to {:?}: {}", path, e))
-    }
-
+    /// Flush in-memory state to the persistence backend immediately.
     pub async fn flush_persistence(&self) -> Result<(), String> {
-        let Some(config) = &self.persistence else {
-            return Ok(());
-        };
         let state = Self::capture_state(
             &self.pool_store,
             &self.principal_store,
@@ -286,14 +366,12 @@ impl Storage {
             &self.branding_store,
         )
         .await;
-        let snapshot = Self::encode_snapshot(&state)?;
-        Self::write_snapshot_file(&config.data_file, &snapshot)
+        self.backend.save(&state)
     }
 
-    pub fn persistence_path(&self) -> Option<&Path> {
-        self.persistence
-            .as_ref()
-            .map(|config| config.data_file.as_path())
+    /// Returns a description of the active storage backend.
+    pub fn backend_description(&self) -> &str {
+        self.backend.describe()
     }
 
     // ==================== User Pool Operations ====================
@@ -1431,17 +1509,25 @@ mod tests {
     use super::*;
     use chrono::Utc;
 
+    use crate::config::StorageConfig;
     use crate::types::{UserPool, UserPoolId};
 
     fn temp_data_file() -> PathBuf {
         std::env::temp_dir().join(format!("cognitox-storage-{}.json", uuid::Uuid::new_v4()))
     }
 
+    #[test]
+    fn test_memory_backend_describe() {
+        let storage = Storage::new();
+        assert_eq!(storage.backend_description(), "memory (no persistence)");
+    }
+
     #[tokio::test]
     async fn test_persistence_roundtrip() {
         let path = temp_data_file();
 
-        let storage = Storage::try_with_data_file(Some(path.clone())).unwrap();
+        let config = StorageConfig::persistent(path.clone());
+        let storage = Storage::with_config(config).unwrap();
         let now = Utc::now();
         let pool = UserPool {
             id: UserPoolId::new_local(),
@@ -1452,10 +1538,34 @@ mod tests {
         storage.create_user_pool(pool).await;
         storage.flush_persistence().await.unwrap();
 
-        let loaded = Storage::try_with_data_file(Some(path.clone())).unwrap();
+        let loaded = Storage::with_config(StorageConfig::persistent(path.clone())).unwrap();
         let pools = loaded.list_user_pools().await;
         assert_eq!(pools.len(), 1);
         assert_eq!(pools[0].name, "persisted-pool");
+        assert_eq!(loaded.backend_description(), "persistent (file)");
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[tokio::test]
+    async fn test_persistence_roundtrip_compat() {
+        let path = temp_data_file();
+
+        let storage = Storage::try_with_data_file(Some(path.clone())).unwrap();
+        let now = Utc::now();
+        let pool = UserPool {
+            id: UserPoolId::new_local(),
+            name: "compat-pool".to_string(),
+            creation_date: now,
+            last_modified_date: now,
+        };
+        storage.create_user_pool(pool).await;
+        storage.flush_persistence().await.unwrap();
+
+        let loaded = Storage::try_with_data_file(Some(path.clone())).unwrap();
+        let pools = loaded.list_user_pools().await;
+        assert_eq!(pools.len(), 1);
+        assert_eq!(pools[0].name, "compat-pool");
 
         let _ = fs::remove_file(path);
     }
@@ -1465,9 +1575,108 @@ mod tests {
         let path = temp_data_file();
         fs::write(&path, "{not valid json").unwrap();
 
-        let result = Storage::try_with_data_file(Some(path.clone()));
+        let result = Storage::with_config(StorageConfig::persistent(path.clone()));
         assert!(result.is_err());
 
         let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn test_null_backend_load_returns_default() {
+        let backend = NullBackend;
+        let state = backend.load().unwrap();
+        assert!(state.pool_store.user_pools.is_empty());
+        assert!(state.principal_store.users.is_empty());
+    }
+
+    #[test]
+    fn test_null_backend_save_is_noop() {
+        let backend = NullBackend;
+        let state = PersistedStorageState::default();
+        assert!(backend.save(&state).is_ok());
+    }
+
+    #[test]
+    fn test_null_backend_no_flush_interval() {
+        let backend = NullBackend;
+        assert!(backend.flush_interval().is_none());
+    }
+
+    #[test]
+    fn test_file_backend_load_missing_file_returns_default() {
+        let backend = FileBackend {
+            data_file: PathBuf::from("/tmp/cognitox-nonexistent-file.json"),
+            flush_interval: Duration::from_millis(500),
+        };
+        let state = backend.load().unwrap();
+        assert!(state.pool_store.user_pools.is_empty());
+    }
+
+    #[test]
+    fn test_file_backend_has_flush_interval() {
+        let backend = FileBackend {
+            data_file: PathBuf::from("/tmp/test.json"),
+            flush_interval: Duration::from_millis(1000),
+        };
+        assert_eq!(backend.flush_interval(), Some(Duration::from_millis(1000)));
+    }
+
+    #[test]
+    fn test_file_backend_save_and_load_roundtrip() {
+        let path = temp_data_file();
+        let backend = FileBackend {
+            data_file: path.clone(),
+            flush_interval: Duration::from_millis(500),
+        };
+
+        let mut state = PersistedStorageState::default();
+        let now = Utc::now();
+        let pool = UserPool {
+            id: UserPoolId::new_local(),
+            name: "backend-test-pool".to_string(),
+            creation_date: now,
+            last_modified_date: now,
+        };
+        state.pool_store.user_pools.insert(pool.id.clone(), pool);
+        backend.save(&state).unwrap();
+
+        let loaded = backend.load().unwrap();
+        assert_eq!(loaded.pool_store.user_pools.len(), 1);
+        let has_pool = loaded
+            .pool_store
+            .user_pools
+            .values()
+            .any(|p| p.name == "backend-test-pool");
+        assert!(has_pool);
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[tokio::test]
+    async fn test_memory_mode_flush_is_noop() {
+        let storage = Storage::new();
+        // flush on memory backend should succeed silently
+        assert!(storage.flush_persistence().await.is_ok());
+    }
+
+    #[test]
+    fn test_try_with_data_file_none_is_memory() {
+        let storage = Storage::try_with_data_file(None).unwrap();
+        assert_eq!(storage.backend_description(), "memory (no persistence)");
+    }
+
+    #[test]
+    fn test_try_with_data_file_some_is_persistent() {
+        let path = temp_data_file();
+        let storage = Storage::try_with_data_file(Some(path.clone())).unwrap();
+        assert_eq!(storage.backend_description(), "persistent (file)");
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn test_storage_debug_format() {
+        let storage = Storage::new();
+        let debug = format!("{:?}", storage);
+        assert!(debug.contains("memory (no persistence)"));
     }
 }

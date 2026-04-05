@@ -31,3 +31,5 @@ node_modules/
 
 # Cognitox data
 data.json
+
+.claude
