@@ -68,3 +68,5 @@ lto = true
 tokio-test = "0.4"
 reqwest = { version = "0.12", features = ["json"] }
 urlencoding = "2"
+aws-config = { version = "1", features = ["behavior-version-latest"] }
+aws-sdk-cognitoidentityprovider = "1"
