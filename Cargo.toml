@@ -48,6 +48,9 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # Time
 chrono = { version = "0.4", features = ["serde"] }
 
+# CLI
+clap = { version = "4", features = ["derive", "env"] }
+
 # Config
 dotenvy = "0.15"
 

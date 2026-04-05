@@ -1,5 +1,6 @@
 use std::{net::SocketAddr, sync::Arc};
 
+use clap::Parser;
 use cognito_emulator::{api, storage::Storage};
 use tower_http::{
     cors::{Any, CorsLayer},
@@ -7,22 +8,53 @@ use tower_http::{
 };
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
+/// AWS Cognito User Pools emulator for local development.
+///
+/// Implements all 119 cognito-idp API operations so you can develop and
+/// test Cognito-dependent applications without connecting to AWS.
+///
+/// Admin Console:  http://localhost:<PORT>/admin/
+/// Hosted UI:      http://localhost:<PORT>/login?...
+/// Health check:   http://localhost:<PORT>/health
+#[derive(Parser)]
+#[command(name = "cognitox", version, about, long_about)]
+struct Cli {
+    /// Port to listen on
+    #[arg(short, long, default_value_t = 9229, env = "PORT")]
+    port: u16,
+
+    /// Path to persist emulator state (JSON snapshot).
+    /// If set, state survives restarts.
+    #[arg(short, long, env = "DATA_FILE")]
+    data_file: Option<String>,
+
+    /// Log level filter (e.g. "debug", "cognito_emulator=debug,tower_http=info")
+    #[arg(short, long, env = "RUST_LOG")]
+    log_level: Option<String>,
+}
+
 #[tokio::main]
 async fn main() {
+    // Load environment variables (before CLI parsing so env vars are available)
+    dotenvy::dotenv().ok();
+
+    let cli = Cli::parse();
+
     // Initialize logging
+    let log_filter = cli
+        .log_level
+        .unwrap_or_else(|| "cognito_emulator=debug,tower_http=debug".to_string());
     tracing_subscriber::registry()
         .with(
             tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "cognito_emulator=debug,tower_http=debug".into()),
+                .unwrap_or_else(|_| log_filter.into()),
         )
         .with(tracing_subscriber::fmt::layer())
         .init();
 
-    // Load environment variables
-    dotenvy::dotenv().ok();
-
     // Initialize storage
-    let storage = Arc::new(Storage::try_new().unwrap_or_else(|e| {
+    let data_file = cli.data_file.map(std::path::PathBuf::from);
+    let storage = Arc::new(Storage::try_with_data_file(data_file).unwrap_or_else(|e| {
         tracing::error!("Failed to initialize storage: {e}");
         std::process::exit(1);
     }));
@@ -38,12 +70,7 @@ async fn main() {
         );
 
     // Start server
-    let port: u16 = std::env::var("PORT")
-        .ok()
-        .and_then(|p| p.parse().ok())
-        .unwrap_or(9229);
-
-    let addr = SocketAddr::from(([0, 0, 0, 0], port));
+    let addr = SocketAddr::from(([0, 0, 0, 0], cli.port));
     tracing::info!("Starting Cognito emulator on http://{}", addr);
 
     let listener = tokio::net::TcpListener::bind(addr)
