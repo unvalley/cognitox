@@ -1642,11 +1642,12 @@ mod tests {
 
         let loaded = backend.load().unwrap();
         assert_eq!(loaded.pool_store.user_pools.len(), 1);
-        assert!(loaded
+        let has_pool = loaded
             .pool_store
             .user_pools
             .values()
-            .any(|p| p.name == "backend-test-pool"));
+            .any(|p| p.name == "backend-test-pool");
+        assert!(has_pool);
 
         let _ = fs::remove_file(path);
     }
