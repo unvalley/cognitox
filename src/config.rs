@@ -2,16 +2,16 @@
 
 use std::path::PathBuf;
 
+/// Default flush interval for persistent storage (milliseconds).
+const FLUSH_INTERVAL_MS: u64 = 500;
+
 /// How the emulator persists its in-memory state.
 #[derive(Debug, Clone)]
 pub enum StorageMode {
     /// Pure in-memory storage. Data is lost on shutdown.
     Memory,
     /// In-memory storage with periodic file persistence.
-    Persistent {
-        data_file: PathBuf,
-        flush_interval_ms: u64,
-    },
+    Persistent { data_file: PathBuf },
 }
 
 /// Configuration for the storage layer.
@@ -19,9 +19,6 @@ pub enum StorageMode {
 pub struct StorageConfig {
     pub mode: StorageMode,
 }
-
-/// Default flush interval for persistent storage (milliseconds).
-pub const DEFAULT_FLUSH_INTERVAL_MS: u64 = 500;
 
 impl StorageConfig {
     /// Memory-only storage (no persistence).
@@ -31,24 +28,16 @@ impl StorageConfig {
         }
     }
 
-    /// Persistent storage with the default flush interval.
+    /// Persistent storage backed by a file.
     pub fn persistent(data_file: PathBuf) -> Self {
         Self {
-            mode: StorageMode::Persistent {
-                data_file,
-                flush_interval_ms: DEFAULT_FLUSH_INTERVAL_MS,
-            },
+            mode: StorageMode::Persistent { data_file },
         }
     }
 
-    /// Persistent storage with a custom flush interval.
-    pub fn persistent_with_interval(data_file: PathBuf, flush_interval_ms: u64) -> Self {
-        Self {
-            mode: StorageMode::Persistent {
-                data_file,
-                flush_interval_ms,
-            },
-        }
+    /// Flush interval used by the persistent backend.
+    pub fn flush_interval_ms(&self) -> u64 {
+        FLUSH_INTERVAL_MS
     }
 }
 

@@ -106,12 +106,9 @@ impl PersistenceBackend for FileBackend {
 fn build_backend(config: &StorageConfig) -> Arc<dyn PersistenceBackend> {
     match &config.mode {
         StorageMode::Memory => Arc::new(NullBackend),
-        StorageMode::Persistent {
-            data_file,
-            flush_interval_ms,
-        } => Arc::new(FileBackend {
+        StorageMode::Persistent { data_file } => Arc::new(FileBackend {
             data_file: data_file.clone(),
-            flush_interval: Duration::from_millis(*flush_interval_ms),
+            flush_interval: Duration::from_millis(config.flush_interval_ms()),
         }),
     }
 }
