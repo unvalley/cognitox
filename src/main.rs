@@ -20,7 +20,7 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 #[bpaf(options, version)]
 struct Cli {
     /// Port to listen on
-    #[bpaf(short, long, env("PORT"), fallback(9229), display_fallback)]
+    #[bpaf(short, long, env("COGNITOX_PORT"), fallback(9229), display_fallback)]
     port: u16,
 
     /// Storage mode: "memory" (no persistence) or "persistent" (file-backed).
@@ -34,7 +34,7 @@ struct Cli {
     storage_mode: String,
 
     /// Path to persist emulator state (JSON snapshot). Required when --storage-mode=persistent.
-    #[bpaf(short, long, env("DATA_FILE"), argument("FILE"))]
+    #[bpaf(short, long, env("COGNITOX_DATA_FILE"), argument("FILE"))]
     data_file: Option<PathBuf>,
 
     /// Log level filter (e.g. "debug", "cognito_emulator=debug,tower_http=info")
