@@ -1580,4 +1580,102 @@ mod tests {
 
         let _ = fs::remove_file(path);
     }
+
+    #[test]
+    fn test_null_backend_load_returns_default() {
+        let backend = NullBackend;
+        let state = backend.load().unwrap();
+        assert!(state.pool_store.user_pools.is_empty());
+        assert!(state.principal_store.users.is_empty());
+    }
+
+    #[test]
+    fn test_null_backend_save_is_noop() {
+        let backend = NullBackend;
+        let state = PersistedStorageState::default();
+        assert!(backend.save(&state).is_ok());
+    }
+
+    #[test]
+    fn test_null_backend_no_flush_interval() {
+        let backend = NullBackend;
+        assert!(backend.flush_interval().is_none());
+    }
+
+    #[test]
+    fn test_file_backend_load_missing_file_returns_default() {
+        let backend = FileBackend {
+            data_file: PathBuf::from("/tmp/cognitox-nonexistent-file.json"),
+            flush_interval: Duration::from_millis(500),
+        };
+        let state = backend.load().unwrap();
+        assert!(state.pool_store.user_pools.is_empty());
+    }
+
+    #[test]
+    fn test_file_backend_has_flush_interval() {
+        let backend = FileBackend {
+            data_file: PathBuf::from("/tmp/test.json"),
+            flush_interval: Duration::from_millis(1000),
+        };
+        assert_eq!(backend.flush_interval(), Some(Duration::from_millis(1000)));
+    }
+
+    #[test]
+    fn test_file_backend_save_and_load_roundtrip() {
+        let path = temp_data_file();
+        let backend = FileBackend {
+            data_file: path.clone(),
+            flush_interval: Duration::from_millis(500),
+        };
+
+        let mut state = PersistedStorageState::default();
+        let now = Utc::now();
+        let pool = UserPool {
+            id: UserPoolId::new_local(),
+            name: "backend-test-pool".to_string(),
+            creation_date: now,
+            last_modified_date: now,
+        };
+        state.pool_store.user_pools.insert(pool.id.clone(), pool);
+        backend.save(&state).unwrap();
+
+        let loaded = backend.load().unwrap();
+        assert_eq!(loaded.pool_store.user_pools.len(), 1);
+        assert!(loaded
+            .pool_store
+            .user_pools
+            .values()
+            .any(|p| p.name == "backend-test-pool"));
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[tokio::test]
+    async fn test_memory_mode_flush_is_noop() {
+        let storage = Storage::new();
+        // flush on memory backend should succeed silently
+        assert!(storage.flush_persistence().await.is_ok());
+    }
+
+    #[test]
+    fn test_try_with_data_file_none_is_memory() {
+        let storage = Storage::try_with_data_file(None).unwrap();
+        assert_eq!(storage.backend_description(), "memory (no persistence)");
+    }
+
+    #[test]
+    fn test_try_with_data_file_some_is_persistent() {
+        let path = temp_data_file();
+        let storage = Storage::try_with_data_file(Some(path.clone())).unwrap();
+        assert_eq!(storage.backend_description(), "persistent (file)");
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn test_storage_debug_format() {
+        let storage = Storage::new();
+        let debug = format!("{:?}", storage);
+        assert!(debug.contains("memory (no persistence)"));
+    }
 }

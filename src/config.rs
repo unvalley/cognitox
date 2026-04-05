@@ -46,3 +46,33 @@ impl Default for StorageConfig {
         Self::memory()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_is_memory() {
+        let config = StorageConfig::default();
+        assert!(matches!(config.mode, StorageMode::Memory));
+    }
+
+    #[test]
+    fn persistent_stores_path() {
+        let config = StorageConfig::persistent(PathBuf::from("/tmp/test.json"));
+        match &config.mode {
+            StorageMode::Persistent { data_file } => {
+                assert_eq!(data_file, &PathBuf::from("/tmp/test.json"));
+            }
+            _ => panic!("expected Persistent mode"),
+        }
+    }
+
+    #[test]
+    fn flush_interval_returns_constant() {
+        let memory = StorageConfig::memory();
+        let persistent = StorageConfig::persistent(PathBuf::from("/tmp/test.json"));
+        assert_eq!(memory.flush_interval_ms(), persistent.flush_interval_ms());
+        assert_eq!(memory.flush_interval_ms(), 500);
+    }
+}
