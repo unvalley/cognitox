@@ -1,7 +1,11 @@
 use std::{net::SocketAddr, path::PathBuf, sync::Arc};
 
 use bpaf::Bpaf;
-use cognito_emulator::{api, storage::Storage};
+use cognito_emulator::{
+    api,
+    config::{DEFAULT_FLUSH_INTERVAL_MS, StorageConfig},
+    storage::Storage,
+};
 use tower_http::{
     cors::{Any, CorsLayer},
     trace::TraceLayer,
@@ -23,13 +27,62 @@ struct Cli {
     #[bpaf(short, long, env("PORT"), fallback(9229), display_fallback)]
     port: u16,
 
-    /// Path to persist emulator state (JSON snapshot). If set, state survives restarts.
+    /// Storage mode: "memory" (no persistence) or "persistent" (file-backed).
+    /// When "persistent", --data-file is required.
+    #[bpaf(
+        long,
+        env("COGNITOX_STORAGE_MODE"),
+        fallback(String::from("memory")),
+        display_fallback
+    )]
+    storage_mode: String,
+
+    /// Path to persist emulator state (JSON snapshot). Required when --storage-mode=persistent.
     #[bpaf(short, long, env("DATA_FILE"), argument("FILE"))]
     data_file: Option<PathBuf>,
+
+    /// Flush interval in milliseconds for persistent storage.
+    #[bpaf(
+        long,
+        env("COGNITOX_FLUSH_INTERVAL_MS"),
+        fallback(DEFAULT_FLUSH_INTERVAL_MS),
+        display_fallback
+    )]
+    flush_interval_ms: u64,
 
     /// Log level filter (e.g. "debug", "cognito_emulator=debug,tower_http=info")
     #[bpaf(short, long, env("RUST_LOG"), argument("FILTER"))]
     log_level: Option<String>,
+}
+
+impl Cli {
+    fn storage_config(&self) -> Result<StorageConfig, String> {
+        match self.storage_mode.as_str() {
+            "memory" => {
+                // If data_file is provided but mode is memory, upgrade to persistent
+                // for backward compatibility with the old --data-file-only interface.
+                match &self.data_file {
+                    Some(path) => Ok(StorageConfig::persistent_with_interval(
+                        path.clone(),
+                        self.flush_interval_ms,
+                    )),
+                    None => Ok(StorageConfig::memory()),
+                }
+            }
+            "persistent" => {
+                let path = self.data_file.clone().ok_or_else(|| {
+                    "--data-file is required when --storage-mode=persistent".to_string()
+                })?;
+                Ok(StorageConfig::persistent_with_interval(
+                    path,
+                    self.flush_interval_ms,
+                ))
+            }
+            other => Err(format!(
+                "Unknown storage mode: {other}. Expected \"memory\" or \"persistent\"."
+            )),
+        }
+    }
 }
 
 #[tokio::main]
@@ -42,6 +95,7 @@ async fn main() {
     // Initialize logging
     let log_filter = cli
         .log_level
+        .clone()
         .unwrap_or_else(|| "cognito_emulator=debug,tower_http=debug".to_string());
     tracing_subscriber::registry()
         .with(
@@ -51,13 +105,19 @@ async fn main() {
         .with(tracing_subscriber::fmt::layer())
         .init();
 
+    // Build storage config
+    let storage_config = cli.storage_config().unwrap_or_else(|e| {
+        tracing::error!("{e}");
+        std::process::exit(1);
+    });
+
     // Initialize storage
-    let storage = Arc::new(
-        Storage::try_with_data_file(cli.data_file).unwrap_or_else(|e| {
-            tracing::error!("Failed to initialize storage: {e}");
-            std::process::exit(1);
-        }),
-    );
+    let storage = Arc::new(Storage::with_config(storage_config).unwrap_or_else(|e| {
+        tracing::error!("Failed to initialize storage: {e}");
+        std::process::exit(1);
+    }));
+
+    tracing::info!("Storage backend: {}", storage.backend_description());
 
     // Build router
     let app = api::create_router((*storage).clone())
