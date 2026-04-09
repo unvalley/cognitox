@@ -13,7 +13,15 @@ Amazon Cognito User Pools emulator for local development.
 
 ## Quick Start
 
-### With Docker
+### With Docker (GHCR)
+
+```bash
+# Pull pre-built image from GitHub Container Registry
+docker pull ghcr.io/unvalley/cognitox:latest
+docker run -p 9229:9229 ghcr.io/unvalley/cognitox:latest
+```
+
+### With Docker (local build)
 
 ```bash
 docker build -t cognitox .
