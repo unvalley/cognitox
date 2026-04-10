@@ -48,7 +48,7 @@ impl DockerContainer {
                 "-e",
                 &format!("PORT={}", PORT),
                 "-e",
-                "RUST_LOG=cognito_emulator=info",
+                "RUST_LOG=cognitox=info",
                 IMAGE_NAME,
             ])
             .output()

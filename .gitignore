@@ -28,6 +28,7 @@ target
 
 # Node
 node_modules/
+ui/dist/
 
 # Cognitox data
 data.json

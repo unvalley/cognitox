@@ -5,13 +5,24 @@ pub mod oauth2;
 
 use axum::{
     Json, Router,
+    body::Body,
+    extract::Path,
+    http::{StatusCode, header},
+    response::{IntoResponse, Response},
     routing::{get, post},
 };
+use rust_embed::RustEmbed;
 use serde_json::{Value, json};
-use tower_http::services::{ServeDir, ServeFile};
 
 use crate::jwt::get_jwks;
 use crate::storage::Storage;
+
+/// Admin/Preact UI bundled at compile time from `ui/dist/`.
+///
+/// Run `pnpm --dir ui build` before `cargo build` to refresh the assets.
+#[derive(RustEmbed)]
+#[folder = "ui/dist/"]
+struct UiAssets;
 
 async fn health() -> Json<Value> {
     Json(json!({ "status": "ok" }))
@@ -22,22 +33,59 @@ async fn jwks() -> Json<Value> {
     Json(get_jwks())
 }
 
+/// Serve an embedded file by path, or a fallback asset (SPA entry HTML) on miss.
+fn serve_embedded(path: &str, fallback: &str) -> Response {
+    let file = UiAssets::get(path).or_else(|| UiAssets::get(fallback));
+    match file {
+        Some(content) => {
+            let mime = mime_guess::from_path(path).first_or_octet_stream();
+            Response::builder()
+                .status(StatusCode::OK)
+                .header(header::CONTENT_TYPE, mime.as_ref())
+                .body(Body::from(content.data.into_owned()))
+                .unwrap()
+        }
+        None => (StatusCode::NOT_FOUND, "Not Found").into_response(),
+    }
+}
+
+async fn assets_handler(Path(path): Path<String>) -> Response {
+    let full = format!("assets/{path}");
+    match UiAssets::get(&full) {
+        Some(content) => {
+            let mime = mime_guess::from_path(&full).first_or_octet_stream();
+            Response::builder()
+                .status(StatusCode::OK)
+                .header(header::CONTENT_TYPE, mime.as_ref())
+                .body(Body::from(content.data.into_owned()))
+                .unwrap()
+        }
+        None => (StatusCode::NOT_FOUND, "Not Found").into_response(),
+    }
+}
+
+async fn admin_index() -> Response {
+    serve_embedded("admin.html", "admin.html")
+}
+
+async fn admin_handler(Path(path): Path<String>) -> Response {
+    // Admin SPA: fall back to admin.html for deep links
+    serve_embedded(&path, "admin.html")
+}
+
+async fn ui_index() -> Response {
+    serve_embedded("index.html", "index.html")
+}
+
+async fn ui_handler(Path(path): Path<String>) -> Response {
+    // Preact UI SPA: fall back to index.html for deep links
+    serve_embedded(&path, "index.html")
+}
+
 pub fn create_router(storage: Storage) -> Router {
-    // Preact UI static files (if available)
-    let ui_service =
-        ServeDir::new("ui/dist").not_found_service(ServeFile::new("ui/dist/index.html"));
-
-    // Admin UI static files - disable index.html auto-serve so admin.html is used via fallback
-    let admin_service = ServeDir::new("ui/dist")
-        .append_index_html_on_directories(false)
-        .not_found_service(ServeFile::new("ui/dist/admin.html"));
-
-    // Static assets served from root /assets/* for SPA deep links
-    let assets_service = ServeDir::new("ui/dist/assets");
-
     Router::new()
         // Static assets (must be before SPA routes)
-        .nest_service("/assets", assets_service)
+        .route("/assets/{*path}", get(assets_handler))
         // Health check
         .route("/health", get(health))
         // OpenID Connect Discovery
@@ -72,9 +120,13 @@ pub fn create_router(storage: Storage) -> Router {
             get(hosted_ui::reset_password_page).post(hosted_ui::reset_password_submit),
         )
         // Preact UI (modern mode) - serves SPA at /ui/*
-        .nest_service("/ui", ui_service)
+        .route("/ui", get(ui_index))
+        .route("/ui/", get(ui_index))
+        .route("/ui/{*path}", get(ui_handler))
         // Admin UI - serves SPA at /admin/*
-        .nest_service("/admin", admin_service)
+        .route("/admin", get(admin_index))
+        .route("/admin/", get(admin_index))
+        .route("/admin/{*path}", get(admin_handler))
         // Cognito API
         .route("/", post(cognito_idp::handle_request))
         .with_state(storage)

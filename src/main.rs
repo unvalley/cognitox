@@ -1,7 +1,7 @@
 use std::{net::SocketAddr, path::PathBuf, sync::Arc};
 
 use bpaf::Bpaf;
-use cognito_emulator::{api, config::StorageConfig, storage::Storage};
+use cognitox::{api, config::StorageConfig, storage::Storage};
 use tower_http::{
     cors::{Any, CorsLayer},
     trace::TraceLayer,
@@ -37,7 +37,7 @@ struct Cli {
     #[bpaf(short, long, env("COGNITOX_DATA_FILE"), argument("FILE"))]
     data_file: Option<PathBuf>,
 
-    /// Log level filter (e.g. "debug", "cognito_emulator=debug,tower_http=info")
+    /// Log level filter (e.g. "debug", "cognitox=debug,tower_http=info")
     #[bpaf(short, long, env("RUST_LOG"), argument("FILTER"))]
     log_level: Option<String>,
 }
@@ -77,7 +77,7 @@ async fn main() {
     let log_filter = cli
         .log_level
         .clone()
-        .unwrap_or_else(|| "cognito_emulator=debug,tower_http=debug".to_string());
+        .unwrap_or_else(|| "cognitox=debug,tower_http=debug".to_string());
     tracing_subscriber::registry()
         .with(
             tracing_subscriber::EnvFilter::try_from_default_env()

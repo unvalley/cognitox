@@ -5,4 +5,4 @@ services:
       - "9229:9229"
     environment:
       - PORT=9229
-      - RUST_LOG=cognito_emulator=info
+      - RUST_LOG=cognitox=info

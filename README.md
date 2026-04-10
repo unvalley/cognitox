@@ -31,9 +31,11 @@ docker run -p 9229:9229 cognitox
 ### With Cargo
 
 ```bash
-cargo install --git https://github.com/unvalley/cognitox
-cognitox          # or: cargo run
+cargo install cognitox
+cognitox
 ```
+
+The admin console and Preact UI are embedded into the binary, so `cargo install` gives you a fully self-contained emulator — no extra assets to ship.
 
 ## Usage
 

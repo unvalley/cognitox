@@ -4,7 +4,7 @@ use axum::{
     body::Body,
     http::{Request, StatusCode},
 };
-use cognito_emulator::{api, storage::Storage};
+use cognitox::{api, storage::Storage};
 use serde_json::Value;
 use tower::ServiceExt;
 

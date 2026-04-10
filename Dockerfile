@@ -29,19 +29,19 @@ RUN cargo chef cook --release --recipe-path recipe.json
 
 COPY Cargo.toml Cargo.lock ./
 COPY src ./src
-RUN cargo build --release --bin cognito-emulator
+COPY --from=ui-builder /app/ui/dist ./ui/dist
+RUN cargo build --release --bin cognitox
 
 # Runtime
 FROM alpine:3.21
 
 WORKDIR /app
 
-COPY --from=ui-builder /app/ui/dist /app/ui/dist
-COPY --from=builder /app/target/release/cognito-emulator /app/cognito-emulator
+COPY --from=builder /app/target/release/cognitox /app/cognitox
 
 ENV PORT=9229
 EXPOSE 9229
 
 USER nobody
 
-CMD ["/app/cognito-emulator"]
+CMD ["/app/cognitox"]
