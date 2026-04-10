@@ -126,6 +126,24 @@ clean:
 clean-all: clean ui-clean
 
 # =============================================================================
+# Release (crates.io)
+# =============================================================================
+
+# Rebuild the UI so rust-embed picks up fresh assets. ui/dist is gitignored,
+# so every publish must start from a clean build.
+publish-prepare: ui-build
+    @echo "UI assets rebuilt at ui/dist/"
+
+# Full pre-flight: fmt check, clippy, tests, and a publish dry-run.
+publish-check: publish-prepare fmt-check lint test
+    cargo publish --dry-run --allow-dirty
+
+# Publish to crates.io. Runs the full check first.
+# --allow-dirty is required because ui/dist/ is gitignored.
+publish: publish-check
+    cargo publish --allow-dirty
+
+# =============================================================================
 # Docker
 # =============================================================================
 
