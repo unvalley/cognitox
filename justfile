@@ -139,12 +139,12 @@ publish-prepare: ui-build
 
 # Full pre-flight: UI build, fmt check, clippy, tests, and a publish dry-run.
 publish-check: publish-prepare fmt-check lint test
-    cargo publish --dry-run --allow-dirty
+    cargo publish --dry-run --locked --allow-dirty
 
 # Publish to crates.io manually. Prefer the GitHub Actions release workflow.
 # --allow-dirty is required because ui/dist/ is gitignored.
 publish: publish-check
-    cargo publish --allow-dirty
+    cargo publish --locked --allow-dirty
 
 # =============================================================================
 # Docker

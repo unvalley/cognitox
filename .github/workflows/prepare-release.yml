@@ -1,0 +1,44 @@
+name: Prepare Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to release (e.g. 0.1.2 or v0.1.2)"
+        required: true
+
+permissions:
+  actions: write
+  contents: write
+
+jobs:
+  tag:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          fetch-depth: 0
+
+      - name: Configure Git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Normalize tag
+        id: normalize
+        run: |
+          version="${{ inputs.version }}"
+          version="${version#v}"
+          echo "tag=v${version}" >> "$GITHUB_OUTPUT"
+
+      - name: Bump version and tag
+        run: ./scripts/release.sh "${{ steps.normalize.outputs.tag }}"
+
+      - name: Push commit and tag
+        run: git push origin HEAD --follow-tags
+
+      - name: Trigger release workflow
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh workflow run release.yml -f tag="${{ steps.normalize.outputs.tag }}"

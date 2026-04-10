@@ -1,12 +1,14 @@
 name: Release
 
 on:
+  push:
+    tags:
+      - "v*"
   workflow_dispatch:
     inputs:
-      version:
-        description: "Release version (e.g. 0.2.0)"
+      tag:
+        description: "Release tag (e.g. v0.1.2)"
         required: true
-        type: string
 
 permissions:
   contents: write
@@ -15,41 +17,42 @@ permissions:
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
+  TAG_NAME: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
 
 jobs:
-  test:
-    name: Test
+  verify:
+    name: Verify Version
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
+      - name: Checkout Repository
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
-          toolchain: 1.94.1
-          components: rustfmt, clippy
+          ref: refs/tags/${{ env.TAG_NAME }}
 
-      - name: Format
-        run: cargo fmt --check
-
-      - name: Clippy
-        run: cargo clippy -- -D warnings
-
-      - name: Test
-        run: cargo test
-
-  release:
-    name: Tag, Push Docker Image & Create Release
-    runs-on: ubuntu-latest
-    needs: test
-    steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
-
-      - name: Create and push tag
+      - name: Verify Cargo.toml version matches tag
         run: |
-          TAG="v${{ inputs.version }}"
-          git tag -a "$TAG" -m "$TAG"
-          git push origin "$TAG"
+          tag="${TAG_NAME#v}"
+          version="$(
+            awk -F' *= *' '
+              $0=="[package]" {in_pkg=1; next}
+              /^\[/ {in_pkg=0}
+              in_pkg && $1=="version" {gsub(/"/,"",$2); print $2; exit}
+            ' Cargo.toml
+          )"
+          if [[ "${tag}" != "${version}" ]]; then
+            echo "::error::Tag ${TAG_NAME} does not match Cargo.toml version ${version}."
+            exit 1
+          fi
+
+  docker:
+    name: Publish Docker Image
+    runs-on: ubuntu-latest
+    needs: verify
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          ref: refs/tags/${{ env.TAG_NAME }}
 
       - name: Log in to GHCR
         uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
@@ -64,24 +67,65 @@ jobs:
           context: .
           push: true
           tags: |
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ inputs.version }}
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.TAG_NAME }}
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
 
-      - name: Create GitHub Release
+  release:
+    name: Publish GitHub Release
+    runs-on: ubuntu-latest
+    needs: verify
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          fetch-depth: 0
+          ref: refs/tags/${{ env.TAG_NAME }}
+
+      - name: Build release notes
+        shell: bash
+        run: |
+          tag="${TAG_NAME}"
+          repo_url="https://github.com/${GITHUB_REPOSITORY}"
+          git fetch --tags --force
+          previous_tag="$(git tag --list 'v*' --sort=-v:refname | grep -Fxv "${tag}" | head -n 1 || true)"
+          if [[ -n "${previous_tag}" ]]; then
+            range="${previous_tag}..${tag}"
+            compare_link="${repo_url}/compare/${previous_tag}...${tag}"
+          else
+            range="${tag}"
+            compare_link="(first release)"
+          fi
+
+          {
+            echo "## Release Summary"
+            echo "- Compare: ${compare_link}"
+            echo ""
+            echo "## Commits"
+            commits="$(git log --no-merges --pretty='- %s (%h)' "${range}")"
+            if [[ -z "${commits}" ]]; then
+              echo "- No commits found"
+            else
+              echo "${commits}"
+            fi
+          } > RELEASE_NOTES.md
+
+      - name: Publish to GitHub Releases
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          TAG="v${{ inputs.version }}"
-          gh release create "$TAG" \
-            --title "$TAG" \
-            --generate-notes
+          gh release create "${TAG_NAME}" \
+            --title "${TAG_NAME}" \
+            --notes-file RELEASE_NOTES.md
 
-  publish-crate:
+  publish_crates:
     name: Publish to crates.io
     runs-on: ubuntu-latest
-    needs: test
+    needs: verify
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      - name: Checkout Repository
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          ref: refs/tags/${{ env.TAG_NAME }}
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
@@ -100,15 +144,6 @@ jobs:
           cache: pnpm
           cache-dependency-path: ui/pnpm-lock.yaml
 
-      - name: Verify Cargo.toml version matches release input
-        run: |
-          CARGO_VERSION=$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)
-          if [ "$CARGO_VERSION" != "${{ inputs.version }}" ]; then
-            echo "Cargo.toml version ($CARGO_VERSION) does not match release input (${{ inputs.version }})."
-            echo "Bump Cargo.toml and commit before running this workflow."
-            exit 1
-          fi
-
       - name: Build UI (embedded into binary by rust-embed)
         working-directory: ui
         run: |
@@ -118,4 +153,4 @@ jobs:
       - name: Publish to crates.io
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
-        run: cargo publish --allow-dirty
+        run: cargo publish --locked --allow-dirty
