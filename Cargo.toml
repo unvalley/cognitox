@@ -41,11 +41,8 @@ bincode = "1"
 jsonwebtoken = "9"
 uuid = { version = "1", features = ["v4", "serde"] }
 base64 = "0.22"
-ring = "0.17"
 rsa = { version = "0.9", features = ["std"] }
-srp = "0.6"
 sha2 = "0.10"
-hmac = "0.12"
 rand = "0.8"
 bcrypt = "0.16"
 
@@ -80,6 +77,5 @@ strip = true
 lto = true
 
 [dev-dependencies]
-tokio-test = "0.4"
 reqwest = { version = "0.12", features = ["json"] }
 urlencoding = "2"
