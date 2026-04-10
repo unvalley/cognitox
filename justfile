@@ -128,17 +128,20 @@ clean-all: clean ui-clean
 # =============================================================================
 # Release (crates.io)
 # =============================================================================
+#
+# The preferred path is GitHub Actions (`.github/workflows/release.yml`,
+# workflow_dispatch "Release"). These recipes are for local verification and
+# emergency manual publishes.
 
-# Rebuild the UI so rust-embed picks up fresh assets. ui/dist is gitignored,
-# so every publish must start from a clean build.
+# Rebuild the UI so real assets — not build.rs placeholders — get embedded.
 publish-prepare: ui-build
     @echo "UI assets rebuilt at ui/dist/"
 
-# Full pre-flight: fmt check, clippy, tests, and a publish dry-run.
+# Full pre-flight: UI build, fmt check, clippy, tests, and a publish dry-run.
 publish-check: publish-prepare fmt-check lint test
     cargo publish --dry-run --allow-dirty
 
-# Publish to crates.io. Runs the full check first.
+# Publish to crates.io manually. Prefer the GitHub Actions release workflow.
 # --allow-dirty is required because ui/dist/ is gitignored.
 publish: publish-check
     cargo publish --allow-dirty

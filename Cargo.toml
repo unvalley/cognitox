@@ -16,6 +16,7 @@ include = [
     "/src/action/**/*.rs",
     "/src/api/**/*.rs",
     "/ui/dist/**/*",
+    "/build.rs",
     "/Cargo.toml",
     "/README.md",
     "/LICENSE",
@@ -71,7 +72,7 @@ tera = "1"
 urlencoding = "2"
 
 # Embedded static assets (admin UI)
-rust-embed = "8"
+rust-embed = { version = "8", features = ["interpolate-folder-path"] }
 mime_guess = "2"
 
 [profile.release]

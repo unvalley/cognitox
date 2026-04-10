@@ -17,11 +17,15 @@ use serde_json::{Value, json};
 use crate::jwt::get_jwks;
 use crate::storage::Storage;
 
-/// Admin/Preact UI bundled at compile time from `ui/dist/`.
+/// Admin/Preact UI bundled at compile time.
 ///
-/// Run `pnpm --dir ui build` before `cargo build` to refresh the assets.
+/// The assets are staged into `$OUT_DIR/ui/` by `build.rs` — either copied
+/// from `ui/dist/` when a real `pnpm --dir ui build` has been run, or
+/// populated with minimal placeholders otherwise. The indirection keeps
+/// `cargo publish --verify` happy (build scripts may only write inside
+/// `OUT_DIR`) and lets fresh clones compile without Node installed.
 #[derive(RustEmbed)]
-#[folder = "ui/dist/"]
+#[folder = "$OUT_DIR/ui/"]
 struct UiAssets;
 
 async fn health() -> Json<Value> {
