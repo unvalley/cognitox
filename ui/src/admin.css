@@ -219,6 +219,20 @@ tbody tr:nth-child(5) { animation-delay: 120ms; }
   animation: pageEnter 350ms var(--ease-out) both;
 }
 
+.admin-docs pre {
+  overflow-x: auto;
+  border-radius: 1rem;
+  background: oklch(0.12 0 0);
+  color: oklch(0.98 0 0);
+  padding: 1rem;
+  font-size: 0.875rem;
+  line-height: 1.6;
+}
+
+.admin-docs pre code {
+  white-space: pre;
+}
+
 @keyframes pageEnter {
   from {
     opacity: 0;

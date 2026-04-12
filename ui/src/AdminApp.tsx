@@ -8,6 +8,7 @@ import { UserDetail } from './admin/UserDetail'
 import { ClientList } from './admin/ClientList'
 import { ClientDetail } from './admin/ClientDetail'
 import { BrandingEditor } from './admin/BrandingEditor'
+import { Docs } from './admin/Docs'
 import { useState } from 'preact/hooks'
 
 function AdminLayout() {
@@ -52,6 +53,14 @@ function AdminLayout() {
             onClick={() => handleNavClick('/admin/pools')}
           >
             User Pools
+          </a>
+        </li>
+        <li>
+          <a
+            class={path.startsWith('/admin/docs') ? 'active' : ''}
+            onClick={() => handleNavClick('/admin/docs')}
+          >
+            Docs
           </a>
         </li>
       </ul>
@@ -126,6 +135,7 @@ function AdminLayout() {
                 selectedUserPool ? <BrandingEditor userPool={selectedUserPool} navigate={navigate} /> : null
               }
             />
+            <Route path="/admin/docs" component={Docs} />
             <Route default component={() => <Dashboard navigate={navigate} />} />
           </Router>
         </main>

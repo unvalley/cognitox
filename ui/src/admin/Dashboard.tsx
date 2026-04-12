@@ -104,6 +104,20 @@ export function Dashboard({ navigate }: Props) {
               )}
             </div>
           </div>
+
+          <div class="card bg-base-100 shadow">
+            <div class="card-body lg:flex-row lg:items-center lg:justify-between">
+              <div>
+                <h2 class="card-title">Need setup details?</h2>
+                <p class="text-sm text-base-content/65">
+                  Open the built-in docs for endpoint URLs, SDK examples, environment variables, and current limitations.
+                </p>
+              </div>
+              <div class="card-actions">
+                <button class="btn btn-outline" onClick={() => navigate('/admin/docs')}>Open Docs</button>
+              </div>
+            </div>
+          </div>
         </>
       )}
     </div>
