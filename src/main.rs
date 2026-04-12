@@ -1,4 +1,4 @@
-use std::{env, net::SocketAddr, path::PathBuf, sync::Arc};
+use std::{net::SocketAddr, path::PathBuf, sync::Arc};
 
 use bpaf::Bpaf;
 use cognitox::{api, config::StorageConfig, storage::Storage};
@@ -24,8 +24,14 @@ const DEFAULT_LOG_FILTER: &str = "cognitox=info,tower_http=info";
 #[bpaf(options, version)]
 struct Cli {
     /// Port to listen on
-    #[bpaf(short, long, env("COGNITOX_PORT"), argument("PORT"))]
-    port: Option<u16>,
+    #[bpaf(
+        short,
+        long,
+        env("COGNITOX_PORT"),
+        fallback(DEFAULT_PORT),
+        display_fallback
+    )]
+    port: u16,
 
     /// Storage mode: "memory" (no persistence) or "persistent" (file-backed).
     /// When "persistent", --data-file is required.
@@ -47,18 +53,6 @@ struct Cli {
 }
 
 impl Cli {
-    fn port(&self) -> u16 {
-        self.port
-            .or_else(|| env::var("PORT").ok()?.parse().ok())
-            .unwrap_or(DEFAULT_PORT)
-    }
-
-    fn data_file(&self) -> Option<PathBuf> {
-        self.data_file
-            .clone()
-            .or_else(|| env::var_os("DATA_FILE").map(PathBuf::from))
-    }
-
     fn log_filter(&self) -> String {
         self.log_level
             .clone()
@@ -70,13 +64,13 @@ impl Cli {
             "memory" => {
                 // If data_file is provided but mode is memory, upgrade to persistent
                 // for backward compatibility with the old --data-file-only interface.
-                match self.data_file() {
+                match &self.data_file {
                     Some(path) => Ok(StorageConfig::persistent(path.clone())),
                     None => Ok(StorageConfig::memory()),
                 }
             }
             "persistent" => {
-                let path = self.data_file().ok_or_else(|| {
+                let path = self.data_file.clone().ok_or_else(|| {
                     "--data-file is required when --storage-mode=persistent".to_string()
                 })?;
                 Ok(StorageConfig::persistent(path))
@@ -130,7 +124,7 @@ async fn main() {
         );
 
     // Start server
-    let addr = SocketAddr::from(([0, 0, 0, 0], cli.port()));
+    let addr = SocketAddr::from(([0, 0, 0, 0], cli.port));
     tracing::info!("Starting Cognito emulator on http://{}", addr);
 
     let listener = tokio::net::TcpListener::bind(addr)
@@ -159,7 +153,7 @@ mod tests {
 
     fn cli_for_test() -> Cli {
         Cli {
-            port: None,
+            port: DEFAULT_PORT,
             storage_mode: DEFAULT_STORAGE_MODE.to_string(),
             data_file: None,
             log_level: None,

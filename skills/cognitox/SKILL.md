@@ -107,9 +107,9 @@ let client = aws_sdk_cognitoidentityprovider::Client::new(&config);
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `COGNITOX_PORT` | `9229` | Server port (`PORT` is also accepted) |
+| `COGNITOX_PORT` | `9229` | Server port |
 | `RUST_LOG` | `info` | Log level |
-| `COGNITOX_DATA_FILE` | *(unset)* | Path to persist state across restarts (`DATA_FILE` is also accepted) |
+| `COGNITOX_DATA_FILE` | *(unset)* | Path to persist state across restarts |
 
 ## Built-in UIs
 

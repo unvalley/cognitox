@@ -86,9 +86,9 @@ http://localhost:9229/admin/
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `COGNITOX_PORT` | `9229` | Server port (`PORT` is also accepted for backward compatibility) |
+| `COGNITOX_PORT` | `9229` | Server port |
 | `RUST_LOG` | `info` | Log level (`debug` for verbose output) |
-| `COGNITOX_DATA_FILE` | *(unset)* | Path to persist emulator state (JSON snapshot). If set, state survives restarts. `DATA_FILE` is also accepted for backward compatibility. |
+| `COGNITOX_DATA_FILE` | *(unset)* | Path to persist emulator state (JSON snapshot). If set, state survives restarts. |
 
 ### Persistence
 
