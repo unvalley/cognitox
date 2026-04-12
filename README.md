@@ -86,16 +86,16 @@ http://localhost:9229/admin/
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `PORT` | `9229` | Server port |
+| `COGNITOX_PORT` | `9229` | Server port (`PORT` is also accepted for backward compatibility) |
 | `RUST_LOG` | `info` | Log level (`debug` for verbose output) |
-| `DATA_FILE` | *(unset)* | Path to persist emulator state (JSON snapshot). If set, state survives restarts. |
+| `COGNITOX_DATA_FILE` | *(unset)* | Path to persist emulator state (JSON snapshot). If set, state survives restarts. `DATA_FILE` is also accepted for backward compatibility. |
 
 ### Persistence
 
 By default, all data is in-memory and lost on restart. To persist state:
 
 ```bash
-DATA_FILE=./cognitox-data.json cargo run
+COGNITOX_DATA_FILE=./cognitox-data.json cargo run
 ```
 
 The emulator auto-saves every 500ms when changes are detected, and flushes on graceful shutdown (Ctrl+C).

@@ -1,4 +1,4 @@
-use std::{net::SocketAddr, path::PathBuf, sync::Arc};
+use std::{env, net::SocketAddr, path::PathBuf, sync::Arc};
 
 use bpaf::Bpaf;
 use cognitox::{api, config::StorageConfig, storage::Storage};
@@ -7,6 +7,10 @@ use tower_http::{
     trace::TraceLayer,
 };
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
+
+const DEFAULT_PORT: u16 = 9229;
+const DEFAULT_STORAGE_MODE: &str = "memory";
+const DEFAULT_LOG_FILTER: &str = "cognitox=info,tower_http=info";
 
 /// AWS Cognito User Pools emulator for local development.
 ///
@@ -20,15 +24,15 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 #[bpaf(options, version)]
 struct Cli {
     /// Port to listen on
-    #[bpaf(short, long, env("COGNITOX_PORT"), fallback(9229), display_fallback)]
-    port: u16,
+    #[bpaf(short, long, env("COGNITOX_PORT"), argument("PORT"))]
+    port: Option<u16>,
 
     /// Storage mode: "memory" (no persistence) or "persistent" (file-backed).
     /// When "persistent", --data-file is required.
     #[bpaf(
         long,
         env("COGNITOX_STORAGE_MODE"),
-        fallback(String::from("memory")),
+        fallback(String::from(DEFAULT_STORAGE_MODE)),
         display_fallback
     )]
     storage_mode: String,
@@ -43,18 +47,36 @@ struct Cli {
 }
 
 impl Cli {
+    fn port(&self) -> u16 {
+        self.port
+            .or_else(|| env::var("PORT").ok()?.parse().ok())
+            .unwrap_or(DEFAULT_PORT)
+    }
+
+    fn data_file(&self) -> Option<PathBuf> {
+        self.data_file
+            .clone()
+            .or_else(|| env::var_os("DATA_FILE").map(PathBuf::from))
+    }
+
+    fn log_filter(&self) -> String {
+        self.log_level
+            .clone()
+            .unwrap_or_else(|| DEFAULT_LOG_FILTER.to_string())
+    }
+
     fn storage_config(&self) -> Result<StorageConfig, String> {
         match self.storage_mode.as_str() {
             "memory" => {
                 // If data_file is provided but mode is memory, upgrade to persistent
                 // for backward compatibility with the old --data-file-only interface.
-                match &self.data_file {
+                match self.data_file() {
                     Some(path) => Ok(StorageConfig::persistent(path.clone())),
                     None => Ok(StorageConfig::memory()),
                 }
             }
             "persistent" => {
-                let path = self.data_file.clone().ok_or_else(|| {
+                let path = self.data_file().ok_or_else(|| {
                     "--data-file is required when --storage-mode=persistent".to_string()
                 })?;
                 Ok(StorageConfig::persistent(path))
@@ -74,10 +96,7 @@ async fn main() {
     let cli = cli().run();
 
     // Initialize logging
-    let log_filter = cli
-        .log_level
-        .clone()
-        .unwrap_or_else(|| "cognitox=debug,tower_http=debug".to_string());
+    let log_filter = cli.log_filter();
     tracing_subscriber::registry()
         .with(
             tracing_subscriber::EnvFilter::try_from_default_env()
@@ -111,7 +130,7 @@ async fn main() {
         );
 
     // Start server
-    let addr = SocketAddr::from(([0, 0, 0, 0], cli.port));
+    let addr = SocketAddr::from(([0, 0, 0, 0], cli.port()));
     tracing::info!("Starting Cognito emulator on http://{}", addr);
 
     let listener = tokio::net::TcpListener::bind(addr)
@@ -132,4 +151,30 @@ async fn main() {
         })
         .await
         .expect("server exited with error");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn cli_for_test() -> Cli {
+        Cli {
+            port: None,
+            storage_mode: DEFAULT_STORAGE_MODE.to_string(),
+            data_file: None,
+            log_level: None,
+        }
+    }
+
+    #[test]
+    fn default_log_filter_is_info() {
+        assert_eq!(cli_for_test().log_filter(), DEFAULT_LOG_FILTER);
+    }
+
+    #[test]
+    fn explicit_log_filter_overrides_default() {
+        let mut cli = cli_for_test();
+        cli.log_level = Some("cognitox=warn".to_string());
+        assert_eq!(cli.log_filter(), "cognitox=warn");
+    }
 }

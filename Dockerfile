@@ -39,7 +39,7 @@ WORKDIR /app
 
 COPY --from=builder /app/target/release/cognitox /app/cognitox
 
-ENV PORT=9229
+ENV COGNITOX_PORT=9229
 EXPOSE 9229
 
 USER nobody

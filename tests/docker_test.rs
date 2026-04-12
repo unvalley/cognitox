@@ -46,7 +46,7 @@ impl DockerContainer {
                 "-p",
                 &format!("{}:{}", PORT, PORT),
                 "-e",
-                &format!("PORT={}", PORT),
+                &format!("COGNITOX_PORT={}", PORT),
                 "-e",
                 "RUST_LOG=cognitox=info",
                 IMAGE_NAME,

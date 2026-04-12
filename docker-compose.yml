@@ -4,5 +4,5 @@ services:
     ports:
       - "9229:9229"
     environment:
-      - PORT=9229
+      - COGNITOX_PORT=9229
       - RUST_LOG=cognitox=info

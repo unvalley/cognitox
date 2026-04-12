@@ -107,9 +107,9 @@ let client = aws_sdk_cognitoidentityprovider::Client::new(&config);
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `PORT` | `9229` | Server port |
+| `COGNITOX_PORT` | `9229` | Server port (`PORT` is also accepted) |
 | `RUST_LOG` | `info` | Log level |
-| `DATA_FILE` | *(unset)* | Path to persist state across restarts |
+| `COGNITOX_DATA_FILE` | *(unset)* | Path to persist state across restarts (`DATA_FILE` is also accepted) |
 
 ## Built-in UIs
 
@@ -121,7 +121,7 @@ let client = aws_sdk_cognitoidentityprovider::Client::new(&config);
 - All 119 cognito-idp operations are implemented
 - `USER_SRP_AUTH` is not supported; use `USER_PASSWORD_AUTH` instead
 - Confirmation codes are returned in API responses but not sent via email/SMS
-- Data is in-memory by default; set `DATA_FILE` for persistence
+- Data is in-memory by default; set `COGNITOX_DATA_FILE` for persistence
 - CORS is fully open — this is a local development tool only
 
 ## Checking server status
