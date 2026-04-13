@@ -11,14 +11,14 @@ use crate::{
     error::{AppError, Result},
     storage::Storage,
     types::UserPoolId,
+    validation::validate_pool_name,
 };
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "PascalCase")]
 struct Request {
     user_pool_id: UserPoolId,
-    // Currently we only support updating the pool name as an example
-    // Additional fields can be added as needed
+    pool_name: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -31,6 +31,11 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
         .get_user_pool(&req.user_pool_id)
         .await
         .ok_or(AppError::UserPoolNotFound)?;
+
+    if let Some(pool_name) = req.pool_name {
+        validate_pool_name(&pool_name)?;
+        pool.name = pool_name.trim().to_string();
+    }
 
     pool.last_modified_date = Utc::now();
 
@@ -57,13 +62,42 @@ mod tests {
         let result = handler(
             &storage,
             json!({
-                "UserPoolId": pool_id
+                "UserPoolId": pool_id,
+                "PoolName": "updated-pool"
             }),
         )
         .await;
 
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), json!({}));
+
+        let updated = storage
+            .get_user_pool(&pool_id.parse().unwrap())
+            .await
+            .unwrap();
+        assert_eq!(updated.name, "updated-pool");
+    }
+
+    #[tokio::test]
+    async fn test_update_user_pool_invalid_name() {
+        let storage = Storage::new();
+
+        let pool = create_user_pool::handler(&storage, json!({"PoolName": "test-pool"}))
+            .await
+            .unwrap();
+        let pool_id = pool["UserPool"]["Id"].as_str().unwrap();
+
+        let result = handler(
+            &storage,
+            json!({
+                "UserPoolId": pool_id,
+                "PoolName": "   "
+            }),
+        )
+        .await;
+
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), AppError::InvalidParameter(_)));
     }
 
     #[tokio::test]
