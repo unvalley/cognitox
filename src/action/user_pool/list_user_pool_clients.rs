@@ -24,6 +24,11 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
     let req: Request = serde_json::from_value(body)
         .map_err(|e| AppError::InvalidParameter(format!("Invalid request: {}", e)))?;
 
+    storage
+        .get_user_pool(&req.user_pool_id)
+        .await
+        .ok_or(AppError::UserPoolNotFound)?;
+
     let clients = storage.list_user_pool_clients(&req.user_pool_id).await;
     let max_results = req.max_results.unwrap_or(60) as usize;
 
@@ -136,5 +141,15 @@ mod tests {
         assert!(result.is_ok());
         let body = result.unwrap();
         assert_eq!(body["UserPoolClients"].as_array().unwrap().len(), 2);
+    }
+
+    #[tokio::test]
+    async fn test_list_user_pool_clients_pool_not_found() {
+        let storage = Storage::new();
+
+        let result = handler(&storage, json!({"UserPoolId": "local_nonexistent123"})).await;
+
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), AppError::UserPoolNotFound));
     }
 }
