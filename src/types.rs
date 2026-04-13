@@ -8,7 +8,7 @@ use uuid::Uuid;
 
 /// User Pool ID with AWS Cognito format validation
 ///
-/// Format: `[\w-]+_[0-9a-zA-Z]+` (e.g., `us-east-1_AbCdEfGhI` or `local_abc123def`)
+/// Format: `[\w-]+_[0-9a-zA-Z]+` (e.g., `us-east-1_AbCdEfGhI`)
 /// Length: 1-55 characters
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(try_from = "String", into = "String")]
@@ -25,16 +25,23 @@ impl UserPoolId {
         Ok(Self(value))
     }
 
-    /// Create a new UserPoolId for local development
-    /// Format: `local_{random_alphanumeric}`
+    /// Create a new UserPoolId for local development.
+    /// Uses an AWS-style region prefix so generated IDs look closer to Cognito.
     pub fn new_local() -> Self {
-        let random_part: String = uuid::Uuid::new_v4()
-            .to_string()
-            .replace("-", "")
-            .chars()
-            .take(9)
+        use rand::Rng;
+
+        const CHARSET: &[u8] = b"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
+        const REGION_PREFIX: &str = "us-east-1";
+
+        let mut rng = rand::thread_rng();
+        let random_part: String = (0..9)
+            .map(|_| {
+                let idx = rng.gen_range(0..CHARSET.len());
+                CHARSET[idx] as char
+            })
             .collect();
-        Self(format!("local_{}", random_part))
+
+        Self(format!("{REGION_PREFIX}_{random_part}"))
     }
 
     /// Get the inner string value
@@ -143,6 +150,20 @@ impl fmt::Display for UserPoolIdError {
 }
 
 impl std::error::Error for UserPoolIdError {}
+
+#[cfg(test)]
+mod user_pool_id_tests {
+    use super::UserPoolId;
+
+    #[test]
+    fn new_local_uses_aws_style_prefix() {
+        let id = UserPoolId::new_local();
+
+        assert!(id.as_str().starts_with("us-east-1_"));
+        assert_eq!(id.as_str().len(), "us-east-1_".len() + 9);
+        assert!(UserPoolId::new(id.as_str()).is_ok());
+    }
+}
 
 /// User Pool Client ID with validation
 ///

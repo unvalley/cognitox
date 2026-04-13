@@ -7,7 +7,7 @@ import { Confirm } from './routes/Confirm'
 import { ForgotPassword } from './routes/ForgotPassword'
 import { ResetPassword } from './routes/ResetPassword'
 
-export function App() {
+export function HostedUiApp() {
   const [page, setPage] = useState<Page>('login')
   const [oauth, setOauth] = useState<OAuthParams>({
     response_type: 'code',

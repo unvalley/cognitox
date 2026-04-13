@@ -1,5 +1,20 @@
 import './app.css'
+import './admin.css'
 import { render } from 'preact'
-import { App } from './App'
+import { LocationProvider, Route, Router } from 'preact-iso'
+import { HostedUiApp } from './App'
+import { AdminApp } from './AdminApp'
 
-render(<App />, document.getElementById('app')!)
+function RootApp() {
+  return (
+    <LocationProvider>
+      <Router>
+        <Route path="/admin" component={AdminApp} />
+        <Route path="/admin/{*path}" component={AdminApp} />
+        <Route default component={HostedUiApp} />
+      </Router>
+    </LocationProvider>
+  )
+}
+
+render(<RootApp />, document.getElementById('app')!)

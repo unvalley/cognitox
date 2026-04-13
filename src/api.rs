@@ -69,12 +69,12 @@ async fn assets_handler(Path(path): Path<String>) -> Response {
 }
 
 async fn admin_index() -> Response {
-    serve_embedded("admin.html", "admin.html")
+    serve_embedded("index.html", "index.html")
 }
 
 async fn admin_handler(Path(path): Path<String>) -> Response {
-    // Admin SPA: fall back to admin.html for deep links
-    serve_embedded(&path, "admin.html")
+    // Admin SPA: fall back to index.html for deep links
+    serve_embedded(&path, "index.html")
 }
 
 async fn ui_index() -> Response {

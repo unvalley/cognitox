@@ -1475,7 +1475,6 @@
           "LambdaConfig",
           "MfaConfiguration",
           "Policies",
-          "PoolName",
           "SmsAuthenticationMessage",
           "SmsConfiguration",
           "SmsVerificationMessage",

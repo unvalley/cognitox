@@ -81,7 +81,6 @@ export interface ManagedLoginBranding {
 }
 
 export type AdminPage =
-  | 'dashboard'
   | 'user-pools'
   | 'user-pool-detail'
   | 'users'

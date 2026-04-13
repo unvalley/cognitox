@@ -327,6 +327,13 @@ export async function describeUserPool(userPoolId: string): Promise<UserPool> {
   return data.UserPool
 }
 
+export async function updateUserPool(userPoolId: string, updates: { PoolName?: string }): Promise<void> {
+  await cognitoRequest<Record<string, never>>('UpdateUserPool', {
+    UserPoolId: userPoolId,
+    ...updates,
+  })
+}
+
 export async function deleteUserPool(userPoolId: string): Promise<void> {
   await cognitoRequest<Record<string, never>>('DeleteUserPool', {
     UserPoolId: userPoolId,
