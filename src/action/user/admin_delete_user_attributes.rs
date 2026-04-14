@@ -12,7 +12,7 @@ use crate::{
     types::UserPoolId,
 };
 
-use super::helpers::{EMAIL_OTP_FACTOR, SMS_MFA_FACTOR, remove_user_attribute};
+use super::helpers::{EMAIL_OTP_FACTOR, SMS_MFA_FACTOR, apply_user_attribute_deletions};
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "PascalCase")]
@@ -35,40 +35,18 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
         .get_user_by_username(&req.user_pool_id, &req.username)
         .await
         .ok_or(AppError::UserNotFound)?;
-    let preferred_mfa_setting = user
-        .attributes
-        .iter()
-        .find(|attr| attr.name == "preferred_mfa_setting")
-        .and_then(|attr| attr.value.clone());
+    let deletion = apply_user_attribute_deletions(&mut user, &req.user_attribute_names);
 
-    for attr_name in &req.user_attribute_names {
-        remove_user_attribute(&mut user.attributes, attr_name);
+    if deletion.email_deleted {
+        storage
+            .remove_user_auth_factor(&user.id, EMAIL_OTP_FACTOR)
+            .await;
     }
 
-    for attr_name in &req.user_attribute_names {
-        match attr_name.as_str() {
-            "email" => {
-                user.email = None;
-                remove_user_attribute(&mut user.attributes, "email_verified");
-                if preferred_mfa_setting.as_deref() == Some(EMAIL_OTP_FACTOR) {
-                    remove_user_attribute(&mut user.attributes, "preferred_mfa_setting");
-                }
-                storage
-                    .remove_user_auth_factor(&user.id, EMAIL_OTP_FACTOR)
-                    .await;
-            }
-            "phone_number" => {
-                user.phone_number = None;
-                remove_user_attribute(&mut user.attributes, "phone_number_verified");
-                if preferred_mfa_setting.as_deref() == Some(SMS_MFA_FACTOR) {
-                    remove_user_attribute(&mut user.attributes, "preferred_mfa_setting");
-                }
-                storage
-                    .remove_user_auth_factor(&user.id, SMS_MFA_FACTOR)
-                    .await;
-            }
-            _ => {}
-        }
+    if deletion.phone_deleted {
+        storage
+            .remove_user_auth_factor(&user.id, SMS_MFA_FACTOR)
+            .await;
     }
 
     user.last_modified_date = Utc::now();

@@ -192,6 +192,17 @@
         "extra": []
       }
     },
+    "AdminSetUserMFAPreference": {
+      "path": "src/action/user/admin_set_user_mfa_preference.rs",
+      "request": {
+        "missing": [],
+        "extra": []
+      },
+      "response": {
+        "missing": [],
+        "extra": []
+      }
+    },
     "AdminSetUserPassword": {
       "path": "src/action/user/admin_set_user_password.rs",
       "request": {
@@ -236,6 +247,17 @@
         "extra": []
       }
     },
+    "AdminUpdateUserAttributes": {
+      "path": "src/action/user/admin_update_user_attributes.rs",
+      "request": {
+        "missing": [],
+        "extra": []
+      },
+      "response": {
+        "missing": [],
+        "extra": []
+      }
+    },
     "AdminUserGlobalSignOut": {
       "path": "src/action/user/admin_user_global_sign_out.rs",
       "request": {
@@ -271,6 +293,28 @@
     },
     "ConfirmDevice": {
       "path": "src/action/user/confirm_device.rs",
+      "request": {
+        "missing": [],
+        "extra": []
+      },
+      "response": {
+        "missing": [],
+        "extra": []
+      }
+    },
+    "ConfirmForgotPassword": {
+      "path": "src/action/user/confirm_forgot_password.rs",
+      "request": {
+        "missing": [],
+        "extra": []
+      },
+      "response": {
+        "missing": [],
+        "extra": []
+      }
+    },
+    "ConfirmSignUp": {
+      "path": "src/action/user/confirm_sign_up.rs",
       "request": {
         "missing": [],
         "extra": []
@@ -338,12 +382,8 @@
     "CreateUserPool": {
       "path": "src/action/user_pool/create_user_pool.rs",
       "request": {
-        "missing": [
-          "Schema"
-        ],
-        "extra": [
-          "schema_attributes"
-        ]
+        "missing": [],
+        "extra": []
       },
       "response": {
         "missing": [],
@@ -559,6 +599,17 @@
         "extra": []
       }
     },
+    "ForgotPassword": {
+      "path": "src/action/user/forgot_password.rs",
+      "request": {
+        "missing": [],
+        "extra": []
+      },
+      "response": {
+        "missing": [],
+        "extra": []
+      }
+    },
     "GetCSVHeader": {
       "path": "src/action/user_pool/get_csv_header.rs",
       "request": {
@@ -627,6 +678,39 @@
     },
     "GetUser": {
       "path": "src/action/user/get_user.rs",
+      "request": {
+        "missing": [],
+        "extra": []
+      },
+      "response": {
+        "missing": [],
+        "extra": []
+      }
+    },
+    "GetUserAttributeVerificationCode": {
+      "path": "src/action/user/get_user_attribute_verification_code.rs",
+      "request": {
+        "missing": [],
+        "extra": []
+      },
+      "response": {
+        "missing": [],
+        "extra": []
+      }
+    },
+    "GetUserAuthFactors": {
+      "path": "src/action/user/get_user_auth_factors.rs",
+      "request": {
+        "missing": [],
+        "extra": []
+      },
+      "response": {
+        "missing": [],
+        "extra": []
+      }
+    },
+    "GetUserPoolMfaConfig": {
+      "path": "src/action/user_pool/get_user_pool_mfa_config.rs",
       "request": {
         "missing": [],
         "extra": []
@@ -752,6 +836,17 @@
         "extra": []
       }
     },
+    "ResendConfirmationCode": {
+      "path": "src/action/user/resend_confirmation_code.rs",
+      "request": {
+        "missing": [],
+        "extra": []
+      },
+      "response": {
+        "missing": [],
+        "extra": []
+      }
+    },
     "RevokeToken": {
       "path": "src/action/user/revoke_token.rs",
       "request": {
@@ -796,8 +891,41 @@
         "extra": []
       }
     },
+    "SetUserMFAPreference": {
+      "path": "src/action/user/set_user_mfa_preference.rs",
+      "request": {
+        "missing": [],
+        "extra": []
+      },
+      "response": {
+        "missing": [],
+        "extra": []
+      }
+    },
+    "SetUserPoolMfaConfig": {
+      "path": "src/action/user_pool/set_user_pool_mfa_config.rs",
+      "request": {
+        "missing": [],
+        "extra": []
+      },
+      "response": {
+        "missing": [],
+        "extra": []
+      }
+    },
     "SetUserSettings": {
       "path": "src/action/user/set_user_settings.rs",
+      "request": {
+        "missing": [],
+        "extra": []
+      },
+      "response": {
+        "missing": [],
+        "extra": []
+      }
+    },
+    "SignUp": {
+      "path": "src/action/user/sign_up.rs",
       "request": {
         "missing": [],
         "extra": []
@@ -886,6 +1014,17 @@
     },
     "UpdateResourceServer": {
       "path": "src/action/user_pool/update_resource_server.rs",
+      "request": {
+        "missing": [],
+        "extra": []
+      },
+      "response": {
+        "missing": [],
+        "extra": []
+      }
+    },
+    "UpdateUserAttributes": {
+      "path": "src/action/user/update_user_attributes.rs",
       "request": {
         "missing": [],
         "extra": []

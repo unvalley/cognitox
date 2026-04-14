@@ -16,7 +16,7 @@ use crate::{
     validation::{validate_email, validate_password, validate_phone_number, validate_username},
 };
 
-use super::helpers::{find_user_attribute_value, hash_password};
+use super::helpers::{find_user_attribute_value, hash_password, sync_user_profile_attributes};
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "PascalCase")]
@@ -83,21 +83,12 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
         .temporary_password
         .unwrap_or_else(|| Uuid::new_v4().to_string());
 
-    let email = req
-        .user_attributes
-        .as_ref()
-        .and_then(|attrs| find_user_attribute_value(attrs, "email"));
-    let phone_number = req
-        .user_attributes
-        .as_ref()
-        .and_then(|attrs| find_user_attribute_value(attrs, "phone_number"));
-
-    let user = User {
+    let mut user = User {
         id: user_id,
         user_pool_id: req.user_pool_id.clone(),
         username: req.username.clone(),
-        email,
-        phone_number,
+        email: None,
+        phone_number: None,
         password_hash: hash_password(&password).map_err(AppError::Internal)?,
         enabled: true,
         user_status: UserStatus::ForceChangePassword,
@@ -105,6 +96,7 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
         creation_date: now,
         last_modified_date: now,
     };
+    sync_user_profile_attributes(&mut user);
 
     let created = storage.create_user(user).await;
 

@@ -5,8 +5,11 @@
 
 use crate::error::{AppError, Result};
 use crate::types::{
-    EmailMfaConfiguration, ExplicitAuthFlow, MfaConfiguration, OAuthFlow, SmsMfaConfiguration,
-    SoftwareTokenMfaConfiguration, TokenValidityUnit, UserPoolId, UserPoolPolicies,
+    AccountRecoverySetting, AdminCreateUserConfig, AnalyticsConfiguration, DeviceConfiguration,
+    EmailConfiguration, EmailMfaConfiguration, ExplicitAuthFlow, InviteMessageTemplate,
+    MfaConfiguration, OAuthFlow, RefreshTokenRotationType, SchemaAttributeType, SmsConfiguration,
+    SmsMfaConfiguration, SoftwareTokenMfaConfiguration, TokenValidityUnit,
+    UserAttributeUpdateSettingsType, UserPoolAddOns, UserPoolId, UserPoolPolicies,
     VerificationMessageTemplate, WebAuthnConfiguration,
 };
 
@@ -397,6 +400,184 @@ pub fn validate_subject(field: &str, value: &str) -> Result<()> {
     validate_string_length(field, value, 1, 140)
 }
 
+pub fn validate_account_recovery_setting(setting: &AccountRecoverySetting) -> Result<()> {
+    let Some(mechanisms) = setting.recovery_mechanisms.as_ref() else {
+        return Ok(());
+    };
+
+    if mechanisms.is_empty() {
+        return Err(AppError::InvalidParameter(
+            "AccountRecoverySetting.RecoveryMechanisms cannot be empty".to_string(),
+        ));
+    }
+
+    if mechanisms.len() > 3 {
+        return Err(AppError::InvalidParameter(
+            "AccountRecoverySetting.RecoveryMechanisms cannot contain more than 3 entries"
+                .to_string(),
+        ));
+    }
+
+    let mut seen_priorities = std::collections::HashSet::new();
+    for mechanism in mechanisms {
+        if let Some(priority) = mechanism.priority {
+            if priority <= 0 {
+                return Err(AppError::InvalidParameter(
+                    "AccountRecoverySetting.RecoveryMechanisms.Priority must be positive"
+                        .to_string(),
+                ));
+            }
+            if !seen_priorities.insert(priority) {
+                return Err(AppError::InvalidParameter(
+                    "AccountRecoverySetting.RecoveryMechanisms.Priority must be unique".to_string(),
+                ));
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn validate_invite_message_template(template: &InviteMessageTemplate) -> Result<()> {
+    if let Some(message) = &template.email_message {
+        validate_code_delivery_message(
+            "AdminCreateUserConfig.InviteMessageTemplate.EmailMessage",
+            message,
+            20_000,
+        )?;
+    }
+    if let Some(subject) = &template.email_subject {
+        validate_subject(
+            "AdminCreateUserConfig.InviteMessageTemplate.EmailSubject",
+            subject,
+        )?;
+    }
+    if let Some(message) = &template.sms_message {
+        validate_code_delivery_message(
+            "AdminCreateUserConfig.InviteMessageTemplate.SMSMessage",
+            message,
+            140,
+        )?;
+    }
+    Ok(())
+}
+
+pub fn validate_admin_create_user_config(config: &AdminCreateUserConfig) -> Result<()> {
+    if let Some(template) = &config.invite_message_template {
+        validate_invite_message_template(template)?;
+    }
+
+    if let Some(days) = config.unused_account_validity_days
+        && !(0..=365).contains(&days)
+    {
+        return Err(AppError::InvalidParameter(
+            "AdminCreateUserConfig.UnusedAccountValidityDays must be between 0 and 365".to_string(),
+        ));
+    }
+
+    Ok(())
+}
+
+pub fn validate_device_configuration(_config: &DeviceConfiguration) -> Result<()> {
+    Ok(())
+}
+
+pub fn validate_sms_configuration(config: &SmsConfiguration, field: &str) -> Result<()> {
+    if let Some(region) = &config.sns_region {
+        validate_string_length(&format!("{field}.SnsRegion"), region, 1, 32)?;
+    }
+
+    if let Some(external_id) = &config.external_id {
+        validate_string_length(&format!("{field}.ExternalId"), external_id, 1, 128)?;
+    }
+
+    Ok(())
+}
+
+pub fn validate_email_configuration(config: &EmailConfiguration) -> Result<()> {
+    if let Some(reply_to_email_address) = &config.reply_to_email_address {
+        validate_email(reply_to_email_address)?;
+    }
+
+    if let Some(configuration_set) = &config.configuration_set {
+        validate_string_length(
+            "EmailConfiguration.ConfigurationSet",
+            configuration_set,
+            1,
+            64,
+        )?;
+    }
+
+    Ok(())
+}
+
+fn validate_numeric_constraint(field: &str, value: &str) -> Result<()> {
+    value.parse::<i64>().map_err(|_| {
+        AppError::InvalidParameter(format!("{field} must be a valid integer string"))
+    })?;
+    Ok(())
+}
+
+pub fn validate_schema_attributes(schema_attributes: &[SchemaAttributeType]) -> Result<()> {
+    for attribute in schema_attributes {
+        validate_string_length("Schema.Name", &attribute.name, 1, 64)?;
+
+        if let Some(constraints) = &attribute.string_attribute_constraints {
+            if let Some(min) = &constraints.min_length {
+                validate_numeric_constraint("Schema.StringAttributeConstraints.MinLength", min)?;
+            }
+            if let Some(max) = &constraints.max_length {
+                validate_numeric_constraint("Schema.StringAttributeConstraints.MaxLength", max)?;
+            }
+            if let (Some(min), Some(max)) = (&constraints.min_length, &constraints.max_length)
+                && min.parse::<i64>().ok() > max.parse::<i64>().ok()
+            {
+                return Err(AppError::InvalidParameter(
+                    "Schema.StringAttributeConstraints MinLength cannot exceed MaxLength"
+                        .to_string(),
+                ));
+            }
+        }
+
+        if let Some(constraints) = &attribute.number_attribute_constraints {
+            if let Some(min) = &constraints.min_value {
+                validate_numeric_constraint("Schema.NumberAttributeConstraints.MinValue", min)?;
+            }
+            if let Some(max) = &constraints.max_value {
+                validate_numeric_constraint("Schema.NumberAttributeConstraints.MaxValue", max)?;
+            }
+            if let (Some(min), Some(max)) = (&constraints.min_value, &constraints.max_value)
+                && min.parse::<i64>().ok() > max.parse::<i64>().ok()
+            {
+                return Err(AppError::InvalidParameter(
+                    "Schema.NumberAttributeConstraints MinValue cannot exceed MaxValue".to_string(),
+                ));
+            }
+        }
+    }
+
+    Ok(())
+}
+
+pub fn validate_user_attribute_update_settings(
+    settings: &UserAttributeUpdateSettingsType,
+) -> Result<()> {
+    if let Some(attributes) = &settings.attributes_require_verification_before_update
+        && attributes.is_empty()
+    {
+        return Err(AppError::InvalidParameter(
+            "UserAttributeUpdateSettings.AttributesRequireVerificationBeforeUpdate cannot be empty"
+                .to_string(),
+        ));
+    }
+
+    Ok(())
+}
+
+pub fn validate_user_pool_add_ons(_add_ons: &UserPoolAddOns) -> Result<()> {
+    Ok(())
+}
+
 pub fn validate_oauth_client_configuration(
     allowed_oauth_flows_user_pool_client: bool,
     allowed_oauth_flows: &[OAuthFlow],
@@ -572,6 +753,69 @@ pub fn validate_group_name(name: &str) -> Result<()> {
 /// Returns InvalidParameter error if the format is invalid
 pub fn parse_user_pool_id(value: &str) -> Result<UserPoolId> {
     UserPoolId::new(value).map_err(|e| AppError::InvalidParameter(e.to_string()))
+}
+
+pub fn validate_client_attribute_names(field: &str, attributes: &[String]) -> Result<()> {
+    for attribute in attributes {
+        let trimmed = attribute.trim();
+        if trimmed.is_empty() {
+            return Err(AppError::InvalidParameter(format!(
+                "{field} cannot contain empty attribute names"
+            )));
+        }
+        validate_string_length(field, trimmed, 1, 2048)?;
+    }
+
+    Ok(())
+}
+
+pub fn validate_analytics_configuration(config: &AnalyticsConfiguration) -> Result<()> {
+    if let Some(application_id) = &config.application_id {
+        validate_string_length(
+            "AnalyticsConfiguration.ApplicationId",
+            application_id,
+            1,
+            128,
+        )?;
+    }
+    if let Some(application_arn) = &config.application_arn {
+        validate_string_length(
+            "AnalyticsConfiguration.ApplicationArn",
+            application_arn,
+            1,
+            2048,
+        )?;
+    }
+    if let Some(external_id) = &config.external_id {
+        validate_string_length("AnalyticsConfiguration.ExternalId", external_id, 1, 128)?;
+    }
+    if let Some(role_arn) = &config.role_arn {
+        validate_string_length("AnalyticsConfiguration.RoleArn", role_arn, 1, 2048)?;
+    }
+
+    Ok(())
+}
+
+pub fn validate_auth_session_validity(value: i32) -> Result<()> {
+    if !(3..=15).contains(&value) {
+        return Err(AppError::InvalidParameter(
+            "AuthSessionValidity must be between 3 and 15".to_string(),
+        ));
+    }
+
+    Ok(())
+}
+
+pub fn validate_refresh_token_rotation(config: &RefreshTokenRotationType) -> Result<()> {
+    if let Some(seconds) = config.retry_grace_period_seconds
+        && !(0..=60).contains(&seconds)
+    {
+        return Err(AppError::InvalidParameter(
+            "RefreshTokenRotation.RetryGracePeriodSeconds must be between 0 and 60".to_string(),
+        ));
+    }
+
+    Ok(())
 }
 
 #[cfg(test)]

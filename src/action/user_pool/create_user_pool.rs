@@ -13,13 +13,19 @@ use crate::{
     error::Result,
     storage::Storage,
     types::{
-        AliasAttribute, AutoVerifiedAttribute, DeletionProtection, MfaConfiguration, UserPool,
-        UserPoolId, UserPoolPolicies, UserPoolTier, UsernameAttribute, UsernameConfiguration,
-        VerificationMessageTemplate,
+        AccountRecoverySetting, AdminCreateUserConfig, AliasAttribute, AutoVerifiedAttribute,
+        DeletionProtection, DeviceConfiguration, EmailConfiguration, MfaConfiguration,
+        SchemaAttributeType, SmsConfiguration, UserAttributeUpdateSettingsType, UserPool,
+        UserPoolAddOns, UserPoolId, UserPoolPolicies, UserPoolTier, UsernameAttribute,
+        UsernameConfiguration, VerificationMessageTemplate,
     },
     validation::{
-        validate_code_delivery_message, validate_pool_name, validate_subject,
-        validate_user_pool_policies, validate_verification_message_template,
+        validate_account_recovery_setting, validate_admin_create_user_config,
+        validate_code_delivery_message, validate_device_configuration,
+        validate_email_configuration, validate_pool_name, validate_schema_attributes,
+        validate_sms_configuration, validate_subject, validate_user_attribute_update_settings,
+        validate_user_pool_add_ons, validate_user_pool_policies,
+        validate_verification_message_template,
     },
 };
 
@@ -28,9 +34,9 @@ use crate::{
 struct Request {
     pool_name: String,
     #[serde(default)]
-    account_recovery_setting: Option<Value>,
+    account_recovery_setting: Option<AccountRecoverySetting>,
     #[serde(default)]
-    admin_create_user_config: Option<Value>,
+    admin_create_user_config: Option<AdminCreateUserConfig>,
     #[serde(default)]
     alias_attributes: Option<Vec<AliasAttribute>>,
     #[serde(default)]
@@ -38,9 +44,9 @@ struct Request {
     #[serde(default)]
     deletion_protection: Option<DeletionProtection>,
     #[serde(default)]
-    device_configuration: Option<Value>,
+    device_configuration: Option<DeviceConfiguration>,
     #[serde(default)]
-    email_configuration: Option<Value>,
+    email_configuration: Option<EmailConfiguration>,
     #[serde(default)]
     email_verification_message: Option<String>,
     #[serde(default)]
@@ -52,17 +58,17 @@ struct Request {
     #[serde(default)]
     policies: Option<UserPoolPolicies>,
     #[serde(default, rename = "Schema")]
-    schema_attributes: Option<Vec<Value>>,
+    schema: Option<Vec<SchemaAttributeType>>,
     #[serde(default)]
     sms_authentication_message: Option<String>,
     #[serde(default)]
-    sms_configuration: Option<Value>,
+    sms_configuration: Option<SmsConfiguration>,
     #[serde(default)]
     sms_verification_message: Option<String>,
     #[serde(default)]
-    user_attribute_update_settings: Option<Value>,
+    user_attribute_update_settings: Option<UserAttributeUpdateSettingsType>,
     #[serde(default)]
-    user_pool_add_ons: Option<Value>,
+    user_pool_add_ons: Option<UserPoolAddOns>,
     #[serde(default)]
     user_pool_tags: Option<HashMap<String, String>>,
     #[serde(default)]
@@ -79,9 +85,9 @@ struct Request {
 #[serde(rename_all = "PascalCase")]
 pub(crate) struct UserPoolConfigInput {
     #[serde(default)]
-    pub(crate) account_recovery_setting: Option<Value>,
+    pub(crate) account_recovery_setting: Option<AccountRecoverySetting>,
     #[serde(default)]
-    pub(crate) admin_create_user_config: Option<Value>,
+    pub(crate) admin_create_user_config: Option<AdminCreateUserConfig>,
     #[serde(default)]
     pub(crate) alias_attributes: Option<Vec<AliasAttribute>>,
     #[serde(default)]
@@ -89,9 +95,9 @@ pub(crate) struct UserPoolConfigInput {
     #[serde(default)]
     pub(crate) deletion_protection: Option<DeletionProtection>,
     #[serde(default)]
-    pub(crate) device_configuration: Option<Value>,
+    pub(crate) device_configuration: Option<DeviceConfiguration>,
     #[serde(default)]
-    pub(crate) email_configuration: Option<Value>,
+    pub(crate) email_configuration: Option<EmailConfiguration>,
     #[serde(default)]
     pub(crate) email_verification_message: Option<String>,
     #[serde(default)]
@@ -103,17 +109,17 @@ pub(crate) struct UserPoolConfigInput {
     #[serde(default)]
     pub(crate) policies: Option<UserPoolPolicies>,
     #[serde(default, rename = "Schema")]
-    pub(crate) schema_attributes: Option<Vec<Value>>,
+    pub(crate) schema_attributes: Option<Vec<SchemaAttributeType>>,
     #[serde(default)]
     pub(crate) sms_authentication_message: Option<String>,
     #[serde(default)]
-    pub(crate) sms_configuration: Option<Value>,
+    pub(crate) sms_configuration: Option<SmsConfiguration>,
     #[serde(default)]
     pub(crate) sms_verification_message: Option<String>,
     #[serde(default)]
-    pub(crate) user_attribute_update_settings: Option<Value>,
+    pub(crate) user_attribute_update_settings: Option<UserAttributeUpdateSettingsType>,
     #[serde(default)]
-    pub(crate) user_pool_add_ons: Option<Value>,
+    pub(crate) user_pool_add_ons: Option<UserPoolAddOns>,
     #[serde(default)]
     pub(crate) user_pool_tags: Option<HashMap<String, String>>,
     #[serde(default)]
@@ -127,12 +133,36 @@ pub(crate) struct UserPoolConfigInput {
 }
 
 pub(crate) fn validate_user_pool_configuration(config: &UserPoolConfigInput) -> Result<()> {
+    if let Some(setting) = &config.account_recovery_setting {
+        validate_account_recovery_setting(setting)?;
+    }
+
+    if let Some(admin_create_user_config) = &config.admin_create_user_config {
+        validate_admin_create_user_config(admin_create_user_config)?;
+    }
+
+    if let Some(device_configuration) = &config.device_configuration {
+        validate_device_configuration(device_configuration)?;
+    }
+
+    if let Some(email_configuration) = &config.email_configuration {
+        validate_email_configuration(email_configuration)?;
+    }
+
     if let Some(policies) = &config.policies {
         validate_user_pool_policies(policies)?;
     }
 
+    if let Some(schema_attributes) = &config.schema_attributes {
+        validate_schema_attributes(schema_attributes)?;
+    }
+
     if let Some(message) = &config.sms_authentication_message {
         validate_code_delivery_message("SmsAuthenticationMessage", message, 140)?;
+    }
+
+    if let Some(sms_configuration) = &config.sms_configuration {
+        validate_sms_configuration(sms_configuration, "SmsConfiguration")?;
     }
 
     if let Some(message) = &config.sms_verification_message {
@@ -149,6 +179,14 @@ pub(crate) fn validate_user_pool_configuration(config: &UserPoolConfigInput) -> 
 
     if let Some(template) = &config.verification_message_template {
         validate_verification_message_template(template)?;
+    }
+
+    if let Some(settings) = &config.user_attribute_update_settings {
+        validate_user_attribute_update_settings(settings)?;
+    }
+
+    if let Some(add_ons) = &config.user_pool_add_ons {
+        validate_user_pool_add_ons(add_ons)?;
     }
 
     Ok(())
@@ -169,7 +207,7 @@ impl Request {
             lambda_config: self.lambda_config,
             mfa_configuration: self.mfa_configuration,
             policies: self.policies,
-            schema_attributes: self.schema_attributes,
+            schema_attributes: self.schema,
             sms_authentication_message: self.sms_authentication_message,
             sms_configuration: self.sms_configuration,
             sms_verification_message: self.sms_verification_message,
@@ -203,10 +241,10 @@ pub(crate) fn build_user_pool_view(pool: &UserPool, estimated_number_of_users: u
     view.insert("Status".to_string(), json!("Enabled"));
 
     if let Some(value) = &pool.account_recovery_setting {
-        view.insert("AccountRecoverySetting".to_string(), value.clone());
+        view.insert("AccountRecoverySetting".to_string(), json!(value));
     }
     if let Some(value) = &pool.admin_create_user_config {
-        view.insert("AdminCreateUserConfig".to_string(), value.clone());
+        view.insert("AdminCreateUserConfig".to_string(), json!(value));
     }
     if let Some(value) = &pool.alias_attributes {
         view.insert("AliasAttributes".to_string(), json!(value));
@@ -218,10 +256,10 @@ pub(crate) fn build_user_pool_view(pool: &UserPool, estimated_number_of_users: u
         view.insert("DeletionProtection".to_string(), json!(value));
     }
     if let Some(value) = &pool.device_configuration {
-        view.insert("DeviceConfiguration".to_string(), value.clone());
+        view.insert("DeviceConfiguration".to_string(), json!(value));
     }
     if let Some(value) = &pool.email_configuration {
-        view.insert("EmailConfiguration".to_string(), value.clone());
+        view.insert("EmailConfiguration".to_string(), json!(value));
     }
     if let Some(value) = &pool.email_verification_message {
         view.insert("EmailVerificationMessage".to_string(), json!(value));
@@ -245,16 +283,16 @@ pub(crate) fn build_user_pool_view(pool: &UserPool, estimated_number_of_users: u
         view.insert("SmsAuthenticationMessage".to_string(), json!(value));
     }
     if let Some(value) = &pool.sms_configuration {
-        view.insert("SmsConfiguration".to_string(), value.clone());
+        view.insert("SmsConfiguration".to_string(), json!(value));
     }
     if let Some(value) = &pool.sms_verification_message {
         view.insert("SmsVerificationMessage".to_string(), json!(value));
     }
     if let Some(value) = &pool.user_attribute_update_settings {
-        view.insert("UserAttributeUpdateSettings".to_string(), value.clone());
+        view.insert("UserAttributeUpdateSettings".to_string(), json!(value));
     }
     if let Some(value) = &pool.user_pool_add_ons {
-        view.insert("UserPoolAddOns".to_string(), value.clone());
+        view.insert("UserPoolAddOns".to_string(), json!(value));
     }
     if let Some(value) = &pool.user_pool_tags {
         view.insert("UserPoolTags".to_string(), json!(value));
@@ -410,5 +448,108 @@ mod tests {
             "department"
         );
         assert_eq!(result["UserPool"]["UserPoolTags"]["env"], "test");
+    }
+
+    #[tokio::test]
+    async fn test_create_user_pool_persists_typed_nested_configuration() {
+        let storage = Storage::new();
+
+        let result = handler(
+            &storage,
+            json!({
+                "PoolName": "typed-pool",
+                "AccountRecoverySetting": {
+                    "RecoveryMechanisms": [
+                        {
+                            "Name": "VERIFIED_EMAIL",
+                            "Priority": 1
+                        }
+                    ]
+                },
+                "AdminCreateUserConfig": {
+                    "AllowAdminCreateUserOnly": true,
+                    "InviteMessageTemplate": {
+                        "EmailSubject": "Welcome",
+                        "EmailMessage": "Your temporary password is {####}"
+                    }
+                },
+                "DeviceConfiguration": {
+                    "ChallengeRequiredOnNewDevice": true
+                },
+                "EmailConfiguration": {
+                    "EmailSendingAccount": "DEVELOPER",
+                    "ReplyToEmailAddress": "reply@example.com"
+                },
+                "SmsConfiguration": {
+                    "SnsRegion": "us-east-1"
+                },
+                "UserAttributeUpdateSettings": {
+                    "AttributesRequireVerificationBeforeUpdate": ["email"]
+                },
+                "UserPoolAddOns": {
+                    "AdvancedSecurityMode": "AUDIT"
+                }
+            }),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            result["UserPool"]["AccountRecoverySetting"]["RecoveryMechanisms"][0]["Name"],
+            "VERIFIED_EMAIL"
+        );
+        assert_eq!(
+            result["UserPool"]["AdminCreateUserConfig"]["AllowAdminCreateUserOnly"],
+            true
+        );
+        assert_eq!(
+            result["UserPool"]["DeviceConfiguration"]["ChallengeRequiredOnNewDevice"],
+            true
+        );
+        assert_eq!(
+            result["UserPool"]["EmailConfiguration"]["ReplyToEmailAddress"],
+            "reply@example.com"
+        );
+        assert_eq!(
+            result["UserPool"]["SmsConfiguration"]["SnsRegion"],
+            "us-east-1"
+        );
+        assert_eq!(
+            result["UserPool"]["UserAttributeUpdateSettings"]["AttributesRequireVerificationBeforeUpdate"]
+                [0],
+            "email"
+        );
+        assert_eq!(
+            result["UserPool"]["UserPoolAddOns"]["AdvancedSecurityMode"],
+            "AUDIT"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_create_user_pool_rejects_invalid_schema_constraints() {
+        let storage = Storage::new();
+
+        let result = handler(
+            &storage,
+            json!({
+                "PoolName": "invalid-schema-pool",
+                "Schema": [
+                    {
+                        "Name": "department",
+                        "AttributeDataType": "String",
+                        "StringAttributeConstraints": {
+                            "MinLength": "10",
+                            "MaxLength": "5"
+                        }
+                    }
+                ]
+            }),
+        )
+        .await;
+
+        assert!(matches!(
+            result,
+            Err(crate::error::AppError::InvalidParameter(_))
+        ));
     }
 }

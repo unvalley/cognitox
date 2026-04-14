@@ -14,7 +14,7 @@ use crate::{
     validation::{validate_email, validate_phone_number},
 };
 
-use super::helpers::upsert_user_attribute;
+use super::helpers::{apply_user_attribute_updates, upsert_user_attribute};
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "PascalCase")]
@@ -40,54 +40,37 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
         .await
         .ok_or(AppError::UserNotFound)?;
 
-    let mut email_updated = false;
-    let mut phone_updated = false;
-    let mut email_verified_explicit = false;
-    let mut phone_verified_explicit = false;
-
-    for new_attr in req.user_attributes {
+    for new_attr in &req.user_attributes {
         match new_attr.name.as_str() {
             "email" => {
                 if let Some(value) = new_attr.value.as_deref() {
                     validate_email(value)?;
                 }
-                email_updated = true;
             }
             "phone_number" => {
                 if let Some(value) = new_attr.value.as_deref() {
                     validate_phone_number(value)?;
                 }
-                phone_updated = true;
             }
-            "email_verified" => email_verified_explicit = true,
-            "phone_number_verified" => phone_verified_explicit = true,
             _ => {}
         }
-
-        upsert_user_attribute(&mut user.attributes, &new_attr.name, new_attr.value);
     }
 
-    if email_updated && !email_verified_explicit {
+    let changes = apply_user_attribute_updates(&mut user, req.user_attributes);
+
+    if changes.email_updated && !changes.email_verified_explicit {
         upsert_user_attribute(
             &mut user.attributes,
             "email_verified",
             Some("false".to_string()),
         );
     }
-    if phone_updated && !phone_verified_explicit {
+    if changes.phone_updated && !changes.phone_verified_explicit {
         upsert_user_attribute(
             &mut user.attributes,
             "phone_number_verified",
             Some("false".to_string()),
         );
-    }
-
-    for attr in &user.attributes {
-        match attr.name.as_str() {
-            "email" => user.email = attr.value.clone(),
-            "phone_number" => user.phone_number = attr.value.clone(),
-            _ => {}
-        }
     }
 
     user.last_modified_date = Utc::now();

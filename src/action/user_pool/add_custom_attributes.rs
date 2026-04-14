@@ -8,28 +8,15 @@ use serde_json::{Value, json};
 use crate::{
     error::{AppError, Result},
     storage::Storage,
-    types::UserPoolId,
+    types::{SchemaAttributeType, UserPoolId},
+    validation::validate_schema_attributes,
 };
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "PascalCase")]
-struct SchemaAttribute {
-    name: String,
-    #[allow(dead_code)]
-    attribute_data_type: Option<String>,
-    #[allow(dead_code)]
-    mutable: Option<bool>,
-    #[allow(dead_code)]
-    required: Option<bool>,
-    #[allow(dead_code)]
-    developer_only_attribute: Option<bool>,
-}
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "PascalCase")]
 struct Request {
     user_pool_id: UserPoolId,
-    custom_attributes: Vec<SchemaAttribute>,
+    custom_attributes: Vec<SchemaAttributeType>,
 }
 
 pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
@@ -56,13 +43,9 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
     }
 
     // Validate attribute names
+    validate_schema_attributes(&req.custom_attributes)?;
+
     for attr in &req.custom_attributes {
-        if attr.name.is_empty() {
-            return Err(AppError::InvalidParameter(
-                "Attribute name cannot be empty".to_string(),
-            ));
-        }
-        // Custom attribute names should only contain alphanumeric characters and underscores
         if !attr.name.chars().all(|c| c.is_alphanumeric() || c == '_') {
             return Err(AppError::InvalidParameter(format!(
                 "Invalid attribute name: {}",

@@ -202,29 +202,42 @@ pub fn build_device_response(device: &Device) -> Value {
     value
 }
 
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct UserAttributeUpdateSummary {
+    pub email_updated: bool,
+    pub phone_updated: bool,
+    pub email_verified_explicit: bool,
+    pub phone_verified_explicit: bool,
+}
+
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct UserAttributeDeletionSummary {
+    pub email_deleted: bool,
+    pub phone_deleted: bool,
+    pub preferred_mfa_setting: Option<String>,
+}
+
+fn set_or_remove_user_attribute(
+    attributes: &mut Vec<UserAttribute>,
+    name: &str,
+    value: Option<String>,
+) {
+    match value {
+        Some(value) => upsert_user_attribute(attributes, name, Some(value)),
+        None => remove_user_attribute(attributes, name),
+    }
+}
+
+pub fn sync_user_profile_attributes(user: &mut User) {
+    user.email = find_user_attribute_value(&user.attributes, "email");
+    user.phone_number = find_user_attribute_value(&user.attributes, "phone_number");
+}
+
 pub fn build_user_attributes(user: &User) -> Vec<Value> {
     let mut attributes = user.attributes.clone();
-
-    let ensure_attribute =
-        |attributes: &mut Vec<crate::types::UserAttribute>, name: &str, value: Option<String>| {
-            if let Some(value) = value {
-                if let Some(attribute) = attributes
-                    .iter_mut()
-                    .find(|attribute| attribute.name == name)
-                {
-                    attribute.value = Some(value);
-                } else {
-                    attributes.push(crate::types::UserAttribute {
-                        name: name.to_string(),
-                        value: Some(value),
-                    });
-                }
-            }
-        };
-
-    ensure_attribute(&mut attributes, "sub", Some(user.id.to_string()));
-    ensure_attribute(&mut attributes, "email", user.email.clone());
-    ensure_attribute(&mut attributes, "phone_number", user.phone_number.clone());
+    set_or_remove_user_attribute(&mut attributes, "sub", Some(user.id.to_string()));
+    set_or_remove_user_attribute(&mut attributes, "email", user.email.clone());
+    set_or_remove_user_attribute(&mut attributes, "phone_number", user.phone_number.clone());
 
     attributes
         .into_iter()
@@ -257,6 +270,68 @@ pub fn upsert_user_attribute(
 
 pub fn remove_user_attribute(attributes: &mut Vec<UserAttribute>, name: &str) {
     attributes.retain(|attribute| attribute.name != name);
+}
+
+pub fn apply_user_attribute_updates(
+    user: &mut User,
+    updates: impl IntoIterator<Item = UserAttribute>,
+) -> UserAttributeUpdateSummary {
+    let mut summary = UserAttributeUpdateSummary::default();
+
+    for attribute in updates {
+        match attribute.name.as_str() {
+            "email" => summary.email_updated = true,
+            "phone_number" => summary.phone_updated = true,
+            "email_verified" => summary.email_verified_explicit = true,
+            "phone_number_verified" => summary.phone_verified_explicit = true,
+            _ => {}
+        }
+
+        upsert_user_attribute(&mut user.attributes, &attribute.name, attribute.value);
+    }
+
+    sync_user_profile_attributes(user);
+    summary
+}
+
+pub fn apply_user_attribute_deletions(
+    user: &mut User,
+    attribute_names: &[String],
+) -> UserAttributeDeletionSummary {
+    let preferred_mfa_setting = user
+        .attributes
+        .iter()
+        .find(|attr| attr.name == "preferred_mfa_setting")
+        .and_then(|attr| attr.value.clone());
+
+    for attr_name in attribute_names {
+        remove_user_attribute(&mut user.attributes, attr_name);
+    }
+
+    let email_deleted = attribute_names.iter().any(|name| name == "email");
+    let phone_deleted = attribute_names.iter().any(|name| name == "phone_number");
+
+    if email_deleted {
+        remove_user_attribute(&mut user.attributes, "email_verified");
+        if preferred_mfa_setting.as_deref() == Some(EMAIL_OTP_FACTOR) {
+            remove_user_attribute(&mut user.attributes, "preferred_mfa_setting");
+        }
+    }
+
+    if phone_deleted {
+        remove_user_attribute(&mut user.attributes, "phone_number_verified");
+        if preferred_mfa_setting.as_deref() == Some(SMS_MFA_FACTOR) {
+            remove_user_attribute(&mut user.attributes, "preferred_mfa_setting");
+        }
+    }
+
+    sync_user_profile_attributes(user);
+
+    UserAttributeDeletionSummary {
+        email_deleted,
+        phone_deleted,
+        preferred_mfa_setting,
+    }
 }
 
 pub fn preferred_mfa_setting(user: &User, factors: &[String]) -> Option<String> {

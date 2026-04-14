@@ -427,6 +427,148 @@ pub struct SmsConfiguration {
     pub sns_region: Option<String>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum RecoveryMechanismName {
+    VerifiedEmail,
+    VerifiedPhoneNumber,
+    AdminOnly,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+pub struct RecoveryOption {
+    pub name: RecoveryMechanismName,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub priority: Option<i32>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+pub struct AccountRecoverySetting {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub recovery_mechanisms: Option<Vec<RecoveryOption>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+pub struct InviteMessageTemplate {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub email_message: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub email_subject: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sms_message: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+pub struct AdminCreateUserConfig {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub allow_admin_create_user_only: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub invite_message_template: Option<InviteMessageTemplate>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub unused_account_validity_days: Option<i32>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+pub struct DeviceConfiguration {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub challenge_required_on_new_device: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub device_only_remembered_on_user_prompt: Option<bool>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum EmailSendingAccount {
+    CognitoDefault,
+    Developer,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+pub struct EmailConfiguration {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub configuration_set: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub email_sending_account: Option<EmailSendingAccount>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub from: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reply_to_email_address: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_arn: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum AttributeDataType {
+    String,
+    Number,
+    DateTime,
+    Boolean,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+pub struct StringAttributeConstraintsType {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub min_length: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_length: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+pub struct NumberAttributeConstraintsType {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub min_value: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_value: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+pub struct SchemaAttributeType {
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub attribute_data_type: Option<AttributeDataType>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub developer_only_attribute: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mutable: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub number_attribute_constraints: Option<NumberAttributeConstraintsType>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub required: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub string_attribute_constraints: Option<StringAttributeConstraintsType>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+pub struct UserAttributeUpdateSettingsType {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub attributes_require_verification_before_update: Option<Vec<AutoVerifiedAttribute>>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum AdvancedSecurityMode {
+    Off,
+    Audit,
+    Enforced,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+pub struct UserPoolAddOns {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub advanced_security_mode: Option<AdvancedSecurityMode>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct SmsMfaConfiguration {
@@ -535,19 +677,50 @@ pub enum PreventUserExistenceErrors {
     Enabled,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+pub struct AnalyticsConfiguration {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub application_arn: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub application_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub external_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub role_arn: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub user_data_shared: Option<bool>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum RefreshTokenRotationFeature {
+    Enabled,
+    Disabled,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+pub struct RefreshTokenRotationType {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub feature: Option<RefreshTokenRotationFeature>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub retry_grace_period_seconds: Option<i32>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UserPool {
     pub id: UserPoolId,
     pub name: String,
     pub creation_date: DateTime<Utc>,
     pub last_modified_date: DateTime<Utc>,
-    pub account_recovery_setting: Option<serde_json::Value>,
-    pub admin_create_user_config: Option<serde_json::Value>,
+    pub account_recovery_setting: Option<AccountRecoverySetting>,
+    pub admin_create_user_config: Option<AdminCreateUserConfig>,
     pub alias_attributes: Option<Vec<AliasAttribute>>,
     pub auto_verified_attributes: Option<Vec<AutoVerifiedAttribute>>,
     pub deletion_protection: Option<DeletionProtection>,
-    pub device_configuration: Option<serde_json::Value>,
-    pub email_configuration: Option<serde_json::Value>,
+    pub device_configuration: Option<DeviceConfiguration>,
+    pub email_configuration: Option<EmailConfiguration>,
     pub email_verification_message: Option<String>,
     pub email_verification_subject: Option<String>,
     pub lambda_config: Option<serde_json::Value>,
@@ -557,12 +730,12 @@ pub struct UserPool {
     pub email_mfa_configuration: Option<EmailMfaConfiguration>,
     pub webauthn_configuration: Option<WebAuthnConfiguration>,
     pub policies: Option<UserPoolPolicies>,
-    pub schema_attributes: Option<Vec<serde_json::Value>>,
+    pub schema_attributes: Option<Vec<SchemaAttributeType>>,
     pub sms_authentication_message: Option<String>,
-    pub sms_configuration: Option<serde_json::Value>,
+    pub sms_configuration: Option<SmsConfiguration>,
     pub sms_verification_message: Option<String>,
-    pub user_attribute_update_settings: Option<serde_json::Value>,
-    pub user_pool_add_ons: Option<serde_json::Value>,
+    pub user_attribute_update_settings: Option<UserAttributeUpdateSettingsType>,
+    pub user_pool_add_ons: Option<UserPoolAddOns>,
     pub user_pool_tags: Option<HashMap<String, String>>,
     pub user_pool_tier: Option<UserPoolTier>,
     pub username_attributes: Option<Vec<UsernameAttribute>>,
@@ -596,15 +769,20 @@ pub struct UserPoolClient {
     pub logout_urls: Vec<String>,
     pub default_redirect_uri: Option<String>,
     pub supported_identity_providers: Vec<String>,
+    pub read_attributes: Vec<String>,
+    pub write_attributes: Vec<String>,
+    pub analytics_configuration: Option<AnalyticsConfiguration>,
 
     // Auth flows
     pub explicit_auth_flows: Vec<ExplicitAuthFlow>,
+    pub auth_session_validity: Option<i32>,
 
     // Token validity
     pub access_token_validity: Option<i32>,
     pub id_token_validity: Option<i32>,
     pub refresh_token_validity: Option<i32>,
     pub token_validity_units: Option<TokenValidityUnits>,
+    pub refresh_token_rotation: Option<RefreshTokenRotationType>,
 
     // Security settings
     pub enable_token_revocation: bool,

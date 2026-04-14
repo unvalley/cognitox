@@ -12,11 +12,13 @@ use crate::{
     error::{AppError, Result},
     storage::Storage,
     types::{
-        ClientId, ExplicitAuthFlow, OAuthFlow, PreventUserExistenceErrors, TokenValidityUnits,
-        UserPoolClient, UserPoolId,
+        AnalyticsConfiguration, ClientId, ExplicitAuthFlow, OAuthFlow, PreventUserExistenceErrors,
+        RefreshTokenRotationType, TokenValidityUnits, UserPoolClient, UserPoolId,
     },
     validation::{
-        validate_client_name, validate_explicit_auth_flows, validate_oauth_client_configuration,
+        validate_analytics_configuration, validate_auth_session_validity,
+        validate_client_attribute_names, validate_client_name, validate_explicit_auth_flows,
+        validate_oauth_client_configuration, validate_refresh_token_rotation,
         validate_token_validities,
     },
 };
@@ -42,7 +44,15 @@ struct Request {
     #[serde(default)]
     supported_identity_providers: Option<Vec<String>>,
     #[serde(default)]
+    read_attributes: Option<Vec<String>>,
+    #[serde(default)]
+    write_attributes: Option<Vec<String>>,
+    #[serde(default)]
+    analytics_configuration: Option<AnalyticsConfiguration>,
+    #[serde(default)]
     explicit_auth_flows: Option<Vec<ExplicitAuthFlow>>,
+    #[serde(default)]
+    auth_session_validity: Option<i32>,
     #[serde(default)]
     access_token_validity: Option<i32>,
     #[serde(default)]
@@ -51,6 +61,8 @@ struct Request {
     refresh_token_validity: Option<i32>,
     #[serde(default)]
     token_validity_units: Option<TokenValidityUnits>,
+    #[serde(default)]
+    refresh_token_rotation: Option<RefreshTokenRotationType>,
     #[serde(default)]
     enable_token_revocation: Option<bool>,
     #[serde(default)]
@@ -77,7 +89,15 @@ pub(crate) struct UserPoolClientConfigInput {
     #[serde(default)]
     pub(crate) supported_identity_providers: Option<Vec<String>>,
     #[serde(default)]
+    pub(crate) read_attributes: Option<Vec<String>>,
+    #[serde(default)]
+    pub(crate) write_attributes: Option<Vec<String>>,
+    #[serde(default)]
+    pub(crate) analytics_configuration: Option<AnalyticsConfiguration>,
+    #[serde(default)]
     pub(crate) explicit_auth_flows: Option<Vec<ExplicitAuthFlow>>,
+    #[serde(default)]
+    pub(crate) auth_session_validity: Option<i32>,
     #[serde(default)]
     pub(crate) access_token_validity: Option<i32>,
     #[serde(default)]
@@ -86,6 +106,8 @@ pub(crate) struct UserPoolClientConfigInput {
     pub(crate) refresh_token_validity: Option<i32>,
     #[serde(default)]
     pub(crate) token_validity_units: Option<TokenValidityUnits>,
+    #[serde(default)]
+    pub(crate) refresh_token_rotation: Option<RefreshTokenRotationType>,
     #[serde(default)]
     pub(crate) enable_token_revocation: Option<bool>,
     #[serde(default)]
@@ -116,6 +138,20 @@ pub(crate) fn validate_user_pool_client_configuration(
         generate_secret,
     )?;
     validate_explicit_auth_flows(explicit_auth_flows)?;
+    validate_client_attribute_names(
+        "ReadAttributes",
+        config.read_attributes.as_deref().unwrap_or(&[]),
+    )?;
+    validate_client_attribute_names(
+        "WriteAttributes",
+        config.write_attributes.as_deref().unwrap_or(&[]),
+    )?;
+    if let Some(analytics_configuration) = &config.analytics_configuration {
+        validate_analytics_configuration(analytics_configuration)?;
+    }
+    if let Some(auth_session_validity) = config.auth_session_validity {
+        validate_auth_session_validity(auth_session_validity)?;
+    }
     validate_token_validities(
         config.access_token_validity,
         config.id_token_validity,
@@ -124,6 +160,9 @@ pub(crate) fn validate_user_pool_client_configuration(
         token_validity_units.and_then(|units| units.id_token),
         token_validity_units.and_then(|units| units.refresh_token),
     )?;
+    if let Some(refresh_token_rotation) = &config.refresh_token_rotation {
+        validate_refresh_token_rotation(refresh_token_rotation)?;
+    }
 
     Ok(())
 }
@@ -138,11 +177,16 @@ impl Request {
             logout_urls: self.logout_urls,
             default_redirect_uri: self.default_redirect_uri,
             supported_identity_providers: self.supported_identity_providers,
+            read_attributes: self.read_attributes,
+            write_attributes: self.write_attributes,
+            analytics_configuration: self.analytics_configuration,
             explicit_auth_flows: self.explicit_auth_flows,
+            auth_session_validity: self.auth_session_validity,
             access_token_validity: self.access_token_validity,
             id_token_validity: self.id_token_validity,
             refresh_token_validity: self.refresh_token_validity,
             token_validity_units: self.token_validity_units,
+            refresh_token_rotation: self.refresh_token_rotation,
             enable_token_revocation: self.enable_token_revocation,
             prevent_user_existence_errors: self.prevent_user_existence_errors,
             enable_propagate_additional_user_context_data: self
@@ -200,15 +244,20 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
         logout_urls,
         default_redirect_uri: config.default_redirect_uri,
         supported_identity_providers: config.supported_identity_providers.unwrap_or_default(),
+        read_attributes: config.read_attributes.unwrap_or_default(),
+        write_attributes: config.write_attributes.unwrap_or_default(),
+        analytics_configuration: config.analytics_configuration,
 
         // Auth flows
         explicit_auth_flows: config.explicit_auth_flows.unwrap_or_default(),
+        auth_session_validity: config.auth_session_validity,
 
         // Token validity
         access_token_validity: config.access_token_validity,
         id_token_validity: config.id_token_validity,
         refresh_token_validity: config.refresh_token_validity,
         token_validity_units: config.token_validity_units,
+        refresh_token_rotation: config.refresh_token_rotation,
 
         // Security settings
         enable_token_revocation: config.enable_token_revocation.unwrap_or(true),
@@ -265,8 +314,24 @@ pub fn build_client_response(client: &UserPoolClient) -> Value {
         response["SupportedIdentityProviders"] = json!(client.supported_identity_providers);
     }
 
+    if !client.read_attributes.is_empty() {
+        response["ReadAttributes"] = json!(client.read_attributes);
+    }
+
+    if !client.write_attributes.is_empty() {
+        response["WriteAttributes"] = json!(client.write_attributes);
+    }
+
+    if let Some(ref analytics_configuration) = client.analytics_configuration {
+        response["AnalyticsConfiguration"] = json!(analytics_configuration);
+    }
+
     if !client.explicit_auth_flows.is_empty() {
         response["ExplicitAuthFlows"] = json!(client.explicit_auth_flows);
+    }
+
+    if let Some(auth_session_validity) = client.auth_session_validity {
+        response["AuthSessionValidity"] = json!(auth_session_validity);
     }
 
     if let Some(validity) = client.access_token_validity {
@@ -293,6 +358,10 @@ pub fn build_client_response(client: &UserPoolClient) -> Value {
             units_json["RefreshToken"] = json!(refresh);
         }
         response["TokenValidityUnits"] = units_json;
+    }
+
+    if let Some(ref refresh_token_rotation) = client.refresh_token_rotation {
+        response["RefreshTokenRotation"] = json!(refresh_token_rotation);
     }
 
     if let Some(ref prevent) = client.prevent_user_existence_errors {
@@ -400,6 +469,72 @@ mod tests {
                 "TokenValidityUnits": {
                     "AccessToken": "seconds"
                 }
+            }),
+        )
+        .await;
+
+        assert!(matches!(result, Err(AppError::InvalidParameter(_))));
+    }
+
+    #[tokio::test]
+    async fn test_create_user_pool_client_persists_extended_configuration() {
+        let storage = Storage::new();
+
+        let pool = create_user_pool::handler(&storage, json!({"PoolName": "test-pool"}))
+            .await
+            .unwrap();
+        let pool_id = pool["UserPool"]["Id"].as_str().unwrap();
+
+        let result = handler(
+            &storage,
+            json!({
+                "UserPoolId": pool_id,
+                "ClientName": "typed-client",
+                "ReadAttributes": ["email", "custom:role"],
+                "WriteAttributes": ["email"],
+                "AnalyticsConfiguration": {
+                    "ApplicationId": "pinpoint-app"
+                },
+                "AuthSessionValidity": 5,
+                "RefreshTokenRotation": {
+                    "Feature": "ENABLED",
+                    "RetryGracePeriodSeconds": 10
+                }
+            }),
+        )
+        .await
+        .unwrap();
+
+        let client = &result["UserPoolClient"];
+        assert_eq!(client["ReadAttributes"], json!(["email", "custom:role"]));
+        assert_eq!(client["WriteAttributes"], json!(["email"]));
+        assert_eq!(
+            client["AnalyticsConfiguration"]["ApplicationId"],
+            "pinpoint-app"
+        );
+        assert_eq!(client["AuthSessionValidity"], 5);
+        assert_eq!(client["RefreshTokenRotation"]["Feature"], "ENABLED");
+        assert_eq!(
+            client["RefreshTokenRotation"]["RetryGracePeriodSeconds"],
+            10
+        );
+    }
+
+    #[tokio::test]
+    async fn test_create_user_pool_client_rejects_invalid_auth_session_validity() {
+        let storage = Storage::new();
+
+        let pool = create_user_pool::handler(&storage, json!({"PoolName": "test-pool"}))
+            .await
+            .unwrap();
+        let pool_id = pool["UserPool"]["Id"].as_str().unwrap();
+
+        let result = handler(
+            &storage,
+            json!({
+                "UserPoolId": pool_id,
+                "ClientName": "bad-client",
+                "AuthSessionValidity": 2
             }),
         )
         .await;

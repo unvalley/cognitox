@@ -14,7 +14,9 @@ use crate::{
     error::{AppError, Result},
     storage::Storage,
     types::{
-        AutoVerifiedAttribute, DeletionProtection, MfaConfiguration, UserPoolId, UserPoolPolicies,
+        AccountRecoverySetting, AdminCreateUserConfig, AutoVerifiedAttribute, DeletionProtection,
+        DeviceConfiguration, EmailConfiguration, MfaConfiguration, SmsConfiguration,
+        UserAttributeUpdateSettingsType, UserPoolAddOns, UserPoolId, UserPoolPolicies,
         UserPoolTier, VerificationMessageTemplate,
     },
     validation::validate_pool_name,
@@ -25,17 +27,17 @@ use crate::{
 struct Request {
     user_pool_id: UserPoolId,
     #[serde(default)]
-    account_recovery_setting: Option<Value>,
+    account_recovery_setting: Option<AccountRecoverySetting>,
     #[serde(default)]
-    admin_create_user_config: Option<Value>,
+    admin_create_user_config: Option<AdminCreateUserConfig>,
     #[serde(default)]
     auto_verified_attributes: Option<Vec<AutoVerifiedAttribute>>,
     #[serde(default)]
     deletion_protection: Option<DeletionProtection>,
     #[serde(default)]
-    device_configuration: Option<Value>,
+    device_configuration: Option<DeviceConfiguration>,
     #[serde(default)]
-    email_configuration: Option<Value>,
+    email_configuration: Option<EmailConfiguration>,
     #[serde(default)]
     email_verification_message: Option<String>,
     #[serde(default)]
@@ -51,13 +53,13 @@ struct Request {
     #[serde(default)]
     sms_authentication_message: Option<String>,
     #[serde(default)]
-    sms_configuration: Option<Value>,
+    sms_configuration: Option<SmsConfiguration>,
     #[serde(default)]
     sms_verification_message: Option<String>,
     #[serde(default)]
-    user_attribute_update_settings: Option<Value>,
+    user_attribute_update_settings: Option<UserAttributeUpdateSettingsType>,
     #[serde(default)]
-    user_pool_add_ons: Option<Value>,
+    user_pool_add_ons: Option<UserPoolAddOns>,
     #[serde(default)]
     user_pool_tags: Option<HashMap<String, String>>,
     #[serde(default)]

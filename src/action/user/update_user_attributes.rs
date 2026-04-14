@@ -15,7 +15,8 @@ use crate::{
 };
 
 use super::helpers::{
-    mask_email, mask_phone_number, upsert_user_attribute, verify_and_extract_user_id,
+    apply_user_attribute_updates, mask_email, mask_phone_number, upsert_user_attribute,
+    verify_and_extract_user_id,
 };
 
 #[derive(Debug, Deserialize)]
@@ -44,45 +45,32 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
         .await
         .ok_or(AppError::UserPoolNotFound)?;
 
-    let mut email_updated = false;
-    let mut phone_updated = false;
-    let mut email_verified_explicit = false;
-    let mut phone_verified_explicit = false;
-
-    for new_attr in req.user_attributes {
+    for new_attr in &req.user_attributes {
         match new_attr.name.as_str() {
             "email" => {
                 if let Some(value) = new_attr.value.as_deref() {
                     validate_email(value)?;
                 }
-                email_updated = true;
             }
             "phone_number" => {
                 if let Some(value) = new_attr.value.as_deref() {
                     validate_phone_number(value)?;
                 }
-                phone_updated = true;
-            }
-            "email_verified" => {
-                email_verified_explicit = true;
-            }
-            "phone_number_verified" => {
-                phone_verified_explicit = true;
             }
             _ => {}
         }
-
-        upsert_user_attribute(&mut user.attributes, &new_attr.name, new_attr.value);
     }
 
-    if email_updated && !email_verified_explicit {
+    let changes = apply_user_attribute_updates(&mut user, req.user_attributes);
+
+    if changes.email_updated && !changes.email_verified_explicit {
         upsert_user_attribute(
             &mut user.attributes,
             "email_verified",
             Some("false".to_string()),
         );
     }
-    if phone_updated && !phone_verified_explicit {
+    if changes.phone_updated && !changes.phone_verified_explicit {
         upsert_user_attribute(
             &mut user.attributes,
             "phone_number_verified",
@@ -90,16 +78,8 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
         );
     }
 
-    for attr in &user.attributes {
-        match attr.name.as_str() {
-            "email" => user.email = attr.value.clone(),
-            "phone_number" => user.phone_number = attr.value.clone(),
-            _ => {}
-        }
-    }
-
     let mut code_delivery_details_list = Vec::new();
-    if email_updated
+    if changes.email_updated
         && pool
             .auto_verified_attributes
             .as_ref()
@@ -112,7 +92,7 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
             "Destination": mask_email(email)
         }));
     }
-    if phone_updated
+    if changes.phone_updated
         && pool
             .auto_verified_attributes
             .as_ref()

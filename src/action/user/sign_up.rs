@@ -18,7 +18,7 @@ use crate::{
 
 use super::helpers::{
     build_code_delivery_details, find_user_attribute_value, generate_confirmation_code,
-    hash_password, verify_secret_hash,
+    hash_password, sync_user_profile_attributes, verify_secret_hash,
 };
 
 #[derive(Debug, Deserialize)]
@@ -99,21 +99,12 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
     let now = Utc::now();
     let user_id = Uuid::new_v4();
 
-    let email = req
-        .user_attributes
-        .as_ref()
-        .and_then(|attrs| find_user_attribute_value(attrs, "email"));
-    let phone_number = req
-        .user_attributes
-        .as_ref()
-        .and_then(|attrs| find_user_attribute_value(attrs, "phone_number"));
-
-    let user = User {
+    let mut user = User {
         id: user_id,
         user_pool_id: client.user_pool_id.clone(),
         username: req.username.clone(),
-        email: email.clone(),
-        phone_number: phone_number.clone(),
+        email: None,
+        phone_number: None,
         password_hash: hash_password(&req.password).map_err(AppError::Internal)?,
         enabled: true,
         user_status: UserStatus::Unconfirmed,
@@ -121,6 +112,10 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
         creation_date: now,
         last_modified_date: now,
     };
+    sync_user_profile_attributes(&mut user);
+
+    let email = user.email.clone();
+    let phone_number = user.phone_number.clone();
 
     storage.create_user(user).await;
 
