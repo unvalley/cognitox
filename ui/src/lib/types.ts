@@ -80,15 +80,6 @@ export interface ManagedLoginBranding {
   Assets?: Record<string, unknown>
 }
 
-export type AdminPage =
-  | 'user-pools'
-  | 'user-pool-detail'
-  | 'users'
-  | 'user-detail'
-  | 'clients'
-  | 'client-detail'
-  | 'branding'
-
 /**
  * Format a UNIX timestamp (seconds) to a localized date-time string.
  */
@@ -103,19 +94,5 @@ export function formatDate(timestamp: string | number): string {
     day: 'numeric',
     hour: '2-digit',
     minute: '2-digit',
-  })
-}
-
-/**
- * Format a UNIX timestamp (seconds) to a short localized date string.
- */
-export function formatDateShort(timestamp: string | number): string {
-  const ts = typeof timestamp === 'string' ? Number(timestamp) : timestamp
-  if (!ts || isNaN(ts)) return '-'
-  const date = new Date(ts < 1e12 ? ts * 1000 : ts)
-  return date.toLocaleDateString(undefined, {
-    year: 'numeric',
-    month: 'short',
-    day: 'numeric',
   })
 }
