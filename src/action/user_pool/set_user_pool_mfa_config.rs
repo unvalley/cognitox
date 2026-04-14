@@ -2,87 +2,88 @@
 //!
 //! <https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_SetUserPoolMfaConfig.html>
 
+use chrono::Utc;
 use serde::Deserialize;
 use serde_json::{Value, json};
 
 use crate::{
+    action::io::parse_request,
     error::{AppError, Result},
     storage::Storage,
-    types::UserPoolId,
+    types::{
+        EmailMfaConfiguration, MfaConfiguration, SmsMfaConfiguration,
+        SoftwareTokenMfaConfiguration, UserPoolId, WebAuthnConfiguration,
+    },
+    validation::validate_pool_mfa_configuration,
 };
-
-#[derive(Debug, Clone, Deserialize)]
-#[serde(rename_all = "PascalCase")]
-struct SmsMfaConfiguration {
-    #[allow(dead_code)]
-    sms_authentication_message: Option<String>,
-    #[allow(dead_code)]
-    sms_configuration: Option<SmsConfiguration>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-#[serde(rename_all = "PascalCase")]
-struct SmsConfiguration {
-    #[allow(dead_code)]
-    sns_caller_arn: Option<String>,
-    #[allow(dead_code)]
-    external_id: Option<String>,
-    #[allow(dead_code)]
-    sns_region: Option<String>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-#[serde(rename_all = "PascalCase")]
-struct SoftwareTokenMfaConfiguration {
-    #[allow(dead_code)]
-    enabled: Option<bool>,
-}
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "PascalCase")]
 struct Request {
     user_pool_id: UserPoolId,
-    mfa_configuration: Option<String>,
-    #[allow(dead_code)]
+    #[serde(default)]
+    mfa_configuration: Option<MfaConfiguration>,
+    #[serde(default)]
     sms_mfa_configuration: Option<SmsMfaConfiguration>,
-    #[allow(dead_code)]
+    #[serde(default)]
     software_token_mfa_configuration: Option<SoftwareTokenMfaConfiguration>,
+    #[serde(default)]
+    email_mfa_configuration: Option<EmailMfaConfiguration>,
+    #[serde(default)]
+    webauthn_configuration: Option<WebAuthnConfiguration>,
 }
 
 pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
-    let req: Request = serde_json::from_value(body)
-        .map_err(|e| AppError::InvalidParameter(format!("Invalid request: {}", e)))?;
+    let req: Request = parse_request(body)?;
 
-    // Verify user pool exists
-    storage
+    validate_pool_mfa_configuration(
+        req.mfa_configuration,
+        req.sms_mfa_configuration.as_ref(),
+        req.software_token_mfa_configuration.as_ref(),
+        req.email_mfa_configuration.as_ref(),
+        req.webauthn_configuration.as_ref(),
+    )?;
+
+    let mut pool = storage
         .get_user_pool(&req.user_pool_id)
         .await
         .ok_or(AppError::UserPoolNotFound)?;
 
-    // Validate MFA configuration value
-    let mfa_config = req.mfa_configuration.as_deref().unwrap_or("OFF");
-    if !matches!(mfa_config, "OFF" | "ON" | "OPTIONAL") {
-        return Err(AppError::InvalidParameter(format!(
-            "Invalid MfaConfiguration value: {}. Must be OFF, ON, or OPTIONAL",
-            mfa_config
-        )));
+    pool.mfa_configuration = req.mfa_configuration.or(pool.mfa_configuration);
+    if req.sms_mfa_configuration.is_some() {
+        pool.sms_mfa_configuration = req.sms_mfa_configuration;
     }
+    if req.software_token_mfa_configuration.is_some() {
+        pool.software_token_mfa_configuration = req.software_token_mfa_configuration;
+    }
+    if req.email_mfa_configuration.is_some() {
+        pool.email_mfa_configuration = req.email_mfa_configuration;
+    }
+    if req.webauthn_configuration.is_some() {
+        pool.webauthn_configuration = req.webauthn_configuration;
+    }
+    pool.last_modified_date = Utc::now();
 
-    // Note: In a full implementation, we would store the MFA configuration
-    // and enforce it during authentication. For the emulator, we accept
-    // the configuration but MFA is not actually enforced.
+    storage
+        .update_user_pool(pool.clone())
+        .await
+        .ok_or(AppError::Internal(
+            "Failed to update user pool MFA configuration".to_string(),
+        ))?;
 
     Ok(json!({
-        "MfaConfiguration": mfa_config,
-        "SmsMfaConfiguration": null,
-        "SoftwareTokenMfaConfiguration": null
+        "MfaConfiguration": pool.mfa_configuration,
+        "SmsMfaConfiguration": pool.sms_mfa_configuration,
+        "SoftwareTokenMfaConfiguration": pool.software_token_mfa_configuration,
+        "EmailMfaConfiguration": pool.email_mfa_configuration,
+        "WebAuthnConfiguration": pool.webauthn_configuration
     }))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::action::user_pool::create_user_pool;
+    use crate::action::user_pool::{create_user_pool, get_user_pool_mfa_config};
     use serde_json::json;
 
     #[tokio::test]
@@ -104,11 +105,17 @@ mod tests {
                 }
             }),
         )
-        .await;
+        .await
+        .unwrap();
 
-        assert!(result.is_ok());
-        let body = result.unwrap();
-        assert_eq!(body["MfaConfiguration"], "OPTIONAL");
+        assert_eq!(result["MfaConfiguration"], "OPTIONAL");
+        assert_eq!(result["SoftwareTokenMfaConfiguration"]["Enabled"], true);
+
+        let fetched = get_user_pool_mfa_config::handler(&storage, json!({ "UserPoolId": pool_id }))
+            .await
+            .unwrap();
+        assert_eq!(fetched["MfaConfiguration"], "OPTIONAL");
+        assert_eq!(fetched["SoftwareTokenMfaConfiguration"]["Enabled"], true);
     }
 
     #[tokio::test]
@@ -124,13 +131,12 @@ mod tests {
             &storage,
             json!({
                 "UserPoolId": pool_id,
-                "MfaConfiguration": "INVALID"
+                "MfaConfiguration": "ON"
             }),
         )
         .await;
 
-        assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), AppError::InvalidParameter(_)));
+        assert!(matches!(result, Err(AppError::InvalidParameter(_))));
     }
 
     #[tokio::test]
@@ -146,7 +152,6 @@ mod tests {
         )
         .await;
 
-        assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), AppError::UserPoolNotFound));
+        assert!(matches!(result, Err(AppError::UserPoolNotFound)));
     }
 }

@@ -12,7 +12,9 @@ use crate::{
     types::ConfirmationCode,
 };
 
-use super::helpers::{generate_confirmation_code, mask_email, verify_and_extract_user_id};
+use super::helpers::{
+    generate_confirmation_code, mask_email, mask_phone_number, verify_and_extract_user_id,
+};
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "PascalCase")]
@@ -49,17 +51,21 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
     // Determine delivery details based on attribute
     let (destination, delivery_medium) = match req.attribute_name.as_str() {
         "email" => {
-            let dest = user.email.as_deref().map(mask_email);
+            let dest = user.email.as_deref().map(mask_email).ok_or_else(|| {
+                AppError::InvalidParameter("User does not have an email attribute".to_string())
+            })?;
             (dest, "EMAIL")
         }
         "phone_number" => {
-            let dest = user.phone_number.as_deref().map(|p| {
-                if p.len() > 4 {
-                    format!("{}****{}", &p[..3], &p[p.len() - 2..])
-                } else {
-                    "****".to_string()
-                }
-            });
+            let dest = user
+                .phone_number
+                .as_deref()
+                .map(mask_phone_number)
+                .ok_or_else(|| {
+                    AppError::InvalidParameter(
+                        "User does not have a phone_number attribute".to_string(),
+                    )
+                })?;
             (dest, "SMS")
         }
         _ => {
@@ -194,5 +200,22 @@ mod tests {
 
         assert!(result.is_err());
         assert!(matches!(result.unwrap_err(), AppError::InvalidParameter(_)));
+    }
+
+    #[tokio::test]
+    async fn test_get_user_attribute_verification_code_missing_phone_number() {
+        let storage = Storage::new();
+        let access_token = setup_and_get_token(&storage).await;
+
+        let result = handler(
+            &storage,
+            json!({
+                "AccessToken": access_token,
+                "AttributeName": "phone_number"
+            }),
+        )
+        .await;
+
+        assert!(matches!(result, Err(AppError::InvalidParameter(_))));
     }
 }

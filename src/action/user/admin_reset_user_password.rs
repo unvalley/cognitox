@@ -7,12 +7,14 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 use crate::{
+    action::io::parse_request,
     error::{AppError, Result},
     storage::Storage,
     types::{PasswordResetCode, UserPoolId, UserStatus},
+    validation::validate_username,
 };
 
-use super::helpers::{generate_confirmation_code, mask_email};
+use super::helpers::{generate_confirmation_code, require_code_delivery_details};
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "PascalCase")]
@@ -22,8 +24,8 @@ struct Request {
 }
 
 pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
-    let req: Request = serde_json::from_value(body)
-        .map_err(|e| AppError::InvalidParameter(format!("Invalid request: {}", e)))?;
+    let req: Request = parse_request(body)?;
+    validate_username(&req.username)?;
 
     storage
         .get_user_pool(&req.user_pool_id)
@@ -34,6 +36,8 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
         .get_user_by_username(&req.user_pool_id, &req.username)
         .await
         .ok_or(AppError::UserNotFound)?;
+
+    let code_delivery_details = require_code_delivery_details(&user)?;
 
     // Generate password reset code
     let code = generate_confirmation_code();
@@ -50,16 +54,8 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
     user.last_modified_date = Utc::now();
     storage.update_user(user.clone()).await;
 
-    // Return code delivery details (in real implementation, would send email/SMS)
-    let destination = user.email.as_deref().map(mask_email);
-    let delivery_medium = if user.email.is_some() { "EMAIL" } else { "SMS" };
-
     Ok(json!({
-        "CodeDeliveryDetails": {
-            "AttributeName": "email",
-            "DeliveryMedium": delivery_medium,
-            "Destination": destination
-        }
+        "CodeDeliveryDetails": code_delivery_details
     }))
 }
 

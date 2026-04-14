@@ -5,8 +5,9 @@
 
 use crate::error::{AppError, Result};
 use crate::types::{
-    ExplicitAuthFlow, OAuthFlow, TokenValidityUnit, UserPoolId, UserPoolPolicies,
-    VerificationMessageTemplate,
+    EmailMfaConfiguration, ExplicitAuthFlow, MfaConfiguration, OAuthFlow, SmsMfaConfiguration,
+    SoftwareTokenMfaConfiguration, TokenValidityUnit, UserPoolId, UserPoolPolicies,
+    VerificationMessageTemplate, WebAuthnConfiguration,
 };
 
 /// Minimum password length (AWS default is 6)
@@ -17,6 +18,9 @@ const MAX_PASSWORD_LENGTH: usize = 256;
 
 /// Maximum username length
 const MAX_USERNAME_LENGTH: usize = 128;
+
+/// Maximum confirmation/reset code length
+const MAX_CODE_LENGTH: usize = 2048;
 
 /// Validate username is not empty and within bounds
 pub fn validate_username(username: &str) -> Result<()> {
@@ -109,6 +113,50 @@ pub fn validate_email(email: &str) -> Result<()> {
         return Err(AppError::InvalidParameter(
             "Invalid email format".to_string(),
         ));
+    }
+
+    Ok(())
+}
+
+pub fn validate_phone_number(phone_number: &str) -> Result<()> {
+    let trimmed = phone_number.trim();
+
+    if trimmed.is_empty() {
+        return Err(AppError::InvalidParameter(
+            "Phone number cannot be empty".to_string(),
+        ));
+    }
+
+    if !trimmed.starts_with('+') {
+        return Err(AppError::InvalidParameter(
+            "Phone number must be in E.164 format".to_string(),
+        ));
+    }
+
+    let digits = &trimmed[1..];
+    if digits.is_empty() || digits.len() > 15 || !digits.chars().all(|ch| ch.is_ascii_digit()) {
+        return Err(AppError::InvalidParameter(
+            "Phone number must be in E.164 format".to_string(),
+        ));
+    }
+
+    Ok(())
+}
+
+pub fn validate_confirmation_code(code: &str) -> Result<()> {
+    let trimmed = code.trim();
+
+    if trimmed.is_empty() {
+        return Err(AppError::InvalidParameter(
+            "Confirmation code cannot be empty".to_string(),
+        ));
+    }
+
+    if trimmed.len() > MAX_CODE_LENGTH {
+        return Err(AppError::InvalidParameter(format!(
+            "Confirmation code cannot exceed {} characters",
+            MAX_CODE_LENGTH
+        )));
     }
 
     Ok(())
@@ -395,6 +443,58 @@ pub fn validate_oauth_client_configuration(
         if !generate_secret {
             return Err(AppError::InvalidParameter(
                 "GenerateSecret must be true when client_credentials is enabled".to_string(),
+            ));
+        }
+    }
+
+    Ok(())
+}
+
+pub fn validate_pool_mfa_configuration(
+    mfa_configuration: Option<MfaConfiguration>,
+    sms_mfa_configuration: Option<&SmsMfaConfiguration>,
+    software_token_mfa_configuration: Option<&SoftwareTokenMfaConfiguration>,
+    email_mfa_configuration: Option<&EmailMfaConfiguration>,
+    webauthn_configuration: Option<&WebAuthnConfiguration>,
+) -> Result<()> {
+    if let Some(sms) = sms_mfa_configuration
+        && let Some(message) = &sms.sms_authentication_message
+    {
+        validate_code_delivery_message(
+            "SmsMfaConfiguration.SmsAuthenticationMessage",
+            message,
+            140,
+        )?;
+    }
+
+    if let Some(email) = email_mfa_configuration {
+        if let Some(message) = &email.message {
+            validate_code_delivery_message("EmailMfaConfiguration.Message", message, 20_000)?;
+        }
+        if let Some(subject) = &email.subject {
+            validate_subject("EmailMfaConfiguration.Subject", subject)?;
+        }
+    }
+
+    if let Some(webauthn) = webauthn_configuration
+        && let Some(relying_party_id) = &webauthn.relying_party_id
+        && relying_party_id.trim().is_empty()
+    {
+        return Err(AppError::InvalidParameter(
+            "WebAuthnConfiguration.RelyingPartyId cannot be empty".to_string(),
+        ));
+    }
+
+    if matches!(mfa_configuration, Some(MfaConfiguration::On)) {
+        let has_enabled_factor = sms_mfa_configuration.is_some()
+            || software_token_mfa_configuration
+                .and_then(|config| config.enabled)
+                .unwrap_or(false)
+            || email_mfa_configuration.is_some();
+
+        if !has_enabled_factor {
+            return Err(AppError::InvalidParameter(
+                "MfaConfiguration ON requires at least one MFA configuration".to_string(),
             ));
         }
     }

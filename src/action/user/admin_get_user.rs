@@ -44,7 +44,7 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
         "UserCreateDate": user.creation_date.timestamp(),
         "UserLastModifiedDate": user.last_modified_date.timestamp(),
         "UserAttributes": build_user_attributes(&user),
-        "MFAOptions": build_mfa_options(&user),
+        "MFAOptions": build_mfa_options(&user, &user_mfa_setting_list),
         "PreferredMfaSetting": preferred_mfa_setting,
         "UserMFASettingList": user_mfa_setting_list
     }))

@@ -7,10 +7,14 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 use crate::{
+    action::io::parse_request,
     error::{AppError, Result},
     storage::Storage,
     types::{UserAttribute, UserPoolId},
+    validation::{validate_email, validate_phone_number},
 };
+
+use super::helpers::upsert_user_attribute;
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "PascalCase")]
@@ -23,8 +27,7 @@ struct Request {
 }
 
 pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
-    let req: Request = serde_json::from_value(body)
-        .map_err(|e| AppError::InvalidParameter(format!("Invalid request: {}", e)))?;
+    let req: Request = parse_request(body)?;
     let _ = &req.client_metadata;
 
     storage
@@ -37,16 +40,48 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
         .await
         .ok_or(AppError::UserNotFound)?;
 
-    // Update or add attributes
+    let mut email_updated = false;
+    let mut phone_updated = false;
+    let mut email_verified_explicit = false;
+    let mut phone_verified_explicit = false;
+
     for new_attr in req.user_attributes {
-        if let Some(existing) = user.attributes.iter_mut().find(|a| a.name == new_attr.name) {
-            existing.value = new_attr.value;
-        } else {
-            user.attributes.push(new_attr);
+        match new_attr.name.as_str() {
+            "email" => {
+                if let Some(value) = new_attr.value.as_deref() {
+                    validate_email(value)?;
+                }
+                email_updated = true;
+            }
+            "phone_number" => {
+                if let Some(value) = new_attr.value.as_deref() {
+                    validate_phone_number(value)?;
+                }
+                phone_updated = true;
+            }
+            "email_verified" => email_verified_explicit = true,
+            "phone_number_verified" => phone_verified_explicit = true,
+            _ => {}
         }
+
+        upsert_user_attribute(&mut user.attributes, &new_attr.name, new_attr.value);
     }
 
-    // Update special fields if they are in the attributes
+    if email_updated && !email_verified_explicit {
+        upsert_user_attribute(
+            &mut user.attributes,
+            "email_verified",
+            Some("false".to_string()),
+        );
+    }
+    if phone_updated && !phone_verified_explicit {
+        upsert_user_attribute(
+            &mut user.attributes,
+            "phone_number_verified",
+            Some("false".to_string()),
+        );
+    }
+
     for attr in &user.attributes {
         match attr.name.as_str() {
             "email" => user.email = attr.value.clone(),

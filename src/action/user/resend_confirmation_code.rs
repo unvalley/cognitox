@@ -7,12 +7,14 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 use crate::{
+    action::io::parse_request,
     error::{AppError, Result},
     storage::Storage,
-    types::{ClientId, ConfirmationCode},
+    types::{ClientId, ConfirmationCode, UserStatus},
+    validation::validate_username,
 };
 
-use super::helpers::{generate_confirmation_code, mask_email};
+use super::helpers::{generate_confirmation_code, require_code_delivery_details};
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "PascalCase")]
@@ -30,14 +32,15 @@ struct Request {
 }
 
 pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
-    let req: Request = serde_json::from_value(body)
-        .map_err(|e| AppError::InvalidParameter(format!("Invalid request: {}", e)))?;
+    let req: Request = parse_request(body)?;
     let _ = (
         &req.analytics_metadata,
         &req.client_metadata,
         &req.secret_hash,
         &req.user_context_data,
     );
+
+    validate_username(&req.username)?;
 
     let client = storage
         .get_user_pool_client(&req.client_id)
@@ -48,6 +51,14 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
         .get_user_by_username(&client.user_pool_id, &req.username)
         .await
         .ok_or(AppError::UserNotFound)?;
+
+    if user.user_status == UserStatus::Confirmed {
+        return Err(AppError::NotAuthorized(
+            "User cannot be resent a confirmation code. Current status is CONFIRMED".to_string(),
+        ));
+    }
+
+    let code_delivery_details = require_code_delivery_details(&user)?;
 
     let code = generate_confirmation_code();
     let confirmation = ConfirmationCode {
@@ -60,11 +71,7 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
     tracing::info!("Resend confirmation code for {}: {}", req.username, code);
 
     Ok(json!({
-        "CodeDeliveryDetails": {
-            "Destination": user.email.map(|e| mask_email(&e)).unwrap_or_default(),
-            "DeliveryMedium": "EMAIL",
-            "AttributeName": "email"
-        }
+        "CodeDeliveryDetails": code_delivery_details
     }))
 }
 
@@ -180,5 +187,76 @@ mod tests {
         .await;
 
         assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_resend_confirmation_code_rejects_confirmed_user() {
+        let storage = Storage::new();
+        let (_pool_id, client_id) = setup_pool_and_client(&storage).await;
+
+        let sign_up_result = sign_up::handler(
+            &storage,
+            json!({
+                "ClientId": client_id,
+                "Username": "testuser",
+                "Password": "Password123!",
+                "UserAttributes": [
+                    {"Name": "email", "Value": "test@example.com"}
+                ]
+            }),
+        )
+        .await
+        .unwrap();
+
+        let user_sub = sign_up_result["UserSub"].as_str().unwrap();
+        let user_id = uuid::Uuid::parse_str(user_sub).unwrap();
+        storage.confirm_user(&user_id).await;
+
+        let result = handler(
+            &storage,
+            json!({
+                "ClientId": client_id,
+                "Username": "testuser"
+            }),
+        )
+        .await;
+
+        assert!(matches!(result, Err(AppError::NotAuthorized(_))));
+    }
+
+    #[tokio::test]
+    async fn test_resend_confirmation_code_uses_sms_when_phone_number_is_only_delivery_target() {
+        let storage = Storage::new();
+        let (_pool_id, client_id) = setup_pool_and_client(&storage).await;
+
+        sign_up::handler(
+            &storage,
+            json!({
+                "ClientId": client_id,
+                "Username": "smsuser",
+                "Password": "Password123!",
+                "UserAttributes": [
+                    {"Name": "phone_number", "Value": "+15555550100"}
+                ]
+            }),
+        )
+        .await
+        .unwrap();
+
+        let result = handler(
+            &storage,
+            json!({
+                "ClientId": client_id,
+                "Username": "smsuser"
+            }),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            result["CodeDeliveryDetails"]["AttributeName"],
+            "phone_number"
+        );
+        assert_eq!(result["CodeDeliveryDetails"]["DeliveryMedium"], "SMS");
     }
 }

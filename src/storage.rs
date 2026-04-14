@@ -979,6 +979,13 @@ impl Storage {
         }
     }
 
+    pub async fn remove_user_auth_factor(&self, user_id: &UserId, factor: &str) {
+        let mut store = self.principal_store.write().await;
+        if let Some(factors) = store.user_auth_factors.get_mut(user_id) {
+            factors.retain(|existing| existing != factor);
+        }
+    }
+
     pub async fn list_user_auth_factors(&self, user_id: &UserId) -> Vec<String> {
         let store = self.principal_store.read().await;
         store
@@ -1573,6 +1580,10 @@ mod tests {
             email_verification_subject: None,
             lambda_config: None,
             mfa_configuration: None,
+            sms_mfa_configuration: None,
+            software_token_mfa_configuration: None,
+            email_mfa_configuration: None,
+            webauthn_configuration: None,
             policies: None,
             schema_attributes: None,
             sms_authentication_message: None,
@@ -1620,6 +1631,10 @@ mod tests {
             email_verification_subject: None,
             lambda_config: None,
             mfa_configuration: None,
+            sms_mfa_configuration: None,
+            software_token_mfa_configuration: None,
+            email_mfa_configuration: None,
+            webauthn_configuration: None,
             policies: None,
             schema_attributes: None,
             sms_authentication_message: None,
@@ -1721,6 +1736,10 @@ mod tests {
             email_verification_subject: None,
             lambda_config: None,
             mfa_configuration: None,
+            sms_mfa_configuration: None,
+            software_token_mfa_configuration: None,
+            email_mfa_configuration: None,
+            webauthn_configuration: None,
             policies: None,
             schema_attributes: None,
             sms_authentication_message: None,

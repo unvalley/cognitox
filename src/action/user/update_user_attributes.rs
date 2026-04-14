@@ -7,12 +7,16 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 use crate::{
+    action::io::parse_request,
     error::{AppError, Result},
     storage::Storage,
-    types::UserAttribute,
+    types::{AutoVerifiedAttribute, UserAttribute},
+    validation::{validate_email, validate_phone_number},
 };
 
-use super::helpers::verify_and_extract_user_id;
+use super::helpers::{
+    mask_email, mask_phone_number, upsert_user_attribute, verify_and_extract_user_id,
+};
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "PascalCase")]
@@ -24,8 +28,7 @@ struct Request {
 }
 
 pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
-    let req: Request = serde_json::from_value(body)
-        .map_err(|e| AppError::InvalidParameter(format!("Invalid request: {}", e)))?;
+    let req: Request = parse_request(body)?;
     let _ = &req.client_metadata;
 
     let user_id =
@@ -36,16 +39,57 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
         .await
         .ok_or(AppError::UserNotFound)?;
 
-    // Update or add attributes
+    let pool = storage
+        .get_user_pool(&user.user_pool_id)
+        .await
+        .ok_or(AppError::UserPoolNotFound)?;
+
+    let mut email_updated = false;
+    let mut phone_updated = false;
+    let mut email_verified_explicit = false;
+    let mut phone_verified_explicit = false;
+
     for new_attr in req.user_attributes {
-        if let Some(existing) = user.attributes.iter_mut().find(|a| a.name == new_attr.name) {
-            existing.value = new_attr.value;
-        } else {
-            user.attributes.push(new_attr);
+        match new_attr.name.as_str() {
+            "email" => {
+                if let Some(value) = new_attr.value.as_deref() {
+                    validate_email(value)?;
+                }
+                email_updated = true;
+            }
+            "phone_number" => {
+                if let Some(value) = new_attr.value.as_deref() {
+                    validate_phone_number(value)?;
+                }
+                phone_updated = true;
+            }
+            "email_verified" => {
+                email_verified_explicit = true;
+            }
+            "phone_number_verified" => {
+                phone_verified_explicit = true;
+            }
+            _ => {}
         }
+
+        upsert_user_attribute(&mut user.attributes, &new_attr.name, new_attr.value);
     }
 
-    // Update special fields if they are in the attributes
+    if email_updated && !email_verified_explicit {
+        upsert_user_attribute(
+            &mut user.attributes,
+            "email_verified",
+            Some("false".to_string()),
+        );
+    }
+    if phone_updated && !phone_verified_explicit {
+        upsert_user_attribute(
+            &mut user.attributes,
+            "phone_number_verified",
+            Some("false".to_string()),
+        );
+    }
+
     for attr in &user.attributes {
         match attr.name.as_str() {
             "email" => user.email = attr.value.clone(),
@@ -54,12 +98,40 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
         }
     }
 
+    let mut code_delivery_details_list = Vec::new();
+    if email_updated
+        && pool
+            .auto_verified_attributes
+            .as_ref()
+            .is_some_and(|attrs| attrs.contains(&AutoVerifiedAttribute::Email))
+        && let Some(email) = user.email.as_deref()
+    {
+        code_delivery_details_list.push(json!({
+            "AttributeName": "email",
+            "DeliveryMedium": "EMAIL",
+            "Destination": mask_email(email)
+        }));
+    }
+    if phone_updated
+        && pool
+            .auto_verified_attributes
+            .as_ref()
+            .is_some_and(|attrs| attrs.contains(&AutoVerifiedAttribute::PhoneNumber))
+        && let Some(phone_number) = user.phone_number.as_deref()
+    {
+        code_delivery_details_list.push(json!({
+            "AttributeName": "phone_number",
+            "DeliveryMedium": "SMS",
+            "Destination": mask_phone_number(phone_number)
+        }));
+    }
+
     user.last_modified_date = Utc::now();
 
     storage.update_user(user).await;
 
     Ok(json!({
-        "CodeDeliveryDetailsList": []
+        "CodeDeliveryDetailsList": code_delivery_details_list
     }))
 }
 

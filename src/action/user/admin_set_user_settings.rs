@@ -6,10 +6,13 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 use crate::{
+    action::io::parse_request,
     error::{AppError, Result},
     storage::Storage,
-    types::UserPoolId,
+    types::{UserMfaPreferenceSettings, UserPoolId},
 };
+
+use super::set_user_mfa_preference::apply_user_mfa_preferences;
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "PascalCase")]
@@ -26,28 +29,49 @@ struct Request {
     user_pool_id: UserPoolId,
     username: String,
     #[serde(rename = "MFAOptions")]
-    #[allow(dead_code)]
     mfa_options: Vec<MFAOption>,
 }
 
-pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
-    let req: Request = serde_json::from_value(body)
-        .map_err(|e| AppError::InvalidParameter(format!("Invalid request: {}", e)))?;
+fn has_sms_mfa_option(mfa_options: &[MFAOption]) -> Result<bool> {
+    if mfa_options.is_empty() {
+        return Ok(false);
+    }
 
-    // Verify user pool exists
+    let is_sms_phone_option = |option: &MFAOption| {
+        option.delivery_medium.as_deref() == Some("SMS")
+            && option.attribute_name.as_deref() == Some("phone_number")
+    };
+
+    if mfa_options.iter().all(is_sms_phone_option) {
+        Ok(true)
+    } else {
+        Err(AppError::InvalidParameter(
+            "MFAOptions only supports SMS delivery to phone_number".to_string(),
+        ))
+    }
+}
+
+pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
+    let req: Request = parse_request(body)?;
+
     storage
         .get_user_pool(&req.user_pool_id)
         .await
         .ok_or(AppError::UserPoolNotFound)?;
 
-    // Verify user exists
-    storage
+    let mut user = storage
         .get_user_by_username(&req.user_pool_id, &req.username)
         .await
         .ok_or(AppError::UserNotFound)?;
 
-    // Note: In a full implementation, we would store the MFA settings.
-    // For the emulator, we accept the request but MFA is not enforced.
+    let sms_enabled = has_sms_mfa_option(&req.mfa_options)?;
+    let sms_settings = UserMfaPreferenceSettings {
+        enabled: Some(sms_enabled),
+        preferred_mfa: None,
+    };
+
+    apply_user_mfa_preferences(storage, &mut user, Some(&sms_settings), None, None).await?;
+    storage.update_user(user).await;
 
     Ok(json!({}))
 }
@@ -55,7 +79,7 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::action::user::sign_up;
+    use crate::action::user::{admin_get_user, sign_up};
     use crate::action::user_pool::{create_user_pool, create_user_pool_client};
     use serde_json::json;
 
@@ -81,7 +105,10 @@ mod tests {
             json!({
                 "ClientId": client_id,
                 "Username": "testuser",
-                "Password": "Password123!"
+                "Password": "Password123!",
+                "UserAttributes": [
+                    {"Name": "phone_number", "Value": "+15555550100"}
+                ]
             }),
         )
         .await
@@ -116,6 +143,17 @@ mod tests {
 
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), json!({}));
+
+        let user = admin_get_user::handler(
+            &storage,
+            json!({
+                "UserPoolId": pool_id,
+                "Username": username
+            }),
+        )
+        .await
+        .unwrap();
+        assert_eq!(user["UserMFASettingList"], json!(["SMS_MFA"]));
     }
 
     #[tokio::test]

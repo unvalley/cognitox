@@ -7,12 +7,14 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 use crate::{
+    action::io::parse_request,
     error::{AppError, Result},
     storage::Storage,
-    types::{ClientId, PasswordResetCode},
+    types::{ClientId, PasswordResetCode, UserStatus},
+    validation::validate_username,
 };
 
-use super::helpers::{generate_confirmation_code, mask_email};
+use super::helpers::{generate_confirmation_code, require_code_delivery_details};
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "PascalCase")]
@@ -30,14 +32,15 @@ struct Request {
 }
 
 pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
-    let req: Request = serde_json::from_value(body)
-        .map_err(|e| AppError::InvalidParameter(format!("Invalid request: {}", e)))?;
+    let req: Request = parse_request(body)?;
     let _ = (
         &req.analytics_metadata,
         &req.client_metadata,
         &req.secret_hash,
         &req.user_context_data,
     );
+
+    validate_username(&req.username)?;
 
     let client = storage
         .get_user_pool_client(&req.client_id)
@@ -49,6 +52,16 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
         .await
         .ok_or(AppError::UserNotFound)?;
 
+    if !user.enabled {
+        return Err(AppError::UserDisabled);
+    }
+
+    if user.user_status == UserStatus::Unconfirmed {
+        return Err(AppError::UserNotConfirmed);
+    }
+
+    let code_delivery_details = require_code_delivery_details(&user)?;
+
     let code = generate_confirmation_code();
     let reset_code = PasswordResetCode {
         user_id: user.id,
@@ -58,15 +71,8 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
 
     storage.save_password_reset_code(reset_code).await;
 
-    let destination = user.email.as_deref().map(mask_email);
-    let delivery_medium = if user.email.is_some() { "EMAIL" } else { "SMS" };
-
     Ok(json!({
-        "CodeDeliveryDetails": {
-            "AttributeName": "email",
-            "DeliveryMedium": delivery_medium,
-            "Destination": destination
-        }
+        "CodeDeliveryDetails": code_delivery_details
     }))
 }
 
@@ -180,5 +186,108 @@ mod tests {
         .await;
 
         assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_forgot_password_requires_confirmed_user() {
+        let storage = Storage::new();
+        let (_pool_id, client_id) = setup_pool_and_client(&storage).await;
+
+        sign_up::handler(
+            &storage,
+            json!({
+                "ClientId": client_id,
+                "Username": "testuser",
+                "Password": "Password123!",
+                "UserAttributes": [
+                    {"Name": "email", "Value": "test@example.com"}
+                ]
+            }),
+        )
+        .await
+        .unwrap();
+
+        let result = handler(
+            &storage,
+            json!({
+                "ClientId": client_id,
+                "Username": "testuser"
+            }),
+        )
+        .await;
+
+        assert!(matches!(result, Err(AppError::UserNotConfirmed)));
+    }
+
+    #[tokio::test]
+    async fn test_forgot_password_uses_sms_when_phone_number_is_only_delivery_target() {
+        let storage = Storage::new();
+        let (_pool_id, client_id) = setup_pool_and_client(&storage).await;
+
+        let sign_up_result = sign_up::handler(
+            &storage,
+            json!({
+                "ClientId": client_id,
+                "Username": "smsuser",
+                "Password": "Password123!",
+                "UserAttributes": [
+                    {"Name": "phone_number", "Value": "+15555550100"}
+                ]
+            }),
+        )
+        .await
+        .unwrap();
+
+        let user_sub = sign_up_result["UserSub"].as_str().unwrap();
+        let user_id = uuid::Uuid::parse_str(user_sub).unwrap();
+        storage.confirm_user(&user_id).await;
+
+        let result = handler(
+            &storage,
+            json!({
+                "ClientId": client_id,
+                "Username": "smsuser"
+            }),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            result["CodeDeliveryDetails"]["AttributeName"],
+            "phone_number"
+        );
+        assert_eq!(result["CodeDeliveryDetails"]["DeliveryMedium"], "SMS");
+    }
+
+    #[tokio::test]
+    async fn test_forgot_password_requires_delivery_attribute() {
+        let storage = Storage::new();
+        let (_pool_id, client_id) = setup_pool_and_client(&storage).await;
+
+        let sign_up_result = sign_up::handler(
+            &storage,
+            json!({
+                "ClientId": client_id,
+                "Username": "nodelivery",
+                "Password": "Password123!"
+            }),
+        )
+        .await
+        .unwrap();
+
+        let user_sub = sign_up_result["UserSub"].as_str().unwrap();
+        let user_id = uuid::Uuid::parse_str(user_sub).unwrap();
+        storage.confirm_user(&user_id).await;
+
+        let result = handler(
+            &storage,
+            json!({
+                "ClientId": client_id,
+                "Username": "nodelivery"
+            }),
+        )
+        .await;
+
+        assert!(matches!(result, Err(AppError::InvalidParameter(_))));
     }
 }

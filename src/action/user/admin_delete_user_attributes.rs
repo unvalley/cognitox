@@ -12,6 +12,8 @@ use crate::{
     types::UserPoolId,
 };
 
+use super::helpers::{EMAIL_OTP_FACTOR, SMS_MFA_FACTOR, remove_user_attribute};
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "PascalCase")]
 struct Request {
@@ -33,16 +35,38 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
         .get_user_by_username(&req.user_pool_id, &req.username)
         .await
         .ok_or(AppError::UserNotFound)?;
+    let preferred_mfa_setting = user
+        .attributes
+        .iter()
+        .find(|attr| attr.name == "preferred_mfa_setting")
+        .and_then(|attr| attr.value.clone());
 
-    // Remove specified attributes
-    user.attributes
-        .retain(|attr| !req.user_attribute_names.contains(&attr.name));
+    for attr_name in &req.user_attribute_names {
+        remove_user_attribute(&mut user.attributes, attr_name);
+    }
 
-    // Clear special fields if they are in the deletion list
     for attr_name in &req.user_attribute_names {
         match attr_name.as_str() {
-            "email" => user.email = None,
-            "phone_number" => user.phone_number = None,
+            "email" => {
+                user.email = None;
+                remove_user_attribute(&mut user.attributes, "email_verified");
+                if preferred_mfa_setting.as_deref() == Some(EMAIL_OTP_FACTOR) {
+                    remove_user_attribute(&mut user.attributes, "preferred_mfa_setting");
+                }
+                storage
+                    .remove_user_auth_factor(&user.id, EMAIL_OTP_FACTOR)
+                    .await;
+            }
+            "phone_number" => {
+                user.phone_number = None;
+                remove_user_attribute(&mut user.attributes, "phone_number_verified");
+                if preferred_mfa_setting.as_deref() == Some(SMS_MFA_FACTOR) {
+                    remove_user_attribute(&mut user.attributes, "preferred_mfa_setting");
+                }
+                storage
+                    .remove_user_auth_factor(&user.id, SMS_MFA_FACTOR)
+                    .await;
+            }
             _ => {}
         }
     }

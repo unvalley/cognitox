@@ -37,7 +37,7 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
     Ok(json!({
         "Username": user.username,
         "UserAttributes": build_user_attributes(&user),
-        "MFAOptions": build_mfa_options(&user),
+        "MFAOptions": build_mfa_options(&user, &user_mfa_setting_list),
         "PreferredMfaSetting": preferred_mfa_setting,
         "UserMFASettingList": user_mfa_setting_list
     }))

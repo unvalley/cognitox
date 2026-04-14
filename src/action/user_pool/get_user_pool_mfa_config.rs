@@ -6,6 +6,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 use crate::{
+    action::io::parse_request,
     error::{AppError, Result},
     storage::Storage,
     types::UserPoolId,
@@ -18,28 +19,26 @@ struct Request {
 }
 
 pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
-    let req: Request = serde_json::from_value(body)
-        .map_err(|e| AppError::InvalidParameter(format!("Invalid request: {}", e)))?;
+    let req: Request = parse_request(body)?;
 
-    // Verify user pool exists
-    storage
+    let pool = storage
         .get_user_pool(&req.user_pool_id)
         .await
         .ok_or(AppError::UserPoolNotFound)?;
 
-    // Return default MFA configuration for emulator
-    // MFA is optional/off by default
     Ok(json!({
-        "MfaConfiguration": "OFF",
-        "SmsMfaConfiguration": null,
-        "SoftwareTokenMfaConfiguration": null
+        "MfaConfiguration": pool.mfa_configuration.unwrap_or(crate::types::MfaConfiguration::Off),
+        "SmsMfaConfiguration": pool.sms_mfa_configuration,
+        "SoftwareTokenMfaConfiguration": pool.software_token_mfa_configuration,
+        "EmailMfaConfiguration": pool.email_mfa_configuration,
+        "WebAuthnConfiguration": pool.webauthn_configuration
     }))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::action::user_pool::create_user_pool;
+    use crate::action::user_pool::{create_user_pool, set_user_pool_mfa_config};
     use serde_json::json;
 
     #[tokio::test]
@@ -51,17 +50,30 @@ mod tests {
             .unwrap();
         let pool_id = pool["UserPool"]["Id"].as_str().unwrap();
 
-        let result = handler(
+        set_user_pool_mfa_config::handler(
             &storage,
             json!({
-                "UserPoolId": pool_id
+                "UserPoolId": pool_id,
+                "MfaConfiguration": "OPTIONAL",
+                "SmsMfaConfiguration": {
+                    "SmsAuthenticationMessage": "Code {####}",
+                    "SmsConfiguration": {
+                        "SnsCallerArn": "arn:aws:iam::123456789012:role/test"
+                    }
+                }
             }),
         )
-        .await;
+        .await
+        .unwrap();
 
-        assert!(result.is_ok());
-        let body = result.unwrap();
-        assert_eq!(body["MfaConfiguration"], "OFF");
+        let result = handler(&storage, json!({ "UserPoolId": pool_id }))
+            .await
+            .unwrap();
+        assert_eq!(result["MfaConfiguration"], "OPTIONAL");
+        assert_eq!(
+            result["SmsMfaConfiguration"]["SmsAuthenticationMessage"],
+            "Code {####}"
+        );
     }
 
     #[tokio::test]
@@ -76,7 +88,6 @@ mod tests {
         )
         .await;
 
-        assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), AppError::UserPoolNotFound));
+        assert!(matches!(result, Err(AppError::UserPoolNotFound)));
     }
 }

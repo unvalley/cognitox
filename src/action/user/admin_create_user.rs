@@ -13,10 +13,10 @@ use crate::{
     error::{AppError, Result},
     storage::Storage,
     types::{User, UserAttribute, UserPoolId, UserStatus},
-    validation::{validate_email, validate_password, validate_username},
+    validation::{validate_email, validate_password, validate_phone_number, validate_username},
 };
 
-use super::helpers::hash_password;
+use super::helpers::{find_user_attribute_value, hash_password};
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "PascalCase")]
@@ -49,14 +49,19 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
         validate_password(password)?;
     }
 
-    // Validate email if provided
     if let Some(email) = req
         .user_attributes
         .as_ref()
-        .and_then(|attrs| attrs.iter().find(|a| a.name == "email"))
-        .and_then(|a| a.value.as_ref())
+        .and_then(|attrs| find_user_attribute_value(attrs, "email"))
     {
-        validate_email(email)?;
+        validate_email(&email)?;
+    }
+    if let Some(phone_number) = req
+        .user_attributes
+        .as_ref()
+        .and_then(|attrs| find_user_attribute_value(attrs, "phone_number"))
+    {
+        validate_phone_number(&phone_number)?;
     }
 
     storage
@@ -78,19 +83,21 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
         .temporary_password
         .unwrap_or_else(|| Uuid::new_v4().to_string());
 
-    let email = req.user_attributes.as_ref().and_then(|attrs| {
-        attrs
-            .iter()
-            .find(|a| a.name == "email")
-            .and_then(|a| a.value.clone())
-    });
+    let email = req
+        .user_attributes
+        .as_ref()
+        .and_then(|attrs| find_user_attribute_value(attrs, "email"));
+    let phone_number = req
+        .user_attributes
+        .as_ref()
+        .and_then(|attrs| find_user_attribute_value(attrs, "phone_number"));
 
     let user = User {
         id: user_id,
         user_pool_id: req.user_pool_id.clone(),
         username: req.username.clone(),
         email,
-        phone_number: None,
+        phone_number,
         password_hash: hash_password(&password).map_err(AppError::Internal)?,
         enabled: true,
         user_status: UserStatus::ForceChangePassword,
@@ -122,6 +129,7 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
 mod tests {
     use super::*;
     use crate::action::user_pool::create_user_pool;
+    use crate::types::UserPoolId;
     use serde_json::json;
 
     #[tokio::test]
@@ -151,6 +159,44 @@ mod tests {
         assert_eq!(body["User"]["Username"], "testuser");
         assert_eq!(body["User"]["Enabled"], true);
         assert_eq!(body["User"]["UserStatus"], "FORCE_CHANGE_PASSWORD");
+
+        let pool_id = UserPoolId::new(pool_id).unwrap();
+        let user = storage
+            .get_user_by_username(&pool_id, "testuser")
+            .await
+            .unwrap();
+        assert_eq!(user.email.as_deref(), Some("test@example.com"));
+    }
+
+    #[tokio::test]
+    async fn test_admin_create_user_persists_phone_number() {
+        let storage = Storage::new();
+
+        let pool = create_user_pool::handler(&storage, json!({"PoolName": "test"}))
+            .await
+            .unwrap();
+        let pool_id = pool["UserPool"]["Id"].as_str().unwrap();
+
+        handler(
+            &storage,
+            json!({
+                "UserPoolId": pool_id,
+                "Username": "phoneuser",
+                "TemporaryPassword": "TempPass123!",
+                "UserAttributes": [
+                    {"Name": "phone_number", "Value": "+15555550100"}
+                ]
+            }),
+        )
+        .await
+        .unwrap();
+
+        let pool_id = UserPoolId::new(pool_id).unwrap();
+        let user = storage
+            .get_user_by_username(&pool_id, "phoneuser")
+            .await
+            .unwrap();
+        assert_eq!(user.phone_number.as_deref(), Some("+15555550100"));
     }
 
     #[tokio::test]

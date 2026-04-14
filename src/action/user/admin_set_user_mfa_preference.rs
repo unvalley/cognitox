@@ -6,51 +6,50 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 use crate::{
+    action::io::parse_request,
     error::{AppError, Result},
     storage::Storage,
-    types::UserPoolId,
+    types::{UserMfaPreferenceSettings, UserPoolId},
 };
 
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "PascalCase")]
-struct MFASettings {
-    #[allow(dead_code)]
-    enabled: Option<bool>,
-    #[allow(dead_code)]
-    preferred_mfa: Option<bool>,
-}
+use super::set_user_mfa_preference::apply_user_mfa_preferences;
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "PascalCase")]
 struct Request {
     user_pool_id: UserPoolId,
     username: String,
-    #[serde(rename = "SMSMfaSettings")]
-    #[allow(dead_code)]
-    sms_mfa_settings: Option<MFASettings>,
-    #[allow(dead_code)]
-    software_token_mfa_settings: Option<MFASettings>,
+    #[serde(rename = "SMSMfaSettings", default)]
+    sms_mfa_settings: Option<UserMfaPreferenceSettings>,
+    #[serde(default)]
+    software_token_mfa_settings: Option<UserMfaPreferenceSettings>,
+    #[serde(default)]
+    email_mfa_settings: Option<UserMfaPreferenceSettings>,
 }
 
 pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
-    let req: Request = serde_json::from_value(body)
-        .map_err(|e| AppError::InvalidParameter(format!("Invalid request: {}", e)))?;
+    let req: Request = parse_request(body)?;
 
-    // Verify user pool exists
     storage
         .get_user_pool(&req.user_pool_id)
         .await
         .ok_or(AppError::UserPoolNotFound)?;
 
-    // Verify user exists
-    storage
+    let mut user = storage
         .get_user_by_username(&req.user_pool_id, &req.username)
         .await
         .ok_or(AppError::UserNotFound)?;
 
-    // Note: In a full implementation, we would store the MFA preferences
-    // and enforce them during authentication. For the emulator, we accept
-    // the request but MFA is not actually enforced.
+    apply_user_mfa_preferences(
+        storage,
+        &mut user,
+        req.sms_mfa_settings.as_ref(),
+        req.software_token_mfa_settings.as_ref(),
+        req.email_mfa_settings.as_ref(),
+    )
+    .await?;
+
+    storage.update_user(user).await;
 
     Ok(json!({}))
 }
@@ -58,41 +57,35 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::action::user::sign_up;
-    use crate::action::user_pool::{create_user_pool, create_user_pool_client};
+    use crate::action::user::{admin_create_user, admin_get_user};
+    use crate::action::user_pool::create_user_pool;
     use serde_json::json;
 
     async fn setup_pool_and_user(storage: &Storage) -> (String, String) {
-        let pool = create_user_pool::handler(storage, json!({"PoolName": "test"}))
-            .await
-            .unwrap();
+        let pool = create_user_pool::handler(
+            storage,
+            json!({
+                "PoolName": "test",
+                "UserPoolTier": "ESSENTIALS"
+            }),
+        )
+        .await
+        .unwrap();
         let pool_id = pool["UserPool"]["Id"].as_str().unwrap().to_string();
 
-        let client = create_user_pool_client::handler(
+        admin_create_user::handler(
             storage,
             json!({
                 "UserPoolId": pool_id,
-                "ClientName": "test-client"
-            }),
-        )
-        .await
-        .unwrap();
-        let client_id = client["UserPoolClient"]["ClientId"].as_str().unwrap();
-
-        let sign_up_result = sign_up::handler(
-            storage,
-            json!({
-                "ClientId": client_id,
                 "Username": "testuser",
-                "Password": "Password123!"
+                "UserAttributes": [
+                    {"Name": "email", "Value": "test@example.com"},
+                    {"Name": "phone_number", "Value": "+15555550100"}
+                ]
             }),
         )
         .await
         .unwrap();
-
-        let user_sub = sign_up_result["UserSub"].as_str().unwrap();
-        let user_id = uuid::Uuid::parse_str(user_sub).unwrap();
-        storage.confirm_user(&user_id).await;
 
         (pool_id, "testuser".to_string())
     }
@@ -111,7 +104,7 @@ mod tests {
                     "Enabled": true,
                     "PreferredMfa": false
                 },
-                "SoftwareTokenMfaSettings": {
+                "EmailMfaSettings": {
                     "Enabled": true,
                     "PreferredMfa": true
                 }
@@ -120,7 +113,17 @@ mod tests {
         .await;
 
         assert!(result.is_ok());
-        assert_eq!(result.unwrap(), json!({}));
+        let user = admin_get_user::handler(
+            &storage,
+            json!({
+                "UserPoolId": pool_id,
+                "Username": "testuser"
+            }),
+        )
+        .await
+        .unwrap();
+        assert_eq!(user["PreferredMfaSetting"], "EMAIL_OTP");
+        assert_eq!(user["UserMFASettingList"], json!(["SMS_MFA", "EMAIL_OTP"]));
     }
 
     #[tokio::test]
@@ -145,8 +148,7 @@ mod tests {
         )
         .await;
 
-        assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), AppError::UserNotFound));
+        assert!(matches!(result, Err(AppError::UserNotFound)));
     }
 
     #[tokio::test]
@@ -165,7 +167,6 @@ mod tests {
         )
         .await;
 
-        assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), AppError::UserPoolNotFound));
+        assert!(matches!(result, Err(AppError::UserPoolNotFound)));
     }
 }

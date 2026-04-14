@@ -13,10 +13,13 @@ use crate::{
     error::{AppError, Result},
     storage::Storage,
     types::{ClientId, ConfirmationCode, User, UserAttribute, UserStatus},
-    validation::{validate_email, validate_password, validate_username},
+    validation::{validate_email, validate_password, validate_phone_number, validate_username},
 };
 
-use super::helpers::{generate_confirmation_code, hash_password, mask_email};
+use super::helpers::{
+    build_code_delivery_details, find_user_attribute_value, generate_confirmation_code,
+    hash_password,
+};
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "PascalCase")]
@@ -64,14 +67,19 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
     validate_username(&req.username)?;
     validate_password(&req.password)?;
 
-    // Validate email if provided
     if let Some(email) = req
         .user_attributes
         .as_ref()
-        .and_then(|attrs| attrs.iter().find(|a| a.name == "email"))
-        .and_then(|a| a.value.as_ref())
+        .and_then(|attrs| find_user_attribute_value(attrs, "email"))
     {
-        validate_email(email)?;
+        validate_email(&email)?;
+    }
+    if let Some(phone_number) = req
+        .user_attributes
+        .as_ref()
+        .and_then(|attrs| find_user_attribute_value(attrs, "phone_number"))
+    {
+        validate_phone_number(&phone_number)?;
     }
 
     let client = storage
@@ -90,19 +98,21 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
     let now = Utc::now();
     let user_id = Uuid::new_v4();
 
-    let email = req.user_attributes.as_ref().and_then(|attrs| {
-        attrs
-            .iter()
-            .find(|a| a.name == "email")
-            .and_then(|a| a.value.clone())
-    });
+    let email = req
+        .user_attributes
+        .as_ref()
+        .and_then(|attrs| find_user_attribute_value(attrs, "email"));
+    let phone_number = req
+        .user_attributes
+        .as_ref()
+        .and_then(|attrs| find_user_attribute_value(attrs, "phone_number"));
 
     let user = User {
         id: user_id,
         user_pool_id: client.user_pool_id.clone(),
         username: req.username.clone(),
         email: email.clone(),
-        phone_number: None,
+        phone_number: phone_number.clone(),
         password_hash: hash_password(&req.password).map_err(AppError::Internal)?,
         enabled: true,
         user_status: UserStatus::Unconfirmed,
@@ -123,15 +133,22 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
 
     tracing::info!("SignUp confirmation code for {}: {}", req.username, code);
 
+    let code_delivery_details =
+        build_code_delivery_details(email.as_deref(), phone_number.as_deref()).unwrap_or_else(
+            || {
+                json!({
+                    "Destination": "",
+                    "DeliveryMedium": "EMAIL",
+                    "AttributeName": "email"
+                })
+            },
+        );
+
     Ok(json!({
         "UserConfirmed": false,
         "UserSub": user_id.to_string(),
         "Session": null,
-        "CodeDeliveryDetails": {
-            "Destination": email.map(|e| mask_email(&e)).unwrap_or_default(),
-            "DeliveryMedium": "EMAIL",
-            "AttributeName": "email"
-        }
+        "CodeDeliveryDetails": code_delivery_details
     }))
 }
 
@@ -141,6 +158,7 @@ mod tests {
     use serde_json::json;
 
     use crate::action::user_pool::{create_user_pool, create_user_pool_client};
+    use crate::types::UserPoolId;
 
     async fn setup_pool_and_client(storage: &Storage) -> (String, String) {
         let pool = create_user_pool::handler(storage, json!({"PoolName": "test"}))
@@ -168,7 +186,7 @@ mod tests {
     #[tokio::test]
     async fn test_sign_up_success() {
         let storage = Storage::new();
-        let (_pool_id, client_id) = setup_pool_and_client(&storage).await;
+        let (pool_id, client_id) = setup_pool_and_client(&storage).await;
 
         let result = handler(
             &storage,
@@ -193,6 +211,46 @@ mod tests {
                 .unwrap()
                 .contains("***")
         );
+
+        let pool_id = UserPoolId::new(pool_id).unwrap();
+        let user = storage
+            .get_user_by_username(&pool_id, "testuser")
+            .await
+            .unwrap();
+        assert_eq!(user.email.as_deref(), Some("test@example.com"));
+    }
+
+    #[tokio::test]
+    async fn test_sign_up_persists_phone_number() {
+        let storage = Storage::new();
+        let (pool_id, client_id) = setup_pool_and_client(&storage).await;
+
+        let result = handler(
+            &storage,
+            json!({
+                "ClientId": client_id,
+                "Username": "phoneuser",
+                "Password": "Password123!",
+                "UserAttributes": [
+                    {"Name": "phone_number", "Value": "+15555550100"}
+                ]
+            }),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            result["CodeDeliveryDetails"]["AttributeName"],
+            "phone_number"
+        );
+        assert_eq!(result["CodeDeliveryDetails"]["DeliveryMedium"], "SMS");
+
+        let pool_id = UserPoolId::new(pool_id).unwrap();
+        let user = storage
+            .get_user_by_username(&pool_id, "phoneuser")
+            .await
+            .unwrap();
+        assert_eq!(user.phone_number.as_deref(), Some("+15555550100"));
     }
 
     #[tokio::test]

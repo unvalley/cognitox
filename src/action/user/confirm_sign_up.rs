@@ -7,9 +7,11 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 use crate::{
+    action::io::parse_request,
     error::{AppError, Result},
     storage::Storage,
     types::{ClientId, UserStatus},
+    validation::{validate_confirmation_code, validate_username},
 };
 
 use super::helpers::normalize_confirmation_code;
@@ -35,8 +37,7 @@ struct Request {
 }
 
 pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
-    let req: Request = serde_json::from_value(body)
-        .map_err(|e| AppError::InvalidParameter(format!("Invalid request: {}", e)))?;
+    let req: Request = parse_request(body)?;
     let _ = (
         &req.analytics_metadata,
         &req.client_metadata,
@@ -44,6 +45,9 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
         &req.secret_hash,
         &req.user_context_data,
     );
+
+    validate_username(&req.username)?;
+    validate_confirmation_code(&req.confirmation_code)?;
 
     let client = storage
         .get_user_pool_client(&req.client_id)
@@ -54,6 +58,12 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
         .get_user_by_username(&client.user_pool_id, &req.username)
         .await
         .ok_or(AppError::UserNotFound)?;
+
+    if user.user_status == UserStatus::Confirmed {
+        return Err(AppError::NotAuthorized(
+            "User cannot be confirmed. Current status is CONFIRMED".to_string(),
+        ));
+    }
 
     let confirmation = storage
         .get_confirmation_code(&user.id)
@@ -68,7 +78,8 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
     }
 
     if confirmation.expires_at < Utc::now() {
-        return Err(AppError::InvalidConfirmationCode);
+        storage.delete_confirmation_code(&user.id).await;
+        return Err(AppError::ExpiredCode);
     }
 
     user.user_status = UserStatus::Confirmed;
@@ -205,5 +216,81 @@ mod tests {
         .await;
 
         assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_confirm_sign_up_confirmed_user_is_rejected() {
+        let storage = Storage::new();
+        let (pool_id, client_id) = setup_pool_and_client(&storage).await;
+
+        let sign_up_result = sign_up::handler(
+            &storage,
+            json!({
+                "ClientId": client_id,
+                "Username": "testuser",
+                "Password": "Password123!"
+            }),
+        )
+        .await
+        .unwrap();
+
+        let user_sub = sign_up_result["UserSub"].as_str().unwrap();
+        let user_id = uuid::Uuid::parse_str(user_sub).unwrap();
+        storage.confirm_user(&user_id).await;
+
+        let result = handler(
+            &storage,
+            json!({
+                "ClientId": client_id,
+                "Username": "testuser",
+                "ConfirmationCode": "SOME-CODE"
+            }),
+        )
+        .await;
+
+        assert!(matches!(result, Err(AppError::NotAuthorized(_))));
+
+        let pool_id_typed: UserPoolId = pool_id.parse().unwrap();
+        let user = storage
+            .get_user_by_username(&pool_id_typed, "testuser")
+            .await
+            .unwrap();
+        assert_eq!(user.user_status, UserStatus::Confirmed);
+    }
+
+    #[tokio::test]
+    async fn test_confirm_sign_up_expired_code() {
+        let storage = Storage::new();
+        let (_pool_id, client_id) = setup_pool_and_client(&storage).await;
+
+        let sign_up_result = sign_up::handler(
+            &storage,
+            json!({
+                "ClientId": client_id,
+                "Username": "testuser",
+                "Password": "Password123!"
+            }),
+        )
+        .await
+        .unwrap();
+
+        let user_sub = sign_up_result["UserSub"].as_str().unwrap();
+        let user_id = uuid::Uuid::parse_str(user_sub).unwrap();
+        let mut confirmation = storage.get_confirmation_code(&user_id).await.unwrap();
+        confirmation.expires_at = Utc::now() - chrono::Duration::minutes(1);
+        storage.save_confirmation_code(confirmation.clone()).await;
+
+        let result = handler(
+            &storage,
+            json!({
+                "ClientId": client_id,
+                "Username": "testuser",
+                "ConfirmationCode": confirmation.code
+            }),
+        )
+        .await;
+
+        assert!(matches!(result, Err(AppError::ExpiredCode)));
+        assert!(storage.get_confirmation_code(&user_id).await.is_none());
     }
 }

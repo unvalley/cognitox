@@ -416,6 +416,67 @@ pub struct VerificationMessageTemplate {
     pub sms_message: Option<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+pub struct SmsConfiguration {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sns_caller_arn: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub external_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sns_region: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+pub struct SmsMfaConfiguration {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sms_authentication_message: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sms_configuration: Option<SmsConfiguration>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+pub struct SoftwareTokenMfaConfiguration {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub enabled: Option<bool>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+pub struct EmailMfaConfiguration {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub subject: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum UserVerificationRequirement {
+    Required,
+    Preferred,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+pub struct WebAuthnConfiguration {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub relying_party_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub user_verification: Option<UserVerificationRequirement>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+pub struct UserMfaPreferenceSettings {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub enabled: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub preferred_mfa: Option<bool>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum OAuthFlow {
@@ -491,6 +552,10 @@ pub struct UserPool {
     pub email_verification_subject: Option<String>,
     pub lambda_config: Option<serde_json::Value>,
     pub mfa_configuration: Option<MfaConfiguration>,
+    pub sms_mfa_configuration: Option<SmsMfaConfiguration>,
+    pub software_token_mfa_configuration: Option<SoftwareTokenMfaConfiguration>,
+    pub email_mfa_configuration: Option<EmailMfaConfiguration>,
+    pub webauthn_configuration: Option<WebAuthnConfiguration>,
     pub policies: Option<UserPoolPolicies>,
     pub schema_attributes: Option<Vec<serde_json::Value>>,
     pub sms_authentication_message: Option<String>,

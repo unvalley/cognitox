@@ -7,10 +7,11 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 use crate::{
+    action::io::parse_request,
     error::{AppError, Result},
     storage::Storage,
-    types::ClientId,
-    validation::validate_password,
+    types::{ClientId, UserStatus},
+    validation::{validate_confirmation_code, validate_password, validate_username},
 };
 
 use super::helpers::{hash_password, normalize_confirmation_code};
@@ -33,8 +34,7 @@ struct Request {
 }
 
 pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
-    let req: Request = serde_json::from_value(body)
-        .map_err(|e| AppError::InvalidParameter(format!("Invalid request: {}", e)))?;
+    let req: Request = parse_request(body)?;
     let _ = (
         &req.analytics_metadata,
         &req.client_metadata,
@@ -42,7 +42,8 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
         &req.user_context_data,
     );
 
-    // Validate new password
+    validate_username(&req.username)?;
+    validate_confirmation_code(&req.confirmation_code)?;
     validate_password(&req.password)?;
 
     let client = storage
@@ -54,6 +55,14 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
         .get_user_by_username(&client.user_pool_id, &req.username)
         .await
         .ok_or(AppError::UserNotFound)?;
+
+    if !user.enabled {
+        return Err(AppError::UserDisabled);
+    }
+
+    if user.user_status == UserStatus::Unconfirmed {
+        return Err(AppError::UserNotConfirmed);
+    }
 
     let reset_code = storage
         .get_password_reset_code(&user.id)
@@ -73,6 +82,9 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
     }
 
     user.password_hash = hash_password(&req.password).map_err(AppError::Internal)?;
+    if user.user_status == UserStatus::ResetRequired {
+        user.user_status = UserStatus::Confirmed;
+    }
     user.last_modified_date = Utc::now();
 
     storage.update_user(user.clone()).await;
@@ -86,8 +98,9 @@ mod tests {
     use super::*;
     use serde_json::json;
 
-    use crate::action::user::{forgot_password, initiate_auth, sign_up};
+    use crate::action::user::{admin_reset_user_password, forgot_password, initiate_auth, sign_up};
     use crate::action::user_pool::{create_user_pool, create_user_pool_client};
+    use crate::types::{UserPoolId, UserStatus};
 
     async fn setup_pool_and_client(storage: &Storage) -> (String, String) {
         let pool = create_user_pool::handler(storage, json!({"PoolName": "test"}))
@@ -192,7 +205,10 @@ mod tests {
             json!({
                 "ClientId": client_id,
                 "Username": "testuser",
-                "Password": "Password123!"
+                "Password": "Password123!",
+                "UserAttributes": [
+                    {"Name": "email", "Value": "test@example.com"}
+                ]
             }),
         )
         .await
@@ -226,5 +242,111 @@ mod tests {
         .await;
 
         assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_confirm_forgot_password_expired_code() {
+        let storage = Storage::new();
+        let (_pool_id, client_id) = setup_pool_and_client(&storage).await;
+
+        let sign_up_result = sign_up::handler(
+            &storage,
+            json!({
+                "ClientId": client_id,
+                "Username": "testuser",
+                "Password": "Password123!",
+                "UserAttributes": [
+                    {"Name": "email", "Value": "test@example.com"}
+                ]
+            }),
+        )
+        .await
+        .unwrap();
+
+        let user_sub = sign_up_result["UserSub"].as_str().unwrap();
+        let user_id = uuid::Uuid::parse_str(user_sub).unwrap();
+        storage.confirm_user(&user_id).await;
+
+        forgot_password::handler(
+            &storage,
+            json!({
+                "ClientId": client_id,
+                "Username": "testuser"
+            }),
+        )
+        .await
+        .unwrap();
+
+        let mut reset_code = storage.get_password_reset_code(&user_id).await.unwrap();
+        reset_code.expires_at = Utc::now() - chrono::Duration::minutes(1);
+        storage.save_password_reset_code(reset_code.clone()).await;
+
+        let result = handler(
+            &storage,
+            json!({
+                "ClientId": client_id,
+                "Username": "testuser",
+                "ConfirmationCode": reset_code.code,
+                "Password": "NewPassword456!"
+            }),
+        )
+        .await;
+
+        assert!(matches!(result, Err(AppError::ExpiredCode)));
+        assert!(storage.get_password_reset_code(&user_id).await.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_confirm_forgot_password_clears_reset_required_status() {
+        let storage = Storage::new();
+        let (pool_id, client_id) = setup_pool_and_client(&storage).await;
+
+        sign_up::handler(
+            &storage,
+            json!({
+                "ClientId": client_id,
+                "Username": "resetuser",
+                "Password": "Password123!",
+                "UserAttributes": [
+                    {"Name": "email", "Value": "test@example.com"}
+                ]
+            }),
+        )
+        .await
+        .unwrap();
+
+        let pool_id_typed: UserPoolId = pool_id.parse().unwrap();
+        let user = storage
+            .get_user_by_username(&pool_id_typed, "resetuser")
+            .await
+            .unwrap();
+        storage.confirm_user(&user.id).await;
+
+        admin_reset_user_password::handler(
+            &storage,
+            json!({
+                "UserPoolId": pool_id,
+                "Username": "resetuser"
+            }),
+        )
+        .await
+        .unwrap();
+
+        let reset_code = storage.get_password_reset_code(&user.id).await.unwrap();
+
+        handler(
+            &storage,
+            json!({
+                "ClientId": client_id,
+                "Username": "resetuser",
+                "ConfirmationCode": reset_code.code,
+                "Password": "NewPassword456!"
+            }),
+        )
+        .await
+        .unwrap();
+
+        let updated_user = storage.get_user(&user.id).await.unwrap();
+        assert_eq!(updated_user.user_status, UserStatus::Confirmed);
     }
 }
