@@ -23,7 +23,7 @@ use crate::{
         resolve_id_token_expiry, resolve_refresh_token_expiry, verify_access_token,
     },
     storage::Storage,
-    types::{AuthorizationCode, ClientId, RefreshToken, UserStatus},
+    types::{AuthorizationCode, ClientId, OAuthFlow, RefreshToken, UserStatus},
 };
 
 use super::super::action::user::helpers::verify_password;
@@ -151,7 +151,7 @@ pub async fn authorize(
     match params.response_type.as_str() {
         "code" => {
             // Authorization Code Flow
-            if !client.allowed_oauth_flows.contains(&"code".to_string()) {
+            if !client.allowed_oauth_flows.contains(&OAuthFlow::Code) {
                 return Err(OAuthError {
                     error: "unauthorized_client".to_string(),
                     error_description: Some("Code flow not allowed for this client".to_string()),
@@ -231,7 +231,7 @@ pub async fn authorize(
         }
         "token" => {
             // Implicit Flow (legacy, not recommended)
-            if !client.allowed_oauth_flows.contains(&"implicit".to_string()) {
+            if !client.allowed_oauth_flows.contains(&OAuthFlow::Implicit) {
                 return Err(OAuthError {
                     error: "unauthorized_client".to_string(),
                     error_description: Some(
@@ -679,7 +679,7 @@ pub async fn token(
 
             if !client
                 .allowed_oauth_flows
-                .contains(&"client_credentials".to_string())
+                .contains(&OAuthFlow::ClientCredentials)
             {
                 return Err(OAuthError {
                     error: "unauthorized_client".to_string(),

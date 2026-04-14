@@ -22,6 +22,8 @@ async fn test_login_page_renders() {
             json!({
                 "UserPoolId": user_pool_id,
                 "ClientName": "test-client",
+                "AllowedOAuthFlowsUserPoolClient": true,
+                "AllowedOAuthFlows": ["code"],
                 "CallbackURLs": ["https://example.com/callback"]
             }),
         )
@@ -60,6 +62,8 @@ async fn test_signup_page_renders() {
             json!({
                 "UserPoolId": user_pool_id,
                 "ClientName": "test-client",
+                "AllowedOAuthFlowsUserPoolClient": true,
+                "AllowedOAuthFlows": ["code"],
                 "CallbackURLs": ["https://example.com/callback"]
             }),
         )
@@ -96,6 +100,8 @@ async fn test_login_page_with_branding() {
             json!({
                 "UserPoolId": user_pool_id,
                 "ClientName": "test-client",
+                "AllowedOAuthFlowsUserPoolClient": true,
+                "AllowedOAuthFlows": ["code"],
                 "CallbackURLs": ["https://example.com/callback"]
             }),
         )
@@ -150,6 +156,8 @@ async fn test_forgot_password_page() {
             json!({
                 "UserPoolId": user_pool_id,
                 "ClientName": "test-client",
+                "AllowedOAuthFlowsUserPoolClient": true,
+                "AllowedOAuthFlows": ["code"],
                 "CallbackURLs": ["https://example.com/callback"]
             }),
         )

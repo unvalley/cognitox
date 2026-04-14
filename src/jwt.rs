@@ -16,7 +16,7 @@ use rsa::{RsaPrivateKey, RsaPublicKey};
 use serde::{Deserialize, Serialize};
 use std::{fs, sync::OnceLock};
 
-use crate::types::{User, UserPoolClient, UserPoolId};
+use crate::types::{TokenValidityUnit, User, UserPoolClient, UserPoolId};
 
 /// Global JWT key pair (generated once at startup)
 static JWT_KEYS: OnceLock<JwtKeys> = OnceLock::new();
@@ -315,15 +315,19 @@ pub fn extract_user_id_from_token(token: &str) -> Option<uuid::Uuid> {
     uuid::Uuid::parse_str(sub).ok()
 }
 
-fn resolve_duration(value: Option<i32>, unit: Option<&str>, default: Duration) -> Duration {
+fn resolve_duration(
+    value: Option<i32>,
+    unit: Option<TokenValidityUnit>,
+    default: Duration,
+) -> Duration {
     match value {
         Some(v) => {
             let v = v as i64;
             match unit {
-                Some("seconds") => Duration::seconds(v),
-                Some("minutes") => Duration::minutes(v),
-                Some("hours") => Duration::hours(v),
-                Some("days") => Duration::days(v),
+                Some(TokenValidityUnit::Seconds) => Duration::seconds(v),
+                Some(TokenValidityUnit::Minutes) => Duration::minutes(v),
+                Some(TokenValidityUnit::Hours) => Duration::hours(v),
+                Some(TokenValidityUnit::Days) => Duration::days(v),
                 _ => default,
             }
         }
@@ -338,8 +342,8 @@ pub fn resolve_access_token_expiry(client: &UserPoolClient) -> Duration {
     let unit = client
         .token_validity_units
         .as_ref()
-        .and_then(|u| u.access_token.as_deref())
-        .unwrap_or("hours");
+        .and_then(|u| u.access_token)
+        .unwrap_or(TokenValidityUnit::Hours);
     resolve_duration(client.access_token_validity, Some(unit), default)
 }
 
@@ -350,8 +354,8 @@ pub fn resolve_id_token_expiry(client: &UserPoolClient) -> Duration {
     let unit = client
         .token_validity_units
         .as_ref()
-        .and_then(|u| u.id_token.as_deref())
-        .unwrap_or("hours");
+        .and_then(|u| u.id_token)
+        .unwrap_or(TokenValidityUnit::Hours);
     resolve_duration(client.id_token_validity, Some(unit), default)
 }
 
@@ -362,8 +366,8 @@ pub fn resolve_refresh_token_expiry(client: &UserPoolClient) -> Duration {
     let unit = client
         .token_validity_units
         .as_ref()
-        .and_then(|u| u.refresh_token.as_deref())
-        .unwrap_or("days");
+        .and_then(|u| u.refresh_token)
+        .unwrap_or(TokenValidityUnit::Days);
     resolve_duration(client.refresh_token_validity, Some(unit), default)
 }
 

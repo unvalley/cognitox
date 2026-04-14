@@ -639,11 +639,7 @@ async fn test_authorize_rejects_client_without_oauth_enabled() {
             "CreateUserPoolClient",
             json!({
                 "UserPoolId": pool_id,
-                "ClientName": "OAuthClient",
-                "AllowedOAuthFlows": ["code"],
-                "AllowedOAuthScopes": ["openid"],
-                "CallbackURLs": ["https://example.com/callback"],
-                "AllowedOAuthFlowsUserPoolClient": false
+                "ClientName": "OAuthClient"
             }),
         )
         .await;

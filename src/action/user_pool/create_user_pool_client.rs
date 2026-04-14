@@ -8,10 +8,17 @@ use serde_json::{Value, json};
 use uuid::Uuid;
 
 use crate::{
+    action::io::parse_request,
     error::{AppError, Result},
     storage::Storage,
-    types::{ClientId, TokenValidityUnits, UserPoolClient, UserPoolId},
-    validation::{validate_callback_url, validate_client_name},
+    types::{
+        ClientId, ExplicitAuthFlow, OAuthFlow, PreventUserExistenceErrors, TokenValidityUnits,
+        UserPoolClient, UserPoolId,
+    },
+    validation::{
+        validate_client_name, validate_explicit_auth_flows, validate_oauth_client_configuration,
+        validate_token_validities,
+    },
 };
 
 #[derive(Debug, Deserialize)]
@@ -20,111 +27,193 @@ struct Request {
     user_pool_id: UserPoolId,
     client_name: String,
     generate_secret: Option<bool>,
-
-    // OAuth configuration
-    allowed_o_auth_flows: Option<Vec<String>>,
+    #[serde(default)]
+    allowed_o_auth_flows: Option<Vec<OAuthFlow>>,
+    #[serde(default)]
     allowed_o_auth_scopes: Option<Vec<String>>,
+    #[serde(default)]
     allowed_o_auth_flows_user_pool_client: Option<bool>,
-    callback_u_r_ls: Option<Vec<String>>,
-    logout_u_r_ls: Option<Vec<String>>,
-    default_redirect_u_r_i: Option<String>,
+    #[serde(default, rename = "CallbackURLs")]
+    callback_urls: Option<Vec<String>>,
+    #[serde(default, rename = "LogoutURLs")]
+    logout_urls: Option<Vec<String>>,
+    #[serde(default, rename = "DefaultRedirectURI")]
+    default_redirect_uri: Option<String>,
+    #[serde(default)]
     supported_identity_providers: Option<Vec<String>>,
-
-    // Auth flows
-    explicit_auth_flows: Option<Vec<String>>,
-
-    // Token validity
+    #[serde(default)]
+    explicit_auth_flows: Option<Vec<ExplicitAuthFlow>>,
+    #[serde(default)]
     access_token_validity: Option<i32>,
+    #[serde(default)]
     id_token_validity: Option<i32>,
+    #[serde(default)]
     refresh_token_validity: Option<i32>,
-    token_validity_units: Option<TokenValidityUnitsInput>,
-
-    // Security settings
+    #[serde(default)]
+    token_validity_units: Option<TokenValidityUnits>,
+    #[serde(default)]
     enable_token_revocation: Option<bool>,
-    prevent_user_existence_errors: Option<String>,
+    #[serde(default)]
+    prevent_user_existence_errors: Option<PreventUserExistenceErrors>,
+    #[serde(default)]
     enable_propagate_additional_user_context_data: Option<bool>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "PascalCase")]
-struct TokenValidityUnitsInput {
-    access_token: Option<String>,
-    id_token: Option<String>,
-    refresh_token: Option<String>,
+pub(crate) struct UserPoolClientConfigInput {
+    #[serde(default)]
+    pub(crate) allowed_o_auth_flows: Option<Vec<OAuthFlow>>,
+    #[serde(default)]
+    pub(crate) allowed_o_auth_scopes: Option<Vec<String>>,
+    #[serde(default)]
+    pub(crate) allowed_o_auth_flows_user_pool_client: Option<bool>,
+    #[serde(default, rename = "CallbackURLs")]
+    pub(crate) callback_urls: Option<Vec<String>>,
+    #[serde(default, rename = "LogoutURLs")]
+    pub(crate) logout_urls: Option<Vec<String>>,
+    #[serde(default, rename = "DefaultRedirectURI")]
+    pub(crate) default_redirect_uri: Option<String>,
+    #[serde(default)]
+    pub(crate) supported_identity_providers: Option<Vec<String>>,
+    #[serde(default)]
+    pub(crate) explicit_auth_flows: Option<Vec<ExplicitAuthFlow>>,
+    #[serde(default)]
+    pub(crate) access_token_validity: Option<i32>,
+    #[serde(default)]
+    pub(crate) id_token_validity: Option<i32>,
+    #[serde(default)]
+    pub(crate) refresh_token_validity: Option<i32>,
+    #[serde(default)]
+    pub(crate) token_validity_units: Option<TokenValidityUnits>,
+    #[serde(default)]
+    pub(crate) enable_token_revocation: Option<bool>,
+    #[serde(default)]
+    pub(crate) prevent_user_existence_errors: Option<PreventUserExistenceErrors>,
+    #[serde(default)]
+    pub(crate) enable_propagate_additional_user_context_data: Option<bool>,
+}
+
+pub(crate) fn validate_user_pool_client_configuration(
+    config: &UserPoolClientConfigInput,
+    callback_urls: &[String],
+    logout_urls: &[String],
+    default_redirect_uri: Option<&str>,
+    generate_secret: bool,
+) -> Result<()> {
+    let allowed_oauth_flows = config.allowed_o_auth_flows.as_deref().unwrap_or(&[]);
+    let explicit_auth_flows = config.explicit_auth_flows.as_deref().unwrap_or(&[]);
+    let token_validity_units = config.token_validity_units.as_ref();
+
+    validate_oauth_client_configuration(
+        config
+            .allowed_o_auth_flows_user_pool_client
+            .unwrap_or(false),
+        allowed_oauth_flows,
+        callback_urls,
+        logout_urls,
+        default_redirect_uri,
+        generate_secret,
+    )?;
+    validate_explicit_auth_flows(explicit_auth_flows)?;
+    validate_token_validities(
+        config.access_token_validity,
+        config.id_token_validity,
+        config.refresh_token_validity,
+        token_validity_units.and_then(|units| units.access_token),
+        token_validity_units.and_then(|units| units.id_token),
+        token_validity_units.and_then(|units| units.refresh_token),
+    )?;
+
+    Ok(())
+}
+
+impl Request {
+    fn into_config(self) -> UserPoolClientConfigInput {
+        UserPoolClientConfigInput {
+            allowed_o_auth_flows: self.allowed_o_auth_flows,
+            allowed_o_auth_scopes: self.allowed_o_auth_scopes,
+            allowed_o_auth_flows_user_pool_client: self.allowed_o_auth_flows_user_pool_client,
+            callback_urls: self.callback_urls,
+            logout_urls: self.logout_urls,
+            default_redirect_uri: self.default_redirect_uri,
+            supported_identity_providers: self.supported_identity_providers,
+            explicit_auth_flows: self.explicit_auth_flows,
+            access_token_validity: self.access_token_validity,
+            id_token_validity: self.id_token_validity,
+            refresh_token_validity: self.refresh_token_validity,
+            token_validity_units: self.token_validity_units,
+            enable_token_revocation: self.enable_token_revocation,
+            prevent_user_existence_errors: self.prevent_user_existence_errors,
+            enable_propagate_additional_user_context_data: self
+                .enable_propagate_additional_user_context_data,
+        }
+    }
 }
 
 pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
-    let req: Request = serde_json::from_value(body)
-        .map_err(|e| AppError::InvalidParameter(format!("Invalid request: {}", e)))?;
+    let req: Request = parse_request(body)?;
+    let client_name = req.client_name.clone();
+    let user_pool_id = req.user_pool_id.clone();
+    let generate_secret = req.generate_secret.unwrap_or(false);
+    let config = req.into_config();
 
-    // Validate input
-    validate_client_name(&req.client_name)?;
-
-    // Validate callback URLs if provided
-    if let Some(urls) = &req.callback_u_r_ls {
-        for url in urls {
-            validate_callback_url(url)?;
-        }
-    }
-
-    // Validate logout URLs if provided
-    if let Some(urls) = &req.logout_u_r_ls {
-        for url in urls {
-            validate_callback_url(url)?;
-        }
-    }
+    validate_client_name(&client_name)?;
+    let callback_urls = config.callback_urls.clone().unwrap_or_default();
+    let logout_urls = config.logout_urls.clone().unwrap_or_default();
+    validate_user_pool_client_configuration(
+        &config,
+        &callback_urls,
+        &logout_urls,
+        config.default_redirect_uri.as_deref(),
+        generate_secret,
+    )?;
 
     storage
-        .get_user_pool(&req.user_pool_id)
+        .get_user_pool(&user_pool_id)
         .await
         .ok_or(AppError::UserPoolNotFound)?;
 
     let now = Utc::now();
     let client_id = ClientId::generate();
-    let client_secret = if req.generate_secret.unwrap_or(false) {
+    let client_secret = if generate_secret {
         Some(Uuid::new_v4().to_string())
     } else {
         None
     };
 
-    let token_validity_units = req.token_validity_units.map(|t| TokenValidityUnits {
-        access_token: t.access_token,
-        id_token: t.id_token,
-        refresh_token: t.refresh_token,
-    });
-
     let client = UserPoolClient {
         client_id,
-        user_pool_id: req.user_pool_id,
-        client_name: req.client_name,
+        user_pool_id,
+        client_name,
         client_secret: client_secret.clone(),
         creation_date: now,
         last_modified_date: now,
 
         // OAuth configuration
-        allowed_oauth_flows: req.allowed_o_auth_flows.unwrap_or_default(),
-        allowed_oauth_scopes: req.allowed_o_auth_scopes.unwrap_or_default(),
-        allowed_oauth_flows_user_pool_client: req
+        allowed_oauth_flows: config.allowed_o_auth_flows.unwrap_or_default(),
+        allowed_oauth_scopes: config.allowed_o_auth_scopes.unwrap_or_default(),
+        allowed_oauth_flows_user_pool_client: config
             .allowed_o_auth_flows_user_pool_client
             .unwrap_or(false),
-        callback_urls: req.callback_u_r_ls.unwrap_or_default(),
-        logout_urls: req.logout_u_r_ls.unwrap_or_default(),
-        default_redirect_uri: req.default_redirect_u_r_i,
-        supported_identity_providers: req.supported_identity_providers.unwrap_or_default(),
+        callback_urls,
+        logout_urls,
+        default_redirect_uri: config.default_redirect_uri,
+        supported_identity_providers: config.supported_identity_providers.unwrap_or_default(),
 
         // Auth flows
-        explicit_auth_flows: req.explicit_auth_flows.unwrap_or_default(),
+        explicit_auth_flows: config.explicit_auth_flows.unwrap_or_default(),
 
         // Token validity
-        access_token_validity: req.access_token_validity,
-        id_token_validity: req.id_token_validity,
-        refresh_token_validity: req.refresh_token_validity,
-        token_validity_units,
+        access_token_validity: config.access_token_validity,
+        id_token_validity: config.id_token_validity,
+        refresh_token_validity: config.refresh_token_validity,
+        token_validity_units: config.token_validity_units,
 
         // Security settings
-        enable_token_revocation: req.enable_token_revocation.unwrap_or(true),
-        prevent_user_existence_errors: req.prevent_user_existence_errors,
-        enable_propagate_additional_user_context_data: req
+        enable_token_revocation: config.enable_token_revocation.unwrap_or(true),
+        prevent_user_existence_errors: config.prevent_user_existence_errors,
+        enable_propagate_additional_user_context_data: config
             .enable_propagate_additional_user_context_data
             .unwrap_or(false),
     };
@@ -268,6 +357,54 @@ mod tests {
         assert!(result.is_ok());
         let body = result.unwrap();
         assert!(body["UserPoolClient"]["ClientSecret"].as_str().is_some());
+    }
+
+    #[tokio::test]
+    async fn test_create_user_pool_client_rejects_invalid_oauth_configuration() {
+        let storage = Storage::new();
+
+        let pool = create_user_pool::handler(&storage, json!({"PoolName": "test-pool"}))
+            .await
+            .unwrap();
+        let pool_id = pool["UserPool"]["Id"].as_str().unwrap();
+
+        let result = handler(
+            &storage,
+            json!({
+                "UserPoolId": pool_id,
+                "ClientName": "test-client",
+                "AllowedOAuthFlows": ["code"],
+                "CallbackURLs": ["https://example.com/callback"]
+            }),
+        )
+        .await;
+
+        assert!(matches!(result, Err(AppError::InvalidParameter(_))));
+    }
+
+    #[tokio::test]
+    async fn test_create_user_pool_client_rejects_invalid_token_validity() {
+        let storage = Storage::new();
+
+        let pool = create_user_pool::handler(&storage, json!({"PoolName": "test-pool"}))
+            .await
+            .unwrap();
+        let pool_id = pool["UserPool"]["Id"].as_str().unwrap();
+
+        let result = handler(
+            &storage,
+            json!({
+                "UserPoolId": pool_id,
+                "ClientName": "test-client",
+                "AccessTokenValidity": 1,
+                "TokenValidityUnits": {
+                    "AccessToken": "seconds"
+                }
+            }),
+        )
+        .await;
+
+        assert!(matches!(result, Err(AppError::InvalidParameter(_))));
     }
 
     #[tokio::test]

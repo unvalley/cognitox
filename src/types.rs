@@ -297,6 +297,183 @@ impl std::error::Error for ClientIdError {}
 /// User's unique identifier
 pub type UserId = Uuid;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum DeletionProtection {
+    Active,
+    Inactive,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum MfaConfiguration {
+    Off,
+    On,
+    Optional,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum UserPoolTier {
+    Lite,
+    Essentials,
+    Plus,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AliasAttribute {
+    Email,
+    PhoneNumber,
+    PreferredUsername,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AutoVerifiedAttribute {
+    Email,
+    PhoneNumber,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum UsernameAttribute {
+    Email,
+    PhoneNumber,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+pub struct UsernameConfiguration {
+    pub case_sensitive: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum FirstAuthFactor {
+    Password,
+    EmailOtp,
+    SmsOtp,
+    WebAuthn,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+pub struct SignInPolicy {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub allowed_first_auth_factors: Option<Vec<FirstAuthFactor>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+pub struct PasswordPolicy {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub minimum_length: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub password_history_size: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub require_lowercase: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub require_numbers: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub require_symbols: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub require_uppercase: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub temporary_password_validity_days: Option<i32>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+pub struct UserPoolPolicies {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub password_policy: Option<PasswordPolicy>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sign_in_policy: Option<SignInPolicy>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum DefaultEmailOption {
+    ConfirmWithCode,
+    ConfirmWithLink,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+pub struct VerificationMessageTemplate {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub default_email_option: Option<DefaultEmailOption>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub email_message: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub email_message_by_link: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub email_subject: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub email_subject_by_link: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sms_message: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OAuthFlow {
+    Code,
+    Implicit,
+    ClientCredentials,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum ExplicitAuthFlow {
+    AdminNoSrpAuth,
+    CustomAuthFlowOnly,
+    UserPasswordAuth,
+    AllowAdminUserPasswordAuth,
+    AllowCustomAuth,
+    AllowUserPasswordAuth,
+    AllowUserSrpAuth,
+    AllowRefreshTokenAuth,
+    AllowUserAuth,
+}
+
+impl ExplicitAuthFlow {
+    pub fn is_legacy(self) -> bool {
+        matches!(
+            self,
+            Self::AdminNoSrpAuth | Self::CustomAuthFlowOnly | Self::UserPasswordAuth
+        )
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum TokenValidityUnit {
+    Seconds,
+    Minutes,
+    Hours,
+    Days,
+}
+
+impl TokenValidityUnit {
+    pub fn seconds_multiplier(self) -> i64 {
+        match self {
+            Self::Seconds => 1,
+            Self::Minutes => 60,
+            Self::Hours => 60 * 60,
+            Self::Days => 60 * 60 * 24,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum PreventUserExistenceErrors {
+    Legacy,
+    Enabled,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UserPool {
     pub id: UserPoolId,
@@ -305,16 +482,16 @@ pub struct UserPool {
     pub last_modified_date: DateTime<Utc>,
     pub account_recovery_setting: Option<serde_json::Value>,
     pub admin_create_user_config: Option<serde_json::Value>,
-    pub alias_attributes: Option<Vec<String>>,
-    pub auto_verified_attributes: Option<Vec<String>>,
-    pub deletion_protection: Option<String>,
+    pub alias_attributes: Option<Vec<AliasAttribute>>,
+    pub auto_verified_attributes: Option<Vec<AutoVerifiedAttribute>>,
+    pub deletion_protection: Option<DeletionProtection>,
     pub device_configuration: Option<serde_json::Value>,
     pub email_configuration: Option<serde_json::Value>,
     pub email_verification_message: Option<String>,
     pub email_verification_subject: Option<String>,
     pub lambda_config: Option<serde_json::Value>,
-    pub mfa_configuration: Option<String>,
-    pub policies: Option<serde_json::Value>,
+    pub mfa_configuration: Option<MfaConfiguration>,
+    pub policies: Option<UserPoolPolicies>,
     pub schema_attributes: Option<Vec<serde_json::Value>>,
     pub sms_authentication_message: Option<String>,
     pub sms_configuration: Option<serde_json::Value>,
@@ -322,18 +499,19 @@ pub struct UserPool {
     pub user_attribute_update_settings: Option<serde_json::Value>,
     pub user_pool_add_ons: Option<serde_json::Value>,
     pub user_pool_tags: Option<HashMap<String, String>>,
-    pub user_pool_tier: Option<String>,
-    pub username_attributes: Option<Vec<String>>,
-    pub username_configuration: Option<serde_json::Value>,
-    pub verification_message_template: Option<serde_json::Value>,
+    pub user_pool_tier: Option<UserPoolTier>,
+    pub username_attributes: Option<Vec<UsernameAttribute>>,
+    pub username_configuration: Option<UsernameConfiguration>,
+    pub verification_message_template: Option<VerificationMessageTemplate>,
 }
 
 /// Token validity time units
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase")]
 pub struct TokenValidityUnits {
-    pub access_token: Option<String>,  // seconds, minutes, hours, days
-    pub id_token: Option<String>,      // seconds, minutes, hours, days
-    pub refresh_token: Option<String>, // seconds, minutes, hours, days
+    pub access_token: Option<TokenValidityUnit>,
+    pub id_token: Option<TokenValidityUnit>,
+    pub refresh_token: Option<TokenValidityUnit>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -346,7 +524,7 @@ pub struct UserPoolClient {
     pub last_modified_date: DateTime<Utc>,
 
     // OAuth configuration
-    pub allowed_oauth_flows: Vec<String>,
+    pub allowed_oauth_flows: Vec<OAuthFlow>,
     pub allowed_oauth_scopes: Vec<String>,
     pub allowed_oauth_flows_user_pool_client: bool,
     pub callback_urls: Vec<String>,
@@ -355,7 +533,7 @@ pub struct UserPoolClient {
     pub supported_identity_providers: Vec<String>,
 
     // Auth flows
-    pub explicit_auth_flows: Vec<String>,
+    pub explicit_auth_flows: Vec<ExplicitAuthFlow>,
 
     // Token validity
     pub access_token_validity: Option<i32>,
@@ -365,7 +543,7 @@ pub struct UserPoolClient {
 
     // Security settings
     pub enable_token_revocation: bool,
-    pub prevent_user_existence_errors: Option<String>,
+    pub prevent_user_existence_errors: Option<PreventUserExistenceErrors>,
     pub enable_propagate_additional_user_context_data: bool,
 }
 

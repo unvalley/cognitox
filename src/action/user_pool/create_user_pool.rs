@@ -12,8 +12,15 @@ use crate::{
     action::io::parse_request,
     error::Result,
     storage::Storage,
-    types::{UserPool, UserPoolId},
-    validation::validate_pool_name,
+    types::{
+        AliasAttribute, AutoVerifiedAttribute, DeletionProtection, MfaConfiguration, UserPool,
+        UserPoolId, UserPoolPolicies, UserPoolTier, UsernameAttribute, UsernameConfiguration,
+        VerificationMessageTemplate,
+    },
+    validation::{
+        validate_code_delivery_message, validate_pool_name, validate_subject,
+        validate_user_pool_policies, validate_verification_message_template,
+    },
 };
 
 #[derive(Debug, Deserialize)]
@@ -25,11 +32,11 @@ struct Request {
     #[serde(default)]
     admin_create_user_config: Option<Value>,
     #[serde(default)]
-    alias_attributes: Option<Vec<String>>,
+    alias_attributes: Option<Vec<AliasAttribute>>,
     #[serde(default)]
-    auto_verified_attributes: Option<Vec<String>>,
+    auto_verified_attributes: Option<Vec<AutoVerifiedAttribute>>,
     #[serde(default)]
-    deletion_protection: Option<String>,
+    deletion_protection: Option<DeletionProtection>,
     #[serde(default)]
     device_configuration: Option<Value>,
     #[serde(default)]
@@ -41,9 +48,9 @@ struct Request {
     #[serde(default)]
     lambda_config: Option<Value>,
     #[serde(default)]
-    mfa_configuration: Option<String>,
+    mfa_configuration: Option<MfaConfiguration>,
     #[serde(default)]
-    policies: Option<Value>,
+    policies: Option<UserPoolPolicies>,
     #[serde(default, rename = "Schema")]
     schema_attributes: Option<Vec<Value>>,
     #[serde(default)]
@@ -59,13 +66,122 @@ struct Request {
     #[serde(default)]
     user_pool_tags: Option<HashMap<String, String>>,
     #[serde(default)]
-    user_pool_tier: Option<String>,
+    user_pool_tier: Option<UserPoolTier>,
     #[serde(default)]
-    username_attributes: Option<Vec<String>>,
+    username_attributes: Option<Vec<UsernameAttribute>>,
     #[serde(default)]
-    username_configuration: Option<Value>,
+    username_configuration: Option<UsernameConfiguration>,
     #[serde(default)]
-    verification_message_template: Option<Value>,
+    verification_message_template: Option<VerificationMessageTemplate>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+pub(crate) struct UserPoolConfigInput {
+    #[serde(default)]
+    pub(crate) account_recovery_setting: Option<Value>,
+    #[serde(default)]
+    pub(crate) admin_create_user_config: Option<Value>,
+    #[serde(default)]
+    pub(crate) alias_attributes: Option<Vec<AliasAttribute>>,
+    #[serde(default)]
+    pub(crate) auto_verified_attributes: Option<Vec<AutoVerifiedAttribute>>,
+    #[serde(default)]
+    pub(crate) deletion_protection: Option<DeletionProtection>,
+    #[serde(default)]
+    pub(crate) device_configuration: Option<Value>,
+    #[serde(default)]
+    pub(crate) email_configuration: Option<Value>,
+    #[serde(default)]
+    pub(crate) email_verification_message: Option<String>,
+    #[serde(default)]
+    pub(crate) email_verification_subject: Option<String>,
+    #[serde(default)]
+    pub(crate) lambda_config: Option<Value>,
+    #[serde(default)]
+    pub(crate) mfa_configuration: Option<MfaConfiguration>,
+    #[serde(default)]
+    pub(crate) policies: Option<UserPoolPolicies>,
+    #[serde(default, rename = "Schema")]
+    pub(crate) schema_attributes: Option<Vec<Value>>,
+    #[serde(default)]
+    pub(crate) sms_authentication_message: Option<String>,
+    #[serde(default)]
+    pub(crate) sms_configuration: Option<Value>,
+    #[serde(default)]
+    pub(crate) sms_verification_message: Option<String>,
+    #[serde(default)]
+    pub(crate) user_attribute_update_settings: Option<Value>,
+    #[serde(default)]
+    pub(crate) user_pool_add_ons: Option<Value>,
+    #[serde(default)]
+    pub(crate) user_pool_tags: Option<HashMap<String, String>>,
+    #[serde(default)]
+    pub(crate) user_pool_tier: Option<UserPoolTier>,
+    #[serde(default)]
+    pub(crate) username_attributes: Option<Vec<UsernameAttribute>>,
+    #[serde(default)]
+    pub(crate) username_configuration: Option<UsernameConfiguration>,
+    #[serde(default)]
+    pub(crate) verification_message_template: Option<VerificationMessageTemplate>,
+}
+
+pub(crate) fn validate_user_pool_configuration(config: &UserPoolConfigInput) -> Result<()> {
+    if let Some(policies) = &config.policies {
+        validate_user_pool_policies(policies)?;
+    }
+
+    if let Some(message) = &config.sms_authentication_message {
+        validate_code_delivery_message("SmsAuthenticationMessage", message, 140)?;
+    }
+
+    if let Some(message) = &config.sms_verification_message {
+        validate_code_delivery_message("SmsVerificationMessage", message, 140)?;
+    }
+
+    if let Some(message) = &config.email_verification_message {
+        validate_code_delivery_message("EmailVerificationMessage", message, 20_000)?;
+    }
+
+    if let Some(subject) = &config.email_verification_subject {
+        validate_subject("EmailVerificationSubject", subject)?;
+    }
+
+    if let Some(template) = &config.verification_message_template {
+        validate_verification_message_template(template)?;
+    }
+
+    Ok(())
+}
+
+impl Request {
+    fn into_config(self) -> UserPoolConfigInput {
+        UserPoolConfigInput {
+            account_recovery_setting: self.account_recovery_setting,
+            admin_create_user_config: self.admin_create_user_config,
+            alias_attributes: self.alias_attributes,
+            auto_verified_attributes: self.auto_verified_attributes,
+            deletion_protection: self.deletion_protection,
+            device_configuration: self.device_configuration,
+            email_configuration: self.email_configuration,
+            email_verification_message: self.email_verification_message,
+            email_verification_subject: self.email_verification_subject,
+            lambda_config: self.lambda_config,
+            mfa_configuration: self.mfa_configuration,
+            policies: self.policies,
+            schema_attributes: self.schema_attributes,
+            sms_authentication_message: self.sms_authentication_message,
+            sms_configuration: self.sms_configuration,
+            sms_verification_message: self.sms_verification_message,
+            user_attribute_update_settings: self.user_attribute_update_settings,
+            user_pool_add_ons: self.user_pool_add_ons,
+            user_pool_tags: self.user_pool_tags,
+            user_pool_tier: self.user_pool_tier,
+            username_attributes: self.username_attributes,
+            username_configuration: self.username_configuration,
+            verification_message_template: self.verification_message_template,
+        }
+    }
 }
 
 pub(crate) fn build_user_pool_view(pool: &UserPool, estimated_number_of_users: usize) -> Value {
@@ -120,7 +236,7 @@ pub(crate) fn build_user_pool_view(pool: &UserPool, estimated_number_of_users: u
         view.insert("MfaConfiguration".to_string(), json!(value));
     }
     if let Some(value) = &pool.policies {
-        view.insert("Policies".to_string(), value.clone());
+        view.insert("Policies".to_string(), json!(value));
     }
     if let Some(value) = &pool.schema_attributes {
         view.insert("SchemaAttributes".to_string(), json!(value));
@@ -150,10 +266,10 @@ pub(crate) fn build_user_pool_view(pool: &UserPool, estimated_number_of_users: u
         view.insert("UsernameAttributes".to_string(), json!(value));
     }
     if let Some(value) = &pool.username_configuration {
-        view.insert("UsernameConfiguration".to_string(), value.clone());
+        view.insert("UsernameConfiguration".to_string(), json!(value));
     }
     if let Some(value) = &pool.verification_message_template {
-        view.insert("VerificationMessageTemplate".to_string(), value.clone());
+        view.insert("VerificationMessageTemplate".to_string(), json!(value));
     }
 
     Value::Object(view)
@@ -161,38 +277,41 @@ pub(crate) fn build_user_pool_view(pool: &UserPool, estimated_number_of_users: u
 
 pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
     let req: Request = parse_request(body)?;
+    let pool_name = req.pool_name.clone();
+    let config = req.into_config();
 
-    validate_pool_name(&req.pool_name)?;
+    validate_pool_name(&pool_name)?;
+    validate_user_pool_configuration(&config)?;
 
     let now = Utc::now();
     let pool = UserPool {
         id: UserPoolId::new_local(),
-        name: req.pool_name,
+        name: pool_name,
         creation_date: now,
         last_modified_date: now,
-        account_recovery_setting: req.account_recovery_setting,
-        admin_create_user_config: req.admin_create_user_config,
-        alias_attributes: req.alias_attributes,
-        auto_verified_attributes: req.auto_verified_attributes,
-        deletion_protection: req.deletion_protection,
-        device_configuration: req.device_configuration,
-        email_configuration: req.email_configuration,
-        email_verification_message: req.email_verification_message,
-        email_verification_subject: req.email_verification_subject,
-        lambda_config: req.lambda_config,
-        mfa_configuration: req.mfa_configuration,
-        policies: req.policies,
-        schema_attributes: req.schema_attributes,
-        sms_authentication_message: req.sms_authentication_message,
-        sms_configuration: req.sms_configuration,
-        sms_verification_message: req.sms_verification_message,
-        user_attribute_update_settings: req.user_attribute_update_settings,
-        user_pool_add_ons: req.user_pool_add_ons,
-        user_pool_tags: req.user_pool_tags,
-        user_pool_tier: req.user_pool_tier,
-        username_attributes: req.username_attributes,
-        username_configuration: req.username_configuration,
-        verification_message_template: req.verification_message_template,
+        account_recovery_setting: config.account_recovery_setting,
+        admin_create_user_config: config.admin_create_user_config,
+        alias_attributes: config.alias_attributes,
+        auto_verified_attributes: config.auto_verified_attributes,
+        deletion_protection: config.deletion_protection,
+        device_configuration: config.device_configuration,
+        email_configuration: config.email_configuration,
+        email_verification_message: config.email_verification_message,
+        email_verification_subject: config.email_verification_subject,
+        lambda_config: config.lambda_config,
+        mfa_configuration: config.mfa_configuration,
+        policies: config.policies,
+        schema_attributes: config.schema_attributes,
+        sms_authentication_message: config.sms_authentication_message,
+        sms_configuration: config.sms_configuration,
+        sms_verification_message: config.sms_verification_message,
+        user_attribute_update_settings: config.user_attribute_update_settings,
+        user_pool_add_ons: config.user_pool_add_ons,
+        user_pool_tags: config.user_pool_tags,
+        user_pool_tier: config.user_pool_tier,
+        username_attributes: config.username_attributes,
+        username_configuration: config.username_configuration,
+        verification_message_template: config.verification_message_template,
     };
 
     let created = storage.create_user_pool(pool).await;

@@ -4,7 +4,10 @@
 //! to match AWS Cognito's validation rules.
 
 use crate::error::{AppError, Result};
-use crate::types::UserPoolId;
+use crate::types::{
+    ExplicitAuthFlow, OAuthFlow, TokenValidityUnit, UserPoolId, UserPoolPolicies,
+    VerificationMessageTemplate,
+};
 
 /// Minimum password length (AWS default is 6)
 const MIN_PASSWORD_LENGTH: usize = 6;
@@ -121,15 +124,36 @@ pub fn validate_callback_url(url: &str) -> Result<()> {
         ));
     }
 
-    // Must start with http:// or https://
-    if !trimmed.starts_with("http://") && !trimmed.starts_with("https://") {
+    if trimmed.contains('#') {
         return Err(AppError::InvalidParameter(
-            "Callback URL must start with http:// or https://".to_string(),
+            "Callback URL must not contain a fragment".to_string(),
         ));
     }
 
-    // For non-localhost URLs, AWS requires HTTPS in production
-    // But for local development, we allow HTTP for localhost
+    if !trimmed.contains("://") {
+        return Err(AppError::InvalidParameter(
+            "Callback URL must include a URI scheme".to_string(),
+        ));
+    }
+
+    let scheme = trimmed.split("://").next().unwrap_or("");
+    if scheme.is_empty()
+        || !scheme
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '-' | '.'))
+    {
+        return Err(AppError::InvalidParameter(
+            "Callback URL contains an invalid URI scheme".to_string(),
+        ));
+    }
+
+    if matches!(scheme, "ftp" | "file") {
+        return Err(AppError::InvalidParameter(
+            "Callback URL uses an unsupported URI scheme".to_string(),
+        ));
+    }
+
+    // For HTTP URLs, AWS only allows localhost in development scenarios.
     if trimmed.starts_with("http://") {
         let host_part = trimmed.trim_start_matches("http://");
         let host = host_part.split('/').next().unwrap_or("");
@@ -162,6 +186,15 @@ pub fn validate_pool_name(name: &str) -> Result<()> {
         ));
     }
 
+    if !trimmed
+        .chars()
+        .all(|c| c.is_alphanumeric() || c.is_whitespace() || "_+=,.@-".contains(c))
+    {
+        return Err(AppError::InvalidParameter(
+            "Pool name contains unsupported characters".to_string(),
+        ));
+    }
+
     Ok(())
 }
 
@@ -179,6 +212,237 @@ pub fn validate_client_name(name: &str) -> Result<()> {
         return Err(AppError::InvalidParameter(
             "Client name cannot exceed 128 characters".to_string(),
         ));
+    }
+
+    Ok(())
+}
+
+fn validate_string_length(field: &str, value: &str, min: usize, max: usize) -> Result<()> {
+    let len = value.chars().count();
+    if len < min || len > max {
+        return Err(AppError::InvalidParameter(format!(
+            "{field} must be between {min} and {max} characters"
+        )));
+    }
+    Ok(())
+}
+
+fn validate_contains(field: &str, value: &str, needle: &str) -> Result<()> {
+    if !value.contains(needle) {
+        return Err(AppError::InvalidParameter(format!(
+            "{field} must contain {needle}"
+        )));
+    }
+    Ok(())
+}
+
+fn validate_duration_seconds(field: &str, seconds: i64, min: i64, max: i64) -> Result<()> {
+    if seconds < min || seconds > max {
+        return Err(AppError::InvalidParameter(format!(
+            "{field} is out of range"
+        )));
+    }
+    Ok(())
+}
+
+pub fn validate_user_pool_policies(policies: &UserPoolPolicies) -> Result<()> {
+    if let Some(password_policy) = &policies.password_policy {
+        if let Some(minimum_length) = password_policy.minimum_length
+            && !(6..=99).contains(&minimum_length)
+        {
+            return Err(AppError::InvalidParameter(
+                "PasswordPolicy.MinimumLength must be between 6 and 99".to_string(),
+            ));
+        }
+
+        if let Some(password_history_size) = password_policy.password_history_size
+            && !(0..=24).contains(&password_history_size)
+        {
+            return Err(AppError::InvalidParameter(
+                "PasswordPolicy.PasswordHistorySize must be between 0 and 24".to_string(),
+            ));
+        }
+
+        if let Some(days) = password_policy.temporary_password_validity_days
+            && !(0..=365).contains(&days)
+        {
+            return Err(AppError::InvalidParameter(
+                "PasswordPolicy.TemporaryPasswordValidityDays must be between 0 and 365"
+                    .to_string(),
+            ));
+        }
+    }
+
+    Ok(())
+}
+
+pub fn validate_verification_message_template(
+    template: &VerificationMessageTemplate,
+) -> Result<()> {
+    if template.email_message.is_some() && template.email_message_by_link.is_some() {
+        return Err(AppError::InvalidParameter(
+            "VerificationMessageTemplate cannot include both EmailMessage and EmailMessageByLink"
+                .to_string(),
+        ));
+    }
+
+    if let Some(message) = &template.email_message {
+        validate_string_length(
+            "VerificationMessageTemplate.EmailMessage",
+            message,
+            6,
+            20_000,
+        )?;
+        validate_contains(
+            "VerificationMessageTemplate.EmailMessage",
+            message,
+            "{####}",
+        )?;
+    }
+
+    if let Some(message) = &template.email_message_by_link {
+        validate_string_length(
+            "VerificationMessageTemplate.EmailMessageByLink",
+            message,
+            6,
+            20_000,
+        )?;
+        validate_contains(
+            "VerificationMessageTemplate.EmailMessageByLink",
+            message,
+            "{##",
+        )?;
+        validate_contains(
+            "VerificationMessageTemplate.EmailMessageByLink",
+            message,
+            "##}",
+        )?;
+    }
+
+    if let Some(subject) = &template.email_subject {
+        validate_string_length("VerificationMessageTemplate.EmailSubject", subject, 1, 140)?;
+    }
+
+    if let Some(subject) = &template.email_subject_by_link {
+        validate_string_length(
+            "VerificationMessageTemplate.EmailSubjectByLink",
+            subject,
+            1,
+            140,
+        )?;
+    }
+
+    if let Some(message) = &template.sms_message {
+        validate_string_length("VerificationMessageTemplate.SmsMessage", message, 6, 140)?;
+        validate_contains("VerificationMessageTemplate.SmsMessage", message, "{####}")?;
+    }
+
+    Ok(())
+}
+
+pub fn validate_code_delivery_message(field: &str, value: &str, max: usize) -> Result<()> {
+    validate_string_length(field, value, 6, max)?;
+    validate_contains(field, value, "{####}")
+}
+
+pub fn validate_subject(field: &str, value: &str) -> Result<()> {
+    validate_string_length(field, value, 1, 140)
+}
+
+pub fn validate_oauth_client_configuration(
+    allowed_oauth_flows_user_pool_client: bool,
+    allowed_oauth_flows: &[OAuthFlow],
+    callback_urls: &[String],
+    logout_urls: &[String],
+    default_redirect_uri: Option<&str>,
+    generate_secret: bool,
+) -> Result<()> {
+    let uses_oauth_features = !allowed_oauth_flows.is_empty()
+        || !callback_urls.is_empty()
+        || !logout_urls.is_empty()
+        || default_redirect_uri.is_some();
+
+    if uses_oauth_features && !allowed_oauth_flows_user_pool_client {
+        return Err(AppError::InvalidParameter(
+            "AllowedOAuthFlowsUserPoolClient must be true when OAuth settings are provided"
+                .to_string(),
+        ));
+    }
+
+    for url in callback_urls {
+        validate_callback_url(url)?;
+    }
+    for url in logout_urls {
+        validate_callback_url(url)?;
+    }
+
+    if let Some(default_redirect_uri) = default_redirect_uri {
+        validate_callback_url(default_redirect_uri)?;
+        if !callback_urls.is_empty() && !callback_urls.iter().any(|url| url == default_redirect_uri)
+        {
+            return Err(AppError::InvalidParameter(
+                "DefaultRedirectURI must match one of the CallbackURLs".to_string(),
+            ));
+        }
+    }
+
+    if allowed_oauth_flows.contains(&OAuthFlow::ClientCredentials) {
+        if allowed_oauth_flows.len() > 1 {
+            return Err(AppError::InvalidParameter(
+                "client_credentials must be the only AllowedOAuthFlows value".to_string(),
+            ));
+        }
+        if !generate_secret {
+            return Err(AppError::InvalidParameter(
+                "GenerateSecret must be true when client_credentials is enabled".to_string(),
+            ));
+        }
+    }
+
+    Ok(())
+}
+
+pub fn validate_explicit_auth_flows(flows: &[ExplicitAuthFlow]) -> Result<()> {
+    let has_legacy = flows.iter().any(|flow| flow.is_legacy());
+    let has_allow = flows.iter().any(|flow| !flow.is_legacy());
+    if has_legacy && has_allow {
+        return Err(AppError::InvalidParameter(
+            "Legacy ExplicitAuthFlows values cannot be combined with ALLOW_* values".to_string(),
+        ));
+    }
+    Ok(())
+}
+
+pub fn validate_token_validities(
+    access_token_validity: Option<i32>,
+    id_token_validity: Option<i32>,
+    refresh_token_validity: Option<i32>,
+    access_token_unit: Option<TokenValidityUnit>,
+    id_token_unit: Option<TokenValidityUnit>,
+    refresh_token_unit: Option<TokenValidityUnit>,
+) -> Result<()> {
+    if let Some(validity) = access_token_validity {
+        let seconds = i64::from(validity)
+            * access_token_unit
+                .unwrap_or(TokenValidityUnit::Hours)
+                .seconds_multiplier();
+        validate_duration_seconds("AccessTokenValidity", seconds, 300, 86_400)?;
+    }
+
+    if let Some(validity) = id_token_validity {
+        let seconds = i64::from(validity)
+            * id_token_unit
+                .unwrap_or(TokenValidityUnit::Hours)
+                .seconds_multiplier();
+        validate_duration_seconds("IdTokenValidity", seconds, 300, 86_400)?;
+    }
+
+    if let Some(validity) = refresh_token_validity {
+        let seconds = i64::from(validity)
+            * refresh_token_unit
+                .unwrap_or(TokenValidityUnit::Days)
+                .seconds_multiplier();
+        validate_duration_seconds("RefreshTokenValidity", seconds, 3_600, 315_360_000)?;
     }
 
     Ok(())
