@@ -2,46 +2,20 @@
 //!
 //! <https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_DescribeUserPool.html>
 
-use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde::Deserialize;
+use serde_json::{Value, json};
 
 use crate::{
-    action::io::{parse_request, to_response_value},
+    action::{io::parse_request, user_pool::create_user_pool::build_user_pool_view},
     error::{AppError, Result},
     storage::Storage,
-    types::{UserPool, UserPoolId},
+    types::UserPoolId,
 };
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "PascalCase")]
 struct Request {
     user_pool_id: UserPoolId,
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "PascalCase")]
-struct Response {
-    user_pool: UserPoolView,
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "PascalCase")]
-struct UserPoolView {
-    id: UserPoolId,
-    name: String,
-    creation_date: i64,
-    last_modified_date: i64,
-}
-
-impl From<UserPool> for UserPoolView {
-    fn from(pool: UserPool) -> Self {
-        Self {
-            id: pool.id,
-            name: pool.name,
-            creation_date: pool.creation_date.timestamp(),
-            last_modified_date: pool.last_modified_date.timestamp(),
-        }
-    }
 }
 
 pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
@@ -51,10 +25,11 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
         .get_user_pool(&req.user_pool_id)
         .await
         .ok_or(AppError::UserPoolNotFound)?;
+    let estimated_number_of_users = storage.list_users(&pool.id).await.len();
 
-    to_response_value(Response {
-        user_pool: pool.into(),
-    })
+    Ok(json!({
+        "UserPool": build_user_pool_view(&pool, estimated_number_of_users)
+    }))
 }
 
 #[cfg(test)]
@@ -67,13 +42,11 @@ mod tests {
     async fn test_describe_user_pool_success() {
         let storage = Storage::new();
 
-        // Create a user pool first
         let pool = create_user_pool::handler(&storage, json!({"PoolName": "test-pool"}))
             .await
             .unwrap();
         let pool_id = pool["UserPool"]["Id"].as_str().unwrap();
 
-        // Describe the user pool
         let result = handler(&storage, json!({"UserPoolId": pool_id})).await;
 
         assert!(result.is_ok());
@@ -100,5 +73,31 @@ mod tests {
         let result = handler(&storage, json!({})).await;
 
         assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_describe_user_pool_returns_saved_configuration() {
+        let storage = Storage::new();
+
+        let pool = create_user_pool::handler(
+            &storage,
+            json!({
+                "PoolName": "configured-pool",
+                "AliasAttributes": ["email"],
+                "MfaConfiguration": "OPTIONAL",
+                "UserPoolTier": "ESSENTIALS"
+            }),
+        )
+        .await
+        .unwrap();
+        let pool_id = pool["UserPool"]["Id"].as_str().unwrap();
+
+        let body = handler(&storage, json!({"UserPoolId": pool_id}))
+            .await
+            .unwrap();
+
+        assert_eq!(body["UserPool"]["AliasAttributes"], json!(["email"]));
+        assert_eq!(body["UserPool"]["MfaConfiguration"], "OPTIONAL");
+        assert_eq!(body["UserPool"]["UserPoolTier"], "ESSENTIALS");
     }
 }

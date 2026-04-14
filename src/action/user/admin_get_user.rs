@@ -5,7 +5,9 @@
 use serde::Deserialize;
 use serde_json::{Value, json};
 
-use crate::action::user::helpers::{build_mfa_options, preferred_mfa_setting};
+use crate::action::user::helpers::{
+    build_mfa_options, build_user_attributes, preferred_mfa_setting,
+};
 use crate::{
     error::{AppError, Result},
     storage::Storage,
@@ -23,6 +25,11 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
     let req: Request = serde_json::from_value(body)
         .map_err(|e| AppError::InvalidParameter(format!("Invalid request: {}", e)))?;
 
+    storage
+        .get_user_pool(&req.user_pool_id)
+        .await
+        .ok_or(AppError::UserPoolNotFound)?;
+
     let user = storage
         .get_user_by_username(&req.user_pool_id, &req.username)
         .await
@@ -36,12 +43,7 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
         "UserStatus": user.user_status,
         "UserCreateDate": user.creation_date.timestamp(),
         "UserLastModifiedDate": user.last_modified_date.timestamp(),
-        "UserAttributes": user.attributes.iter().map(|a| {
-            json!({
-                "Name": a.name,
-                "Value": a.value
-            })
-        }).collect::<Vec<_>>(),
+        "UserAttributes": build_user_attributes(&user),
         "MFAOptions": build_mfa_options(&user),
         "PreferredMfaSetting": preferred_mfa_setting,
         "UserMFASettingList": user_mfa_setting_list
@@ -93,6 +95,15 @@ mod tests {
         assert_eq!(body["Username"], "testuser");
         assert_eq!(body["Enabled"], true);
         assert_eq!(body["UserStatus"], "FORCE_CHANGE_PASSWORD");
+        assert!(
+            body["UserAttributes"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|attribute| {
+                    attribute["Name"] == "sub" && attribute["Value"].as_str().is_some()
+                })
+        );
     }
 
     #[tokio::test]
@@ -124,5 +135,22 @@ mod tests {
         let result = handler(&storage, json!({})).await;
 
         assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_admin_get_user_pool_not_found() {
+        let storage = Storage::new();
+
+        let result = handler(
+            &storage,
+            json!({
+                "UserPoolId": "us-east-1_Missing",
+                "Username": "testuser"
+            }),
+        )
+        .await;
+
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), AppError::UserPoolNotFound));
     }
 }

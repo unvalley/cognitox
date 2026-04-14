@@ -10,7 +10,9 @@ use crate::{
     storage::Storage,
 };
 
-use super::helpers::{build_mfa_options, preferred_mfa_setting, verify_and_extract_user_id};
+use super::helpers::{
+    build_mfa_options, build_user_attributes, preferred_mfa_setting, verify_and_extract_user_id,
+};
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "PascalCase")]
@@ -32,20 +34,9 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
     let user_mfa_setting_list = storage.list_user_auth_factors(&user_id).await;
     let preferred_mfa_setting = preferred_mfa_setting(&user, &user_mfa_setting_list);
 
-    let user_attributes: Vec<_> = user
-        .attributes
-        .iter()
-        .map(|a| {
-            json!({
-                "Name": a.name,
-                "Value": a.value
-            })
-        })
-        .collect();
-
     Ok(json!({
         "Username": user.username,
-        "UserAttributes": user_attributes,
+        "UserAttributes": build_user_attributes(&user),
         "MFAOptions": build_mfa_options(&user),
         "PreferredMfaSetting": preferred_mfa_setting,
         "UserMFASettingList": user_mfa_setting_list
@@ -148,6 +139,15 @@ mod tests {
         let body = result.unwrap();
         assert_eq!(body["Username"], "testuser");
         assert!(body["UserAttributes"].is_array());
+        assert!(
+            body["UserAttributes"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|attribute| {
+                    attribute["Name"] == "sub" && attribute["Value"].as_str().is_some()
+                })
+        );
     }
 
     #[tokio::test]

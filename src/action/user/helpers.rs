@@ -106,6 +106,41 @@ pub fn build_device_response(device: &Device) -> Value {
     value
 }
 
+pub fn build_user_attributes(user: &User) -> Vec<Value> {
+    let mut attributes = user.attributes.clone();
+
+    let ensure_attribute =
+        |attributes: &mut Vec<crate::types::UserAttribute>, name: &str, value: Option<String>| {
+            if let Some(value) = value {
+                if let Some(attribute) = attributes
+                    .iter_mut()
+                    .find(|attribute| attribute.name == name)
+                {
+                    attribute.value = Some(value);
+                } else {
+                    attributes.push(crate::types::UserAttribute {
+                        name: name.to_string(),
+                        value: Some(value),
+                    });
+                }
+            }
+        };
+
+    ensure_attribute(&mut attributes, "sub", Some(user.id.to_string()));
+    ensure_attribute(&mut attributes, "email", user.email.clone());
+    ensure_attribute(&mut attributes, "phone_number", user.phone_number.clone());
+
+    attributes
+        .into_iter()
+        .map(|attribute| {
+            json!({
+                "Name": attribute.name,
+                "Value": attribute.value
+            })
+        })
+        .collect()
+}
+
 pub fn preferred_mfa_setting(user: &User, factors: &[String]) -> Option<String> {
     if let Some(email) = user
         .attributes
