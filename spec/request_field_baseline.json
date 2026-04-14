@@ -123,6 +123,17 @@
         "extra": []
       }
     },
+    "AdminGetUser": {
+      "path": "src/action/user/admin_get_user.rs",
+      "request": {
+        "missing": [],
+        "extra": []
+      },
+      "response": {
+        "missing": [],
+        "extra": []
+      }
+    },
     "AdminLinkProviderForUser": {
       "path": "src/action/user/admin_link_provider_for_user.rs",
       "request": {
@@ -142,6 +153,20 @@
       },
       "response": {
         "missing": [],
+        "extra": []
+      }
+    },
+    "AdminListGroupsForUser": {
+      "path": "src/action/group/admin_list_groups_for_user.rs",
+      "request": {
+        "missing": [],
+        "extra": []
+      },
+      "response": {
+        "missing": [
+          "Groups",
+          "NextToken"
+        ],
         "extra": []
       }
     },
@@ -244,6 +269,17 @@
         "extra": []
       }
     },
+    "ConfirmDevice": {
+      "path": "src/action/user/confirm_device.rs",
+      "request": {
+        "missing": [],
+        "extra": []
+      },
+      "response": {
+        "missing": [],
+        "extra": []
+      }
+    },
     "CreateGroup": {
       "path": "src/action/group/create_group.rs",
       "request": {
@@ -293,6 +329,21 @@
       "request": {
         "missing": [],
         "extra": []
+      },
+      "response": {
+        "missing": [],
+        "extra": []
+      }
+    },
+    "CreateUserPool": {
+      "path": "src/action/user_pool/create_user_pool.rs",
+      "request": {
+        "missing": [
+          "Schema"
+        ],
+        "extra": [
+          "schema_attributes"
+        ]
       },
       "response": {
         "missing": [],
@@ -475,6 +526,17 @@
         "extra": []
       }
     },
+    "DescribeUserPool": {
+      "path": "src/action/user_pool/describe_user_pool.rs",
+      "request": {
+        "missing": [],
+        "extra": []
+      },
+      "response": {
+        "missing": [],
+        "extra": []
+      }
+    },
     "DescribeUserPoolDomain": {
       "path": "src/action/user_pool/describe_user_pool_domain.rs",
       "request": {
@@ -563,6 +625,17 @@
         "extra": []
       }
     },
+    "GetUser": {
+      "path": "src/action/user/get_user.rs",
+      "request": {
+        "missing": [],
+        "extra": []
+      },
+      "response": {
+        "missing": [],
+        "extra": []
+      }
+    },
     "GlobalSignOut": {
       "path": "src/action/user/global_sign_out.rs",
       "request": {
@@ -582,6 +655,20 @@
       },
       "response": {
         "missing": [],
+        "extra": []
+      }
+    },
+    "ListGroups": {
+      "path": "src/action/group/list_groups.rs",
+      "request": {
+        "missing": [],
+        "extra": []
+      },
+      "response": {
+        "missing": [
+          "Groups",
+          "NextToken"
+        ],
         "extra": []
       }
     },
@@ -626,6 +713,42 @@
       },
       "response": {
         "missing": [],
+        "extra": []
+      }
+    },
+    "ListUserPoolClients": {
+      "path": "src/action/user_pool/list_user_pool_clients.rs",
+      "request": {
+        "missing": [],
+        "extra": []
+      },
+      "response": {
+        "missing": [],
+        "extra": []
+      }
+    },
+    "ListUserPools": {
+      "path": "src/action/user_pool/list_user_pools.rs",
+      "request": {
+        "missing": [],
+        "extra": []
+      },
+      "response": {
+        "missing": [],
+        "extra": []
+      }
+    },
+    "ListUsersInGroup": {
+      "path": "src/action/group/list_users_in_group.rs",
+      "request": {
+        "missing": [],
+        "extra": []
+      },
+      "response": {
+        "missing": [
+          "NextToken",
+          "Users"
+        ],
         "extra": []
       }
     },
@@ -763,6 +886,17 @@
     },
     "UpdateResourceServer": {
       "path": "src/action/user_pool/update_resource_server.rs",
+      "request": {
+        "missing": [],
+        "extra": []
+      },
+      "response": {
+        "missing": [],
+        "extra": []
+      }
+    },
+    "UpdateUserPool": {
+      "path": "src/action/user_pool/update_user_pool.rs",
       "request": {
         "missing": [],
         "extra": []
