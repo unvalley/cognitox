@@ -4,7 +4,10 @@ use serde_json::{Value, json};
 use std::sync::OnceLock;
 use uuid::Uuid;
 
-use crate::{jwt, types::Device};
+use crate::{
+    jwt,
+    types::{Device, User},
+};
 
 /// Default bcrypt cost factor (4 for fast testing, use 12+ in production)
 const DEFAULT_BCRYPT_COST: u32 = 4;
@@ -101,4 +104,21 @@ pub fn build_device_response(device: &Device) -> Value {
     }
 
     value
+}
+
+pub fn preferred_mfa_setting(user: &User, factors: &[String]) -> Option<String> {
+    if let Some(email) = user
+        .attributes
+        .iter()
+        .find(|attr| attr.name == "preferred_mfa_setting")
+        .and_then(|attr| attr.value.clone())
+    {
+        return Some(email);
+    }
+
+    factors.first().cloned()
+}
+
+pub fn build_mfa_options(_user: &User) -> Vec<Value> {
+    Vec::new()
 }

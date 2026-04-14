@@ -16,7 +16,6 @@ use crate::{
 struct Request {
     user_pool_id: UserPoolId,
     max_results: Option<u32>,
-    #[allow(dead_code)]
     next_token: Option<String>,
 }
 
@@ -44,15 +43,44 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
         .ok_or(AppError::UserPoolNotFound)?;
 
     let max = req.max_results.unwrap_or(60) as usize;
-    let terms = storage
-        .list_terms(&req.user_pool_id)
-        .await
-        .into_iter()
-        .take(max)
-        .map(|t| terms_to_json(&t))
+    if max == 0 {
+        return Err(AppError::InvalidParameter(
+            "MaxResults must be greater than 0".to_string(),
+        ));
+    }
+
+    let mut all_terms = storage.list_terms(&req.user_pool_id).await;
+    all_terms.sort_by(|a, b| a.terms_name.cmp(&b.terms_name));
+
+    let start = req
+        .next_token
+        .as_deref()
+        .map(|token| {
+            token
+                .parse::<usize>()
+                .map_err(|_| AppError::InvalidParameter("Invalid NextToken".to_string()))
+        })
+        .transpose()?
+        .unwrap_or(0);
+
+    if start > all_terms.len() {
+        return Err(AppError::InvalidParameter("Invalid NextToken".to_string()));
+    }
+
+    let end = (start + max).min(all_terms.len());
+    let terms = all_terms[start..end]
+        .iter()
+        .map(terms_to_json)
         .collect::<Vec<_>>();
 
-    Ok(json!({"Terms": terms, "NextToken": null}))
+    let mut response = json!({
+        "Terms": terms
+    });
+    if end < all_terms.len() {
+        response["NextToken"] = json!(end.to_string());
+    }
+
+    Ok(response)
 }
 
 #[cfg(test)]
@@ -92,5 +120,62 @@ mod tests {
             .unwrap();
 
         assert_eq!(result["Terms"].as_array().unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_list_terms_with_pagination() {
+        let storage = Storage::new();
+        let pool = create_user_pool::handler(&storage, json!({"PoolName": "pool"}))
+            .await
+            .unwrap();
+        let pool_id = pool["UserPool"]["Id"].as_str().unwrap();
+        let client = create_user_pool_client::handler(
+            &storage,
+            json!({"UserPoolId": pool_id, "ClientName": "client"}),
+        )
+        .await
+        .unwrap();
+        let client_id = client["UserPoolClient"]["ClientId"].as_str().unwrap();
+
+        for terms_name in ["terms-a", "terms-b", "terms-c"] {
+            create_terms::handler(
+                &storage,
+                json!({
+                    "TermsName": terms_name,
+                    "ClientId": client_id,
+                    "UserPoolId": pool_id,
+                    "TermsSource": "https://example.com/terms"
+                }),
+            )
+            .await
+            .unwrap();
+        }
+
+        let first = handler(
+            &storage,
+            json!({
+                "UserPoolId": pool_id,
+                "MaxResults": 2
+            }),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(first["Terms"].as_array().unwrap().len(), 2);
+        assert_eq!(first["NextToken"], "2");
+
+        let second = handler(
+            &storage,
+            json!({
+                "UserPoolId": pool_id,
+                "MaxResults": 2,
+                "NextToken": "2"
+            }),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(second["Terms"].as_array().unwrap().len(), 1);
+        assert!(second.get("NextToken").is_none());
     }
 }

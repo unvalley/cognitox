@@ -19,6 +19,8 @@ struct Request {
     user_pool_id: UserPoolId,
     terms_id: String,
     #[serde(default)]
+    terms_name: Option<String>,
+    #[serde(default)]
     terms_source: Option<String>,
     #[serde(default)]
     enforcement: Option<String>,
@@ -58,6 +60,18 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
         return Err(AppError::TermsNotFound);
     }
 
+    if let Some(terms_name) = req.terms_name {
+        if let Some(existing) = storage
+            .get_terms_by_name(&req.user_pool_id, &terms.client_id, &terms_name)
+            .await
+            && existing.terms_id != terms.terms_id
+        {
+            return Err(AppError::InvalidParameter(
+                "Terms with same name already exists for this client".to_string(),
+            ));
+        }
+        terms.terms_name = terms_name;
+    }
     if let Some(source) = req.terms_source {
         terms.terms_source = source;
     }
@@ -74,7 +88,9 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
         .await
         .ok_or(AppError::TermsNotFound)?;
 
-    Ok(json!({"Terms": terms_to_json(&updated)}))
+    Ok(json!({
+        "Terms": terms_to_json(&updated)
+    }))
 }
 
 #[cfg(test)]
@@ -124,6 +140,68 @@ mod tests {
         assert_eq!(
             result["Terms"]["TermsSource"],
             "https://example.com/new-terms"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_update_terms_renames_terms() {
+        let storage = Storage::new();
+        let pool = create_user_pool::handler(&storage, json!({"PoolName": "pool"}))
+            .await
+            .unwrap();
+        let pool_id = pool["UserPool"]["Id"].as_str().unwrap();
+        let client = create_user_pool_client::handler(
+            &storage,
+            json!({"UserPoolId": pool_id, "ClientName": "client"}),
+        )
+        .await
+        .unwrap();
+        let client_id = client["UserPoolClient"]["ClientId"].as_str().unwrap();
+
+        let created = create_terms::handler(
+            &storage,
+            json!({
+                "TermsName": "terms-v1",
+                "ClientId": client_id,
+                "UserPoolId": pool_id,
+                "TermsSource": "https://example.com/terms"
+            }),
+        )
+        .await
+        .unwrap();
+        let terms_id = created["Terms"]["TermsId"].as_str().unwrap();
+
+        let result = handler(
+            &storage,
+            json!({
+                "UserPoolId": pool_id,
+                "TermsId": terms_id,
+                "TermsName": "terms-v2"
+            }),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(result["Terms"]["TermsName"], "terms-v2");
+        assert!(
+            storage
+                .get_terms_by_name(
+                    &pool_id.parse().unwrap(),
+                    &client_id.parse().unwrap(),
+                    "terms-v2"
+                )
+                .await
+                .is_some()
+        );
+        assert!(
+            storage
+                .get_terms_by_name(
+                    &pool_id.parse().unwrap(),
+                    &client_id.parse().unwrap(),
+                    "terms-v1"
+                )
+                .await
+                .is_none()
         );
     }
 }

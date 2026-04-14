@@ -54,7 +54,9 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
             last_modified_date: Utc::now(),
         });
 
-    Ok(json!({"UICustomization": to_json(&customization)}))
+    Ok(json!({
+        "UICustomization": to_json(&customization)
+    }))
 }
 
 #[cfg(test)]

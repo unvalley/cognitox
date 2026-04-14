@@ -50,7 +50,9 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
         return Err(AppError::TermsNotFound);
     }
 
-    Ok(json!({"Terms": terms_to_json(&terms)}))
+    Ok(json!({
+        "Terms": terms_to_json(&terms)
+    }))
 }
 
 #[cfg(test)]

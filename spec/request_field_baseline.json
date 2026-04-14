@@ -123,35 +123,6 @@
         "extra": []
       }
     },
-    "AdminGetUser": {
-      "path": "src/action/user/admin_get_user.rs",
-      "request": {
-        "missing": [],
-        "extra": []
-      },
-      "response": {
-        "missing": [
-          "MFAOptions",
-          "PreferredMfaSetting",
-          "UserMFASettingList"
-        ],
-        "extra": []
-      }
-    },
-    "AdminInitiateAuth": {
-      "path": "src/action/user/admin_initiate_auth.rs",
-      "request": {
-        "missing": [],
-        "extra": []
-      },
-      "response": {
-        "missing": [
-          "AuthenticationResult",
-          "AvailableChallenges"
-        ],
-        "extra": []
-      }
-    },
     "AdminLinkProviderForUser": {
       "path": "src/action/user/admin_link_provider_for_user.rs",
       "request": {
@@ -170,23 +141,7 @@
         "extra": []
       },
       "response": {
-        "missing": [
-          "Devices",
-          "PaginationToken"
-        ],
-        "extra": []
-      }
-    },
-    "AdminListGroupsForUser": {
-      "path": "src/action/group/admin_list_groups_for_user.rs",
-      "request": {
         "missing": [],
-        "extra": []
-      },
-      "response": {
-        "missing": [
-          "NextToken"
-        ],
         "extra": []
       }
     },
@@ -197,10 +152,7 @@
         "extra": []
       },
       "response": {
-        "missing": [
-          "AuthEvents",
-          "NextToken"
-        ],
+        "missing": [],
         "extra": []
       }
     },
@@ -208,49 +160,6 @@
       "path": "src/action/group/admin_remove_user_from_group.rs",
       "request": {
         "missing": [],
-        "extra": []
-      },
-      "response": {
-        "missing": [],
-        "extra": []
-      }
-    },
-    "AdminResetUserPassword": {
-      "path": "src/action/user/admin_reset_user_password.rs",
-      "request": {
-        "missing": [
-          "ClientMetadata"
-        ],
-        "extra": []
-      },
-      "response": {
-        "missing": [],
-        "extra": [
-          "CodeDeliveryDetails"
-        ]
-      }
-    },
-    "AdminRespondToAuthChallenge": {
-      "path": "src/action/user/admin_respond_to_auth_challenge.rs",
-      "request": {
-        "missing": [],
-        "extra": []
-      },
-      "response": {
-        "missing": [
-          "ChallengeName",
-          "ChallengeParameters",
-          "Session"
-        ],
-        "extra": []
-      }
-    },
-    "AdminSetUserMFAPreference": {
-      "path": "src/action/user/admin_set_user_mfa_preference.rs",
-      "request": {
-        "missing": [
-          "EmailMfaSettings"
-        ],
         "extra": []
       },
       "response": {
@@ -302,19 +211,6 @@
         "extra": []
       }
     },
-    "AdminUpdateUserAttributes": {
-      "path": "src/action/user/admin_update_user_attributes.rs",
-      "request": {
-        "missing": [
-          "ClientMetadata"
-        ],
-        "extra": []
-      },
-      "response": {
-        "missing": [],
-        "extra": []
-      }
-    },
     "AdminUserGlobalSignOut": {
       "path": "src/action/user/admin_user_global_sign_out.rs",
       "request": {
@@ -345,69 +241,6 @@
       },
       "response": {
         "missing": [],
-        "extra": []
-      }
-    },
-    "CompleteWebAuthnRegistration": {
-      "path": "src/action/user/complete_webauthn_registration.rs",
-      "request": {
-        "missing": [],
-        "extra": [
-          "friendly_credential_name"
-        ]
-      },
-      "response": {
-        "missing": [],
-        "extra": []
-      }
-    },
-    "ConfirmDevice": {
-      "path": "src/action/user/confirm_device.rs",
-      "request": {
-        "missing": [
-          "DeviceName",
-          "DeviceSecretVerifierConfig"
-        ],
-        "extra": []
-      },
-      "response": {
-        "missing": [],
-        "extra": []
-      }
-    },
-    "ConfirmForgotPassword": {
-      "path": "src/action/user/confirm_forgot_password.rs",
-      "request": {
-        "missing": [
-          "AnalyticsMetadata",
-          "ClientMetadata",
-          "SecretHash",
-          "UserContextData"
-        ],
-        "extra": []
-      },
-      "response": {
-        "missing": [],
-        "extra": []
-      }
-    },
-    "ConfirmSignUp": {
-      "path": "src/action/user/confirm_sign_up.rs",
-      "request": {
-        "missing": [
-          "AnalyticsMetadata",
-          "ClientMetadata",
-          "ForceAliasCreation",
-          "SecretHash",
-          "Session",
-          "UserContextData"
-        ],
-        "extra": []
-      },
-      "response": {
-        "missing": [
-          "Session"
-        ],
         "extra": []
       }
     },
@@ -462,89 +295,7 @@
         "extra": []
       },
       "response": {
-        "missing": [
-          "Terms"
-        ],
-        "extra": []
-      }
-    },
-    "CreateUserImportJob": {
-      "path": "src/action/user_pool/create_user_import_job.rs",
-      "request": {
         "missing": [],
-        "extra": []
-      },
-      "response": {
-        "missing": [
-          "UserImportJob"
-        ],
-        "extra": []
-      }
-    },
-    "CreateUserPool": {
-      "path": "src/action/user_pool/create_user_pool.rs",
-      "request": {
-        "missing": [
-          "AccountRecoverySetting",
-          "AdminCreateUserConfig",
-          "AliasAttributes",
-          "AutoVerifiedAttributes",
-          "DeletionProtection",
-          "DeviceConfiguration",
-          "EmailConfiguration",
-          "EmailVerificationMessage",
-          "EmailVerificationSubject",
-          "LambdaConfig",
-          "MfaConfiguration",
-          "Policies",
-          "Schema",
-          "SmsAuthenticationMessage",
-          "SmsConfiguration",
-          "SmsVerificationMessage",
-          "UserAttributeUpdateSettings",
-          "UsernameAttributes",
-          "UsernameConfiguration",
-          "UserPoolAddOns",
-          "UserPoolTags",
-          "UserPoolTier",
-          "VerificationMessageTemplate"
-        ],
-        "extra": []
-      },
-      "response": {
-        "missing": [],
-        "extra": []
-      }
-    },
-    "CreateUserPoolClient": {
-      "path": "src/action/user_pool/create_user_pool_client.rs",
-      "request": {
-        "missing": [
-          "AnalyticsConfiguration",
-          "AuthSessionValidity",
-          "ClientSecret",
-          "ReadAttributes",
-          "RefreshTokenRotation",
-          "WriteAttributes"
-        ],
-        "extra": []
-      },
-      "response": {
-        "missing": [],
-        "extra": []
-      }
-    },
-    "CreateUserPoolDomain": {
-      "path": "src/action/user_pool/create_user_pool_domain.rs",
-      "request": {
-        "missing": [],
-        "extra": []
-      },
-      "response": {
-        "missing": [
-          "CloudFrontDomain",
-          "ManagedLoginVersion"
-        ],
         "extra": []
       }
     },
@@ -680,32 +431,6 @@
         "extra": []
       }
     },
-    "DescribeManagedLoginBranding": {
-      "path": "src/action/user_pool/describe_managed_login_branding.rs",
-      "request": {
-        "missing": [
-          "ReturnMergedResources"
-        ],
-        "extra": []
-      },
-      "response": {
-        "missing": [],
-        "extra": []
-      }
-    },
-    "DescribeManagedLoginBrandingByClient": {
-      "path": "src/action/user_pool/describe_managed_login_branding_by_client.rs",
-      "request": {
-        "missing": [
-          "ReturnMergedResources"
-        ],
-        "extra": []
-      },
-      "response": {
-        "missing": [],
-        "extra": []
-      }
-    },
     "DescribeResourceServer": {
       "path": "src/action/user_pool/describe_resource_server.rs",
       "request": {
@@ -724,9 +449,7 @@
         "extra": []
       },
       "response": {
-        "missing": [
-          "RiskConfiguration"
-        ],
+        "missing": [],
         "extra": []
       }
     },
@@ -737,38 +460,12 @@
         "extra": []
       },
       "response": {
-        "missing": [
-          "Terms"
-        ],
+        "missing": [],
         "extra": []
       }
     },
     "DescribeUserImportJob": {
       "path": "src/action/user_pool/describe_user_import_job.rs",
-      "request": {
-        "missing": [],
-        "extra": []
-      },
-      "response": {
-        "missing": [
-          "UserImportJob"
-        ],
-        "extra": []
-      }
-    },
-    "DescribeUserPool": {
-      "path": "src/action/user_pool/describe_user_pool.rs",
-      "request": {
-        "missing": [],
-        "extra": []
-      },
-      "response": {
-        "missing": [],
-        "extra": []
-      }
-    },
-    "DescribeUserPoolClient": {
-      "path": "src/action/user_pool/describe_user_pool_client.rs",
       "request": {
         "missing": [],
         "extra": []
@@ -793,22 +490,6 @@
       "path": "src/action/user/forget_device.rs",
       "request": {
         "missing": [],
-        "extra": []
-      },
-      "response": {
-        "missing": [],
-        "extra": []
-      }
-    },
-    "ForgotPassword": {
-      "path": "src/action/user/forgot_password.rs",
-      "request": {
-        "missing": [
-          "AnalyticsMetadata",
-          "ClientMetadata",
-          "SecretHash",
-          "UserContextData"
-        ],
         "extra": []
       },
       "response": {
@@ -849,34 +530,8 @@
         "extra": []
       }
     },
-    "GetIdentityProviderByIdentifier": {
-      "path": "src/action/user_pool/get_identity_provider_by_identifier.rs",
-      "request": {
-        "missing": [
-          "IdpIdentifier"
-        ],
-        "extra": [
-          "identifier"
-        ]
-      },
-      "response": {
-        "missing": [],
-        "extra": []
-      }
-    },
     "GetLogDeliveryConfiguration": {
       "path": "src/action/user_pool/get_log_delivery_configuration.rs",
-      "request": {
-        "missing": [],
-        "extra": []
-      },
-      "response": {
-        "missing": [],
-        "extra": []
-      }
-    },
-    "GetSigningCertificate": {
-      "path": "src/action/user_pool/get_signing_certificate.rs",
       "request": {
         "missing": [],
         "extra": []
@@ -904,65 +559,7 @@
         "extra": []
       },
       "response": {
-        "missing": [
-          "UICustomization"
-        ],
-        "extra": []
-      }
-    },
-    "GetUser": {
-      "path": "src/action/user/get_user.rs",
-      "request": {
         "missing": [],
-        "extra": []
-      },
-      "response": {
-        "missing": [
-          "MFAOptions",
-          "PreferredMfaSetting",
-          "UserMFASettingList"
-        ],
-        "extra": []
-      }
-    },
-    "GetUserAttributeVerificationCode": {
-      "path": "src/action/user/get_user_attribute_verification_code.rs",
-      "request": {
-        "missing": [
-          "ClientMetadata"
-        ],
-        "extra": []
-      },
-      "response": {
-        "missing": [],
-        "extra": []
-      }
-    },
-    "GetUserAuthFactors": {
-      "path": "src/action/user/get_user_auth_factors.rs",
-      "request": {
-        "missing": [],
-        "extra": []
-      },
-      "response": {
-        "missing": [
-          "PreferredMfaSetting",
-          "UserMFASettingList"
-        ],
-        "extra": []
-      }
-    },
-    "GetUserPoolMfaConfig": {
-      "path": "src/action/user_pool/get_user_pool_mfa_config.rs",
-      "request": {
-        "missing": [],
-        "extra": []
-      },
-      "response": {
-        "missing": [
-          "EmailMfaConfiguration",
-          "WebAuthnConfiguration"
-        ],
         "extra": []
       }
     },
@@ -977,24 +574,6 @@
         "extra": []
       }
     },
-    "InitiateAuth": {
-      "path": "src/action/user/initiate_auth.rs",
-      "request": {
-        "missing": [
-          "Session"
-        ],
-        "extra": []
-      },
-      "response": {
-        "missing": [
-          "AvailableChallenges",
-          "ChallengeName",
-          "ChallengeParameters",
-          "Session"
-        ],
-        "extra": []
-      }
-    },
     "ListDevices": {
       "path": "src/action/user/list_devices.rs",
       "request": {
@@ -1002,23 +581,7 @@
         "extra": []
       },
       "response": {
-        "missing": [
-          "Devices",
-          "PaginationToken"
-        ],
-        "extra": []
-      }
-    },
-    "ListGroups": {
-      "path": "src/action/group/list_groups.rs",
-      "request": {
         "missing": [],
-        "extra": []
-      },
-      "response": {
-        "missing": [
-          "NextToken"
-        ],
         "extra": []
       }
     },
@@ -1029,10 +592,7 @@
         "extra": []
       },
       "response": {
-        "missing": [
-          "NextToken",
-          "Providers"
-        ],
+        "missing": [],
         "extra": []
       }
     },
@@ -1043,10 +603,7 @@
         "extra": []
       },
       "response": {
-        "missing": [
-          "NextToken",
-          "ResourceServers"
-        ],
+        "missing": [],
         "extra": []
       }
     },
@@ -1061,20 +618,6 @@
         "extra": []
       }
     },
-    "ListTerms": {
-      "path": "src/action/user_pool/list_terms.rs",
-      "request": {
-        "missing": [],
-        "extra": []
-      },
-      "response": {
-        "missing": [
-          "NextToken",
-          "Terms"
-        ],
-        "extra": []
-      }
-    },
     "ListUserImportJobs": {
       "path": "src/action/user_pool/list_user_import_jobs.rs",
       "request": {
@@ -1083,111 +626,6 @@
       },
       "response": {
         "missing": [],
-        "extra": []
-      }
-    },
-    "ListUserPoolClients": {
-      "path": "src/action/user_pool/list_user_pool_clients.rs",
-      "request": {
-        "missing": [],
-        "extra": []
-      },
-      "response": {
-        "missing": [
-          "NextToken"
-        ],
-        "extra": []
-      }
-    },
-    "ListUserPools": {
-      "path": "src/action/user_pool/list_user_pools.rs",
-      "request": {
-        "missing": [],
-        "extra": []
-      },
-      "response": {
-        "missing": [
-          "NextToken"
-        ],
-        "extra": []
-      }
-    },
-    "ListUsers": {
-      "path": "src/action/user/list_users.rs",
-      "request": {
-        "missing": [
-          "AttributesToGet",
-          "Filter",
-          "PaginationToken"
-        ],
-        "extra": []
-      },
-      "response": {
-        "missing": [
-          "PaginationToken"
-        ],
-        "extra": []
-      }
-    },
-    "ListUsersInGroup": {
-      "path": "src/action/group/list_users_in_group.rs",
-      "request": {
-        "missing": [],
-        "extra": []
-      },
-      "response": {
-        "missing": [
-          "NextToken"
-        ],
-        "extra": []
-      }
-    },
-    "ListWebAuthnCredentials": {
-      "path": "src/action/user/list_webauthn_credentials.rs",
-      "request": {
-        "missing": [
-          "MaxResults",
-          "NextToken"
-        ],
-        "extra": []
-      },
-      "response": {
-        "missing": [
-          "Credentials",
-          "NextToken"
-        ],
-        "extra": []
-      }
-    },
-    "ResendConfirmationCode": {
-      "path": "src/action/user/resend_confirmation_code.rs",
-      "request": {
-        "missing": [
-          "AnalyticsMetadata",
-          "ClientMetadata",
-          "SecretHash",
-          "UserContextData"
-        ],
-        "extra": []
-      },
-      "response": {
-        "missing": [],
-        "extra": []
-      }
-    },
-    "RespondToAuthChallenge": {
-      "path": "src/action/user/respond_to_auth_challenge.rs",
-      "request": {
-        "missing": [],
-        "extra": []
-      },
-      "response": {
-        "missing": [
-          "AuthenticationResult",
-          "ChallengeName",
-          "ChallengeParameters",
-          "Session"
-        ],
         "extra": []
       }
     },
@@ -1216,17 +654,11 @@
     "SetRiskConfiguration": {
       "path": "src/action/user_pool/set_risk_configuration.rs",
       "request": {
-        "missing": [
-          "AccountTakeoverRiskConfiguration",
-          "CompromisedCredentialsRiskConfiguration",
-          "RiskExceptionConfiguration"
-        ],
+        "missing": [],
         "extra": []
       },
       "response": {
-        "missing": [
-          "RiskConfiguration"
-        ],
+        "missing": [],
         "extra": []
       }
     },
@@ -1237,39 +669,7 @@
         "extra": []
       },
       "response": {
-        "missing": [
-          "UICustomization"
-        ],
-        "extra": []
-      }
-    },
-    "SetUserMFAPreference": {
-      "path": "src/action/user/set_user_mfa_preference.rs",
-      "request": {
-        "missing": [
-          "EmailMfaSettings"
-        ],
-        "extra": []
-      },
-      "response": {
         "missing": [],
-        "extra": []
-      }
-    },
-    "SetUserPoolMfaConfig": {
-      "path": "src/action/user_pool/set_user_pool_mfa_config.rs",
-      "request": {
-        "missing": [
-          "EmailMfaConfiguration",
-          "WebAuthnConfiguration"
-        ],
-        "extra": []
-      },
-      "response": {
-        "missing": [
-          "EmailMfaConfiguration",
-          "WebAuthnConfiguration"
-        ],
         "extra": []
       }
     },
@@ -1281,32 +681,6 @@
       },
       "response": {
         "missing": [],
-        "extra": []
-      }
-    },
-    "SignUp": {
-      "path": "src/action/user/sign_up.rs",
-      "request": {
-        "missing": [],
-        "extra": []
-      },
-      "response": {
-        "missing": [
-          "Session"
-        ],
-        "extra": []
-      }
-    },
-    "StartUserImportJob": {
-      "path": "src/action/user_pool/start_user_import_job.rs",
-      "request": {
-        "missing": [],
-        "extra": []
-      },
-      "response": {
-        "missing": [
-          "UserImportJob"
-        ],
         "extra": []
       }
     },
@@ -1328,9 +702,7 @@
         "extra": []
       },
       "response": {
-        "missing": [
-          "UserImportJob"
-        ],
+        "missing": [],
         "extra": []
       }
     },
@@ -1350,23 +722,6 @@
       "request": {
         "missing": [],
         "extra": []
-      },
-      "response": {
-        "missing": [],
-        "extra": []
-      }
-    },
-    "UpdateAuthEventFeedback": {
-      "path": "src/action/user/update_auth_event_feedback.rs",
-      "request": {
-        "missing": [
-          "FeedbackToken",
-          "Username",
-          "UserPoolId"
-        ],
-        "extra": [
-          "access_token"
-        ]
       },
       "response": {
         "missing": [],
@@ -1395,19 +750,6 @@
         "extra": []
       }
     },
-    "UpdateIdentityProvider": {
-      "path": "src/action/user_pool/update_identity_provider.rs",
-      "request": {
-        "missing": [],
-        "extra": [
-          "provider_type"
-        ]
-      },
-      "response": {
-        "missing": [],
-        "extra": []
-      }
-    },
     "UpdateManagedLoginBranding": {
       "path": "src/action/user_pool/update_managed_login_branding.rs",
       "request": {
@@ -1427,111 +769,6 @@
       },
       "response": {
         "missing": [],
-        "extra": []
-      }
-    },
-    "UpdateTerms": {
-      "path": "src/action/user_pool/update_terms.rs",
-      "request": {
-        "missing": [
-          "TermsName"
-        ],
-        "extra": []
-      },
-      "response": {
-        "missing": [
-          "Terms"
-        ],
-        "extra": []
-      }
-    },
-    "UpdateUserAttributes": {
-      "path": "src/action/user/update_user_attributes.rs",
-      "request": {
-        "missing": [
-          "ClientMetadata"
-        ],
-        "extra": []
-      },
-      "response": {
-        "missing": [
-          "CodeDeliveryDetailsList"
-        ],
-        "extra": []
-      }
-    },
-    "UpdateUserPool": {
-      "path": "src/action/user_pool/update_user_pool.rs",
-      "request": {
-        "missing": [
-          "AccountRecoverySetting",
-          "AdminCreateUserConfig",
-          "AutoVerifiedAttributes",
-          "DeletionProtection",
-          "DeviceConfiguration",
-          "EmailConfiguration",
-          "EmailVerificationMessage",
-          "EmailVerificationSubject",
-          "LambdaConfig",
-          "MfaConfiguration",
-          "Policies",
-          "SmsAuthenticationMessage",
-          "SmsConfiguration",
-          "SmsVerificationMessage",
-          "UserAttributeUpdateSettings",
-          "UserPoolAddOns",
-          "UserPoolTags",
-          "UserPoolTier",
-          "VerificationMessageTemplate"
-        ],
-        "extra": []
-      },
-      "response": {
-        "missing": [],
-        "extra": []
-      }
-    },
-    "UpdateUserPoolClient": {
-      "path": "src/action/user_pool/update_user_pool_client.rs",
-      "request": {
-        "missing": [
-          "AnalyticsConfiguration",
-          "AuthSessionValidity",
-          "ReadAttributes",
-          "RefreshTokenRotation",
-          "WriteAttributes"
-        ],
-        "extra": []
-      },
-      "response": {
-        "missing": [],
-        "extra": []
-      }
-    },
-    "UpdateUserPoolDomain": {
-      "path": "src/action/user_pool/update_user_pool_domain.rs",
-      "request": {
-        "missing": [],
-        "extra": []
-      },
-      "response": {
-        "missing": [
-          "CloudFrontDomain",
-          "ManagedLoginVersion"
-        ],
-        "extra": []
-      }
-    },
-    "VerifySoftwareToken": {
-      "path": "src/action/user/verify_software_token.rs",
-      "request": {
-        "missing": [],
-        "extra": []
-      },
-      "response": {
-        "missing": [
-          "Session"
-        ],
         "extra": []
       }
     },

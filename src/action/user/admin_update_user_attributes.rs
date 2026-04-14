@@ -18,11 +18,14 @@ struct Request {
     user_pool_id: UserPoolId,
     username: String,
     user_attributes: Vec<UserAttribute>,
+    #[serde(default)]
+    client_metadata: Option<std::collections::HashMap<String, String>>,
 }
 
 pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
     let req: Request = serde_json::from_value(body)
         .map_err(|e| AppError::InvalidParameter(format!("Invalid request: {}", e)))?;
+    let _ = &req.client_metadata;
 
     storage
         .get_user_pool(&req.user_pool_id)

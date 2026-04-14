@@ -17,6 +17,12 @@ struct Request {
     user_pool_id: UserPoolId,
     #[serde(default)]
     client_id: Option<ClientId>,
+    #[serde(default)]
+    account_takeover_risk_configuration: Option<Value>,
+    #[serde(default)]
+    compromised_credentials_risk_configuration: Option<Value>,
+    #[serde(default)]
+    risk_exception_configuration: Option<Value>,
 }
 
 pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
@@ -39,13 +45,24 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
     if let Some(client_id) = req.client_id.as_ref() {
         cfg.insert("ClientId".to_string(), Value::String(client_id.to_string()));
     }
+    if let Some(value) = req.account_takeover_risk_configuration {
+        cfg.insert("AccountTakeoverRiskConfiguration".to_string(), value);
+    }
+    if let Some(value) = req.compromised_credentials_risk_configuration {
+        cfg.insert("CompromisedCredentialsRiskConfiguration".to_string(), value);
+    }
+    if let Some(value) = req.risk_exception_configuration {
+        cfg.insert("RiskExceptionConfiguration".to_string(), value);
+    }
 
     let cfg_value = Value::Object(cfg);
     storage
         .set_risk_configuration(&req.user_pool_id, req.client_id.as_ref(), cfg_value.clone())
         .await;
 
-    Ok(json!({"RiskConfiguration": cfg_value}))
+    Ok(json!({
+        "RiskConfiguration": cfg_value
+    }))
 }
 
 #[cfg(test)]

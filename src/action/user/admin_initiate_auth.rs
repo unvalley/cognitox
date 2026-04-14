@@ -4,7 +4,7 @@
 
 use std::collections::HashMap;
 
-use chrono::Utc;
+use chrono::{Duration, Utc};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use uuid::Uuid;
@@ -16,7 +16,7 @@ use crate::{
         resolve_id_token_expiry, resolve_refresh_token_expiry,
     },
     storage::Storage,
-    types::{AuthEvent, ClientId, RefreshToken, UserPoolId, UserStatus},
+    types::{AuthEvent, ClientId, PendingAuthChallenge, RefreshToken, UserPoolId, UserStatus},
 };
 
 use super::helpers::verify_password;
@@ -56,6 +56,29 @@ struct Request {
     context_data: Option<ContextData>,
     session: Option<String>,
     client_metadata: Option<HashMap<String, String>>,
+}
+
+fn build_auth_response(authentication_result: Value) -> Value {
+    json!({
+        "AuthenticationResult": authentication_result,
+        "AvailableChallenges": [],
+        "ChallengeName": null,
+        "ChallengeParameters": {},
+        "Session": null
+    })
+}
+
+fn build_challenge_response(session: &str, user_id: &uuid::Uuid) -> Value {
+    json!({
+        "AuthenticationResult": null,
+        "AvailableChallenges": ["NEW_PASSWORD_REQUIRED"],
+        "ChallengeName": "NEW_PASSWORD_REQUIRED",
+        "ChallengeParameters": {
+            "USER_ID_FOR_SRP": user_id.to_string(),
+            "userAttributes": "{}"
+        },
+        "Session": session
+    })
 }
 
 pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
@@ -123,14 +146,25 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
             // For admin auth, we can authenticate users in FORCE_CHANGE_PASSWORD status
             // but return a challenge
             if user.user_status == UserStatus::ForceChangePassword {
-                return Ok(json!({
-                    "ChallengeName": "NEW_PASSWORD_REQUIRED",
-                    "ChallengeParameters": {
-                        "USER_ID_FOR_SRP": user.id.to_string(),
-                        "userAttributes": "{}"
-                    },
-                    "Session": Uuid::new_v4().to_string()
-                }));
+                if !verify_password(password, &user.password_hash) {
+                    return Err(AppError::NotAuthorized(
+                        "Incorrect username or password.".to_string(),
+                    ));
+                }
+
+                let session = Uuid::new_v4().to_string();
+                storage
+                    .save_auth_challenge_session(PendingAuthChallenge {
+                        session: session.clone(),
+                        challenge_name: "NEW_PASSWORD_REQUIRED".to_string(),
+                        user_id: user.id,
+                        client_id: req.client_id.clone(),
+                        user_pool_id: req.user_pool_id.clone(),
+                        expires_at: Utc::now() + Duration::minutes(5),
+                    })
+                    .await;
+
+                return Ok(build_challenge_response(&session, &user.id));
             }
 
             if user.user_status != UserStatus::Confirmed {
@@ -189,15 +223,13 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
                 })
                 .await;
 
-            Ok(json!({
-                "AuthenticationResult": {
-                    "AccessToken": access_token,
-                    "IdToken": id_token,
-                    "RefreshToken": refresh_token,
-                    "ExpiresIn": access_expiry.num_seconds(),
-                    "TokenType": "Bearer"
-                }
-            }))
+            Ok(build_auth_response(json!({
+                "AccessToken": access_token,
+                "IdToken": id_token,
+                "RefreshToken": refresh_token,
+                "ExpiresIn": access_expiry.num_seconds(),
+                "TokenType": "Bearer"
+            })))
         }
         "REFRESH_TOKEN" | "REFRESH_TOKEN_AUTH" => {
             let params = req
@@ -253,14 +285,12 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
             )
             .map_err(AppError::Internal)?;
 
-            Ok(json!({
-                "AuthenticationResult": {
-                    "AccessToken": access_token,
-                    "IdToken": id_token,
-                    "ExpiresIn": access_expiry.num_seconds(),
-                    "TokenType": "Bearer"
-                }
-            }))
+            Ok(build_auth_response(json!({
+                "AccessToken": access_token,
+                "IdToken": id_token,
+                "ExpiresIn": access_expiry.num_seconds(),
+                "TokenType": "Bearer"
+            })))
         }
         _ => Err(AppError::NotImplemented(format!(
             "Auth flow: {}",

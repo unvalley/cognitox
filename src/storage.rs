@@ -21,9 +21,10 @@ use tracing::error;
 use crate::config::{StorageConfig, StorageMode};
 use crate::types::{
     AuthEvent, AuthorizationCode, BrandingId, ClientId, ConfirmationCode, Device, DomainPrefix,
-    Group, GroupName, IdentityProvider, ManagedLoginBranding, PasswordResetCode, RefreshToken,
-    ResourceServer, TermsDocument, UiCustomization, User, UserId, UserImportJob, UserPool,
-    UserPoolClient, UserPoolDomain, UserPoolId, WebAuthnCredential,
+    Group, GroupName, IdentityProvider, ManagedLoginBranding, PasswordResetCode,
+    PendingAuthChallenge, RefreshToken, ResourceServer, TermsDocument, UiCustomization, User,
+    UserId, UserImportJob, UserPool, UserPoolClient, UserPoolDomain, UserPoolId,
+    WebAuthnCredential,
 };
 
 // ==================== Persistence Backend Trait ====================
@@ -152,6 +153,7 @@ struct PrincipalStore {
     devices: HashMap<(UserId, String), Device>,
     confirmation_codes: HashMap<UserId, ConfirmationCode>,
     refresh_tokens: HashMap<String, RefreshToken>,
+    auth_challenge_sessions: HashMap<String, PendingAuthChallenge>,
     software_token_sessions: HashMap<String, (UserId, String)>,
     user_auth_factors: HashMap<UserId, Vec<String>>,
     auth_events: HashMap<String, AuthEvent>,
@@ -795,6 +797,9 @@ impl Storage {
             store.devices.retain(|(user_id, _), _| user_id != id);
             store.user_auth_factors.remove(id);
             store
+                .auth_challenge_sessions
+                .retain(|_, challenge| &challenge.user_id != id);
+            store
                 .software_token_sessions
                 .retain(|_, (user_id, _)| user_id != id);
             if let Some(event_ids) = store.user_auth_event_index.remove(id) {
@@ -908,6 +913,23 @@ impl Storage {
     pub async fn save_refresh_token(&self, token: RefreshToken) {
         let mut store = self.principal_store.write().await;
         store.refresh_tokens.insert(token.token.clone(), token);
+    }
+
+    pub async fn save_auth_challenge_session(&self, challenge: PendingAuthChallenge) {
+        let mut store = self.principal_store.write().await;
+        store
+            .auth_challenge_sessions
+            .insert(challenge.session.clone(), challenge);
+    }
+
+    pub async fn get_auth_challenge_session(&self, session: &str) -> Option<PendingAuthChallenge> {
+        let store = self.principal_store.read().await;
+        store.auth_challenge_sessions.get(session).cloned()
+    }
+
+    pub async fn delete_auth_challenge_session(&self, session: &str) {
+        let mut store = self.principal_store.write().await;
+        store.auth_challenge_sessions.remove(session);
     }
 
     pub async fn get_refresh_token(&self, token: &str) -> Option<RefreshToken> {
@@ -1327,7 +1349,13 @@ impl Storage {
         if let std::collections::hash_map::Entry::Occupied(mut e) =
             store.terms_documents.entry(terms.terms_id.clone())
         {
+            let previous = e.get().clone();
             e.insert(terms.clone());
+            store.terms_name_index.remove(&(
+                previous.user_pool_id,
+                previous.client_id,
+                previous.terms_name,
+            ));
             store.terms_name_index.insert(
                 (
                     terms.user_pool_id.clone(),

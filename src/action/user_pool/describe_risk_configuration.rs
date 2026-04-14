@@ -38,7 +38,9 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
             })
         });
 
-    Ok(json!({"RiskConfiguration": cfg}))
+    Ok(json!({
+        "RiskConfiguration": cfg
+    }))
 }
 
 #[cfg(test)]

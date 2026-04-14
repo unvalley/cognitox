@@ -80,7 +80,9 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
 
     let created = storage.create_terms(terms).await;
 
-    Ok(json!({"Terms": terms_to_json(&created)}))
+    Ok(json!({
+        "Terms": terms_to_json(&created)
+    }))
 }
 
 #[cfg(test)]

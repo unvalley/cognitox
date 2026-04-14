@@ -60,14 +60,14 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
         .map(build_identity_provider_response)
         .collect();
 
-    let mut response = json!({
-        "Providers": list
-    });
-    if end < providers.len() {
-        response["NextToken"] = json!(end.to_string());
-    }
-
-    Ok(response)
+    Ok(json!({
+        "Providers": list,
+        "NextToken": if end < providers.len() {
+            Value::String(end.to_string())
+        } else {
+            Value::Null
+        }
+    }))
 }
 
 #[cfg(test)]

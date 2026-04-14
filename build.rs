@@ -36,13 +36,12 @@ fn main() {
         // No real UI build. Write minimal SPA entrypoints so rust-embed can
         // expand and the server can still start up (returning placeholder
         // HTML at /admin and /ui).
-        for name in ["index.html"] {
-            let body = format!(
-                "<!doctype html><title>{name}</title>\
-                 <p>Placeholder. Run <code>pnpm --dir ui build</code> to generate the real UI.</p>"
-            );
-            fs::write(target.join(name), body).expect("failed to write UI placeholder");
-        }
+        let name = "index.html";
+        let body = format!(
+            "<!doctype html><title>{name}</title>\
+             <p>Placeholder. Run <code>pnpm --dir ui build</code> to generate the real UI.</p>"
+        );
+        fs::write(target.join(name), body).expect("failed to write UI placeholder");
     }
 }
 

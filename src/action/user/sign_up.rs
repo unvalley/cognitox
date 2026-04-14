@@ -126,6 +126,7 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
     Ok(json!({
         "UserConfirmed": false,
         "UserSub": user_id.to_string(),
+        "Session": null,
         "CodeDeliveryDetails": {
             "Destination": email.map(|e| mask_email(&e)).unwrap_or_default(),
             "DeliveryMedium": "EMAIL",

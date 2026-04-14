@@ -17,7 +17,6 @@ struct Request {
     user_pool_id: UserPoolId,
     #[serde(default = "default_limit")]
     limit: i32,
-    #[allow(dead_code)]
     next_token: Option<String>,
 }
 
@@ -34,11 +33,33 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
         .await
         .ok_or(AppError::UserPoolNotFound)?;
 
-    let groups = storage.list_groups(&req.user_pool_id).await;
+    if req.limit <= 0 {
+        return Err(AppError::InvalidParameter(
+            "Limit must be greater than 0".to_string(),
+        ));
+    }
 
-    let groups_json: Vec<Value> = groups
+    let mut groups = storage.list_groups(&req.user_pool_id).await;
+    groups.sort_by(|a, b| a.group_name.cmp(&b.group_name));
+
+    let start = req
+        .next_token
+        .as_deref()
+        .map(|token| {
+            token
+                .parse::<usize>()
+                .map_err(|_| AppError::InvalidParameter("Invalid NextToken".to_string()))
+        })
+        .transpose()?
+        .unwrap_or(0);
+
+    if start > groups.len() {
+        return Err(AppError::InvalidParameter("Invalid NextToken".to_string()));
+    }
+
+    let end = (start + req.limit as usize).min(groups.len());
+    let groups_json: Vec<Value> = groups[start..end]
         .iter()
-        .take(req.limit as usize)
         .map(|g| {
             json!({
                 "GroupName": g.group_name,
@@ -52,9 +73,14 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
         })
         .collect();
 
-    Ok(json!({
+    let mut response = json!({
         "Groups": groups_json
-    }))
+    });
+    if end < groups.len() {
+        response["NextToken"] = json!(end.to_string());
+    }
+
+    Ok(response)
 }
 
 #[cfg(test)]
@@ -141,5 +167,54 @@ mod tests {
         .await;
 
         assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_list_groups_with_pagination() {
+        let storage = Storage::new();
+
+        let pool = create_user_pool::handler(&storage, json!({"PoolName": "test-pool"}))
+            .await
+            .unwrap();
+        let pool_id = pool["UserPool"]["Id"].as_str().unwrap();
+
+        for group_name in ["admins", "developers", "users"] {
+            create_group::handler(
+                &storage,
+                json!({
+                    "UserPoolId": pool_id,
+                    "GroupName": group_name
+                }),
+            )
+            .await
+            .unwrap();
+        }
+
+        let first = handler(
+            &storage,
+            json!({
+                "UserPoolId": pool_id,
+                "Limit": 2
+            }),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(first["Groups"].as_array().unwrap().len(), 2);
+        assert_eq!(first["NextToken"], "2");
+
+        let second = handler(
+            &storage,
+            json!({
+                "UserPoolId": pool_id,
+                "Limit": 2,
+                "NextToken": "2"
+            }),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(second["Groups"].as_array().unwrap().len(), 1);
+        assert!(second.get("NextToken").is_none());
     }
 }

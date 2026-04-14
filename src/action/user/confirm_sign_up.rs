@@ -20,11 +20,30 @@ struct Request {
     client_id: ClientId,
     username: String,
     confirmation_code: String,
+    #[serde(default)]
+    analytics_metadata: Option<Value>,
+    #[serde(default)]
+    client_metadata: Option<std::collections::HashMap<String, String>>,
+    #[serde(default)]
+    force_alias_creation: Option<bool>,
+    #[serde(default)]
+    secret_hash: Option<String>,
+    #[serde(default)]
+    session: Option<String>,
+    #[serde(default)]
+    user_context_data: Option<Value>,
 }
 
 pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
     let req: Request = serde_json::from_value(body)
         .map_err(|e| AppError::InvalidParameter(format!("Invalid request: {}", e)))?;
+    let _ = (
+        &req.analytics_metadata,
+        &req.client_metadata,
+        &req.force_alias_creation,
+        &req.secret_hash,
+        &req.user_context_data,
+    );
 
     let client = storage
         .get_user_pool_client(&req.client_id)
@@ -59,7 +78,9 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
         .delete_confirmation_code(&confirmation.user_id)
         .await;
 
-    Ok(json!({}))
+    Ok(json!({
+        "Session": req.session
+    }))
 }
 
 #[cfg(test)]

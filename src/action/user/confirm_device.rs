@@ -9,7 +9,7 @@ use serde_json::{Value, json};
 use crate::{
     error::{AppError, Result},
     storage::Storage,
-    types::Device,
+    types::{Device, UserAttribute},
 };
 
 use super::helpers::verify_and_extract_user_id;
@@ -19,6 +19,31 @@ use super::helpers::verify_and_extract_user_id;
 struct Request {
     access_token: String,
     device_key: String,
+    #[serde(default)]
+    device_name: Option<String>,
+    #[serde(default)]
+    device_secret_verifier_config: Option<DeviceSecretVerifierConfig>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+struct DeviceSecretVerifierConfig {
+    password_verifier: String,
+    salt: String,
+}
+
+fn upsert_device_attribute(attributes: &mut Vec<UserAttribute>, name: &str, value: Option<String>) {
+    if let Some(attribute) = attributes
+        .iter_mut()
+        .find(|attribute| attribute.name == name)
+    {
+        attribute.value = value;
+    } else {
+        attributes.push(UserAttribute {
+            name: name.to_string(),
+            value,
+        });
+    }
 }
 
 pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
@@ -40,7 +65,7 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
     }
 
     let now = Utc::now();
-    let device =
+    let mut device =
         if let Some(mut existing) = storage.get_device_for_user(&user_id, &req.device_key).await {
             existing.device_last_modified_date = now;
             existing.device_last_authenticated_date = now;
@@ -56,6 +81,28 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
                 device_remembered_status: Some("not_remembered".to_string()),
             }
         };
+
+    if let Some(device_name) = req.device_name {
+        upsert_device_attribute(
+            &mut device.device_attributes,
+            "device_name",
+            Some(device_name),
+        );
+    }
+
+    if let Some(secret_verifier_config) = req.device_secret_verifier_config {
+        upsert_device_attribute(
+            &mut device.device_attributes,
+            "device_password_verifier",
+            Some(secret_verifier_config.password_verifier),
+        );
+        upsert_device_attribute(
+            &mut device.device_attributes,
+            "device_salt",
+            Some(secret_verifier_config.salt),
+        );
+    }
+
     storage.put_device(device).await;
 
     Ok(json!({
@@ -138,5 +185,43 @@ mod tests {
 
         assert!(result.is_ok());
         assert_eq!(result.unwrap()["UserConfirmationNecessary"], false);
+    }
+
+    #[tokio::test]
+    async fn test_confirm_device_accepts_device_metadata() {
+        let storage = Storage::new();
+        let access_token = setup_and_get_token(&storage).await;
+
+        handler(
+            &storage,
+            json!({
+                "AccessToken": access_token.clone(),
+                "DeviceKey": "device-key",
+                "DeviceName": "MacBook Pro",
+                "DeviceSecretVerifierConfig": {
+                    "PasswordVerifier": "verifier",
+                    "Salt": "salt"
+                }
+            }),
+        )
+        .await
+        .unwrap();
+
+        let user_id = verify_and_extract_user_id(&access_token).unwrap();
+        let device = storage
+            .get_device_for_user(&user_id, "device-key")
+            .await
+            .unwrap();
+
+        assert!(device.device_attributes.iter().any(|attribute| {
+            attribute.name == "device_name" && attribute.value.as_deref() == Some("MacBook Pro")
+        }));
+        assert!(device.device_attributes.iter().any(|attribute| {
+            attribute.name == "device_password_verifier"
+                && attribute.value.as_deref() == Some("verifier")
+        }));
+        assert!(device.device_attributes.iter().any(|attribute| {
+            attribute.name == "device_salt" && attribute.value.as_deref() == Some("salt")
+        }));
     }
 }

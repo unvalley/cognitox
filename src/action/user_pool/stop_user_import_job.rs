@@ -60,7 +60,9 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
     job.completion_message = Some("Job stopped".to_string());
     storage.update_user_import_job(job.clone()).await;
 
-    Ok(json!({"UserImportJob": job_to_json(&job)}))
+    Ok(json!({
+        "UserImportJob": job_to_json(&job)
+    }))
 }
 
 #[cfg(test)]

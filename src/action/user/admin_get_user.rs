@@ -5,6 +5,7 @@
 use serde::Deserialize;
 use serde_json::{Value, json};
 
+use crate::action::user::helpers::{build_mfa_options, preferred_mfa_setting};
 use crate::{
     error::{AppError, Result},
     storage::Storage,
@@ -26,6 +27,8 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
         .get_user_by_username(&req.user_pool_id, &req.username)
         .await
         .ok_or(AppError::UserNotFound)?;
+    let user_mfa_setting_list = storage.list_user_auth_factors(&user.id).await;
+    let preferred_mfa_setting = preferred_mfa_setting(&user, &user_mfa_setting_list);
 
     Ok(json!({
         "Username": user.username,
@@ -38,7 +41,10 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
                 "Name": a.name,
                 "Value": a.value
             })
-        }).collect::<Vec<_>>()
+        }).collect::<Vec<_>>(),
+        "MFAOptions": build_mfa_options(&user),
+        "PreferredMfaSetting": preferred_mfa_setting,
+        "UserMFASettingList": user_mfa_setting_list
     }))
 }
 

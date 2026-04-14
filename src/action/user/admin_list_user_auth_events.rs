@@ -82,14 +82,14 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
         })
         .collect();
 
-    let mut response = json!({
-        "AuthEvents": payload
-    });
-    if end < events.len() {
-        response["NextToken"] = json!(end.to_string());
-    }
-
-    Ok(response)
+    Ok(json!({
+        "AuthEvents": payload,
+        "NextToken": if end < events.len() {
+            Value::String(end.to_string())
+        } else {
+            Value::Null
+        }
+    }))
 }
 
 #[cfg(test)]

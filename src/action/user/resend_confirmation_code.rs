@@ -19,11 +19,25 @@ use super::helpers::{generate_confirmation_code, mask_email};
 struct Request {
     client_id: ClientId,
     username: String,
+    #[serde(default)]
+    analytics_metadata: Option<Value>,
+    #[serde(default)]
+    client_metadata: Option<std::collections::HashMap<String, String>>,
+    #[serde(default)]
+    secret_hash: Option<String>,
+    #[serde(default)]
+    user_context_data: Option<Value>,
 }
 
 pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
     let req: Request = serde_json::from_value(body)
         .map_err(|e| AppError::InvalidParameter(format!("Invalid request: {}", e)))?;
+    let _ = (
+        &req.analytics_metadata,
+        &req.client_metadata,
+        &req.secret_hash,
+        &req.user_context_data,
+    );
 
     let client = storage
         .get_user_pool_client(&req.client_id)

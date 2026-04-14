@@ -18,7 +18,6 @@ struct Request {
     username: String,
     #[serde(default = "default_limit")]
     limit: i32,
-    #[allow(dead_code)]
     next_token: Option<String>,
 }
 
@@ -35,15 +34,39 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
         .await
         .ok_or(AppError::UserPoolNotFound)?;
 
+    if req.limit <= 0 {
+        return Err(AppError::InvalidParameter(
+            "Limit must be greater than 0".to_string(),
+        ));
+    }
+
     let user = storage
         .get_user_by_username(&req.user_pool_id, &req.username)
         .await
         .ok_or(AppError::UserNotFound)?;
 
-    let group_names = storage.get_groups_for_user(&user.id).await;
+    let mut group_names = storage.get_groups_for_user(&user.id).await;
+    group_names.sort();
+
+    let start = req
+        .next_token
+        .as_deref()
+        .map(|token| {
+            token
+                .parse::<usize>()
+                .map_err(|_| AppError::InvalidParameter("Invalid NextToken".to_string()))
+        })
+        .transpose()?
+        .unwrap_or(0);
+
+    if start > group_names.len() {
+        return Err(AppError::InvalidParameter("Invalid NextToken".to_string()));
+    }
+
+    let end = (start + req.limit as usize).min(group_names.len());
 
     let mut groups_json = Vec::new();
-    for group_name in group_names.iter().take(req.limit as usize) {
+    for group_name in &group_names[start..end] {
         if let Some(group) = storage.get_group(&req.user_pool_id, group_name).await {
             groups_json.push(json!({
                 "GroupName": group.group_name,
@@ -57,9 +80,14 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
         }
     }
 
-    Ok(json!({
+    let mut response = json!({
         "Groups": groups_json
-    }))
+    });
+    if end < group_names.len() {
+        response["NextToken"] = json!(end.to_string());
+    }
+
+    Ok(response)
 }
 
 #[cfg(test)]
@@ -199,5 +227,80 @@ mod tests {
         .await;
 
         assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_admin_list_groups_for_user_with_pagination() {
+        let storage = Storage::new();
+
+        let pool = create_user_pool::handler(&storage, json!({"PoolName": "test-pool"}))
+            .await
+            .unwrap();
+        let pool_id = pool["UserPool"]["Id"].as_str().unwrap();
+
+        for group_name in ["admins", "developers", "users"] {
+            create_group::handler(
+                &storage,
+                json!({
+                    "UserPoolId": pool_id,
+                    "GroupName": group_name
+                }),
+            )
+            .await
+            .unwrap();
+        }
+
+        admin_create_user::handler(
+            &storage,
+            json!({
+                "UserPoolId": pool_id,
+                "Username": "testuser",
+                "TemporaryPassword": "TempPass123!"
+            }),
+        )
+        .await
+        .unwrap();
+
+        for group_name in ["admins", "developers", "users"] {
+            admin_add_user_to_group::handler(
+                &storage,
+                json!({
+                    "UserPoolId": pool_id,
+                    "Username": "testuser",
+                    "GroupName": group_name
+                }),
+            )
+            .await
+            .unwrap();
+        }
+
+        let first = handler(
+            &storage,
+            json!({
+                "UserPoolId": pool_id,
+                "Username": "testuser",
+                "Limit": 2
+            }),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(first["Groups"].as_array().unwrap().len(), 2);
+        assert_eq!(first["NextToken"], "2");
+
+        let second = handler(
+            &storage,
+            json!({
+                "UserPoolId": pool_id,
+                "Username": "testuser",
+                "Limit": 2,
+                "NextToken": "2"
+            }),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(second["Groups"].as_array().unwrap().len(), 1);
+        assert!(second.get("NextToken").is_none());
     }
 }

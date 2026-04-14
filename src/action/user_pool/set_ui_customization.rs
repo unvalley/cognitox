@@ -71,7 +71,9 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
 
     let saved = storage.set_ui_customization(customization).await;
 
-    Ok(json!({"UICustomization": to_json(&saved)}))
+    Ok(json!({
+        "UICustomization": to_json(&saved)
+    }))
 }
 
 #[cfg(test)]

@@ -19,11 +19,14 @@ use super::helpers::{generate_confirmation_code, mask_email, verify_and_extract_
 struct Request {
     access_token: String,
     attribute_name: String,
+    #[serde(default)]
+    client_metadata: Option<std::collections::HashMap<String, String>>,
 }
 
 pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
     let req: Request = serde_json::from_value(body)
         .map_err(|e| AppError::InvalidParameter(format!("Invalid request: {}", e)))?;
+    let _ = &req.client_metadata;
 
     let user_id =
         verify_and_extract_user_id(&req.access_token).map_err(|_| AppError::InvalidAccessToken)?;

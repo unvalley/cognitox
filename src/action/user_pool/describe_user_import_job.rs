@@ -54,7 +54,9 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
         return Err(AppError::UserImportJobNotFound);
     }
 
-    Ok(json!({"UserImportJob": job_to_json(&job)}))
+    Ok(json!({
+        "UserImportJob": job_to_json(&job)
+    }))
 }
 
 #[cfg(test)]

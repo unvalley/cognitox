@@ -60,14 +60,14 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
         .map(build_resource_server_response)
         .collect();
 
-    let mut response = json!({
-        "ResourceServers": list
-    });
-    if end < resource_servers.len() {
-        response["NextToken"] = json!(end.to_string());
-    }
-
-    Ok(response)
+    Ok(json!({
+        "ResourceServers": list,
+        "NextToken": if end < resource_servers.len() {
+            Value::String(end.to_string())
+        } else {
+            Value::Null
+        }
+    }))
 }
 
 #[cfg(test)]

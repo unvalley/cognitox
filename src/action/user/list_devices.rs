@@ -65,12 +65,14 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
         .map(build_device_response)
         .collect();
 
-    let mut response = json!({ "Devices": payload });
-    if end < devices.len() {
-        response["PaginationToken"] = json!(end.to_string());
-    }
-
-    Ok(response)
+    Ok(json!({
+        "Devices": payload,
+        "PaginationToken": if end < devices.len() {
+            Value::String(end.to_string())
+        } else {
+            Value::Null
+        }
+    }))
 }
 
 #[cfg(test)]

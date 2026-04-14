@@ -59,6 +59,15 @@ struct Request {
     session: Option<String>,
 }
 
+fn build_auth_response(authentication_result: Value) -> Value {
+    json!({
+        "AuthenticationResult": authentication_result,
+        "ChallengeName": null,
+        "ChallengeParameters": {},
+        "Session": null
+    })
+}
+
 pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
     let req: Request = serde_json::from_value(body)
         .map_err(|e| AppError::InvalidParameter(format!("Invalid request: {}", e)))?;
@@ -110,7 +119,43 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
                 .ok_or_else(|| AppError::InvalidParameter("NEW_PASSWORD required".to_string()))?;
             validate_password(new_password)?;
 
-            let mut user = if let Some(username) = responses.get("USERNAME") {
+            let mut user = if let Some(session) = req.session.as_deref() {
+                let challenge = storage
+                    .get_auth_challenge_session(session)
+                    .await
+                    .ok_or_else(|| AppError::InvalidParameter("Invalid session".to_string()))?;
+                if challenge.challenge_name != "NEW_PASSWORD_REQUIRED"
+                    || challenge.client_id != req.client_id
+                    || challenge.user_pool_id != req.user_pool_id
+                {
+                    return Err(AppError::InvalidParameter("Invalid session".to_string()));
+                }
+                if challenge.expires_at < Utc::now() {
+                    storage.delete_auth_challenge_session(session).await;
+                    return Err(AppError::InvalidParameter("Session expired".to_string()));
+                }
+
+                let user = storage
+                    .get_user(&challenge.user_id)
+                    .await
+                    .ok_or(AppError::UserNotFound)?;
+                if let Some(username) = responses.get("USERNAME")
+                    && *username != user.username
+                {
+                    return Err(AppError::InvalidParameter("USERNAME mismatch".to_string()));
+                }
+                if let Some(user_id_for_srp) = responses.get("USER_ID_FOR_SRP") {
+                    let expected = Uuid::parse_str(user_id_for_srp).map_err(|_| {
+                        AppError::InvalidParameter("Invalid USER_ID_FOR_SRP".to_string())
+                    })?;
+                    if expected != user.id {
+                        return Err(AppError::InvalidParameter(
+                            "USER_ID_FOR_SRP mismatch".to_string(),
+                        ));
+                    }
+                }
+                user
+            } else if let Some(username) = responses.get("USERNAME") {
                 storage
                     .get_user_by_username(&req.user_pool_id, username)
                     .await
@@ -152,6 +197,9 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
                 .update_user(user.clone())
                 .await
                 .ok_or(AppError::UserNotFound)?;
+            if let Some(session) = req.session.as_deref() {
+                storage.delete_auth_challenge_session(session).await;
+            }
 
             let groups = storage.get_groups_for_user(&user.id).await;
 
@@ -186,15 +234,13 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
             };
             storage.save_refresh_token(refresh).await;
 
-            Ok(json!({
-                "AuthenticationResult": {
-                    "AccessToken": access_token,
-                    "IdToken": id_token,
-                    "RefreshToken": refresh_token,
-                    "ExpiresIn": access_expiry.num_seconds(),
-                    "TokenType": "Bearer"
-                }
-            }))
+            Ok(build_auth_response(json!({
+                "AccessToken": access_token,
+                "IdToken": id_token,
+                "RefreshToken": refresh_token,
+                "ExpiresIn": access_expiry.num_seconds(),
+                "TokenType": "Bearer"
+            })))
         }
         _ => Err(AppError::NotImplemented(format!(
             "Challenge: {}",

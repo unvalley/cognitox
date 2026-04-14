@@ -421,6 +421,16 @@ pub struct RefreshToken {
     pub expires_at: DateTime<Utc>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PendingAuthChallenge {
+    pub session: String,
+    pub challenge_name: String,
+    pub user_id: UserId,
+    pub client_id: ClientId,
+    pub user_pool_id: UserPoolId,
+    pub expires_at: DateTime<Utc>,
+}
+
 /// Authentication flow types
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]

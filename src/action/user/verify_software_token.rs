@@ -68,7 +68,8 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
     let _ = req.friendly_device_name;
 
     Ok(json!({
-        "Status": "SUCCESS"
+        "Status": "SUCCESS",
+        "Session": req.session
     }))
 }
 

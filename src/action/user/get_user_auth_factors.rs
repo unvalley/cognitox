@@ -10,7 +10,7 @@ use crate::{
     storage::Storage,
 };
 
-use super::helpers::verify_and_extract_user_id;
+use super::helpers::{preferred_mfa_setting, verify_and_extract_user_id};
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "PascalCase")]
@@ -31,10 +31,13 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
         .ok_or(AppError::UserNotFound)?;
 
     let factors = storage.list_user_auth_factors(&user_id).await;
+    let preferred_mfa_setting = preferred_mfa_setting(&user, &factors);
 
     Ok(json!({
         "Username": user.username,
-        "ConfiguredUserAuthFactors": factors
+        "ConfiguredUserAuthFactors": factors.clone(),
+        "PreferredMfaSetting": preferred_mfa_setting,
+        "UserMFASettingList": factors
     }))
 }
 
