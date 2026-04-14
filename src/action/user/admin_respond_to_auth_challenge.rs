@@ -20,7 +20,7 @@ use crate::{
     validation::validate_password,
 };
 
-use super::helpers::hash_password;
+use super::helpers::{hash_password, verify_secret_hash};
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "PascalCase")]
@@ -188,6 +188,11 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
                     "User is not in FORCE_CHANGE_PASSWORD status".to_string(),
                 ));
             }
+            verify_secret_hash(
+                &client,
+                &user.username,
+                responses.get("SECRET_HASH").map(String::as_str),
+            )?;
 
             user.password_hash = hash_password(new_password).map_err(AppError::Internal)?;
             user.user_status = UserStatus::Confirmed;
@@ -252,6 +257,7 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::action::user::helpers::calculate_secret_hash;
     use crate::action::user::{admin_create_user, admin_initiate_auth};
     use crate::action::user_pool::{create_user_pool, create_user_pool_client};
     use serde_json::json;
@@ -448,5 +454,70 @@ mod tests {
 
         assert!(result.is_err());
         assert!(matches!(result.unwrap_err(), AppError::NotImplemented(_)));
+    }
+
+    #[tokio::test]
+    async fn test_admin_respond_to_auth_challenge_requires_secret_hash_for_secret_client() {
+        let storage = Storage::new();
+
+        let pool = create_user_pool::handler(&storage, json!({"PoolName": "test"}))
+            .await
+            .unwrap();
+        let pool_id = pool["UserPool"]["Id"].as_str().unwrap().to_string();
+
+        let client = create_user_pool_client::handler(
+            &storage,
+            json!({
+                "UserPoolId": pool_id,
+                "ClientName": "secret-client",
+                "GenerateSecret": true
+            }),
+        )
+        .await
+        .unwrap();
+        let client_id = client["UserPoolClient"]["ClientId"].as_str().unwrap();
+        let client_secret = client["UserPoolClient"]["ClientSecret"].as_str().unwrap();
+
+        admin_create_user::handler(
+            &storage,
+            json!({
+                "UserPoolId": pool_id,
+                "Username": "testuser",
+                "TemporaryPassword": "TempPass123!"
+            }),
+        )
+        .await
+        .unwrap();
+
+        let result = handler(
+            &storage,
+            json!({
+                "UserPoolId": pool_id,
+                "ClientId": client_id,
+                "ChallengeName": "NEW_PASSWORD_REQUIRED",
+                "ChallengeResponses": {
+                    "USERNAME": "testuser",
+                    "NEW_PASSWORD": "NewPassword123!"
+                }
+            }),
+        )
+        .await;
+        assert!(matches!(result, Err(AppError::NotAuthorized(_))));
+
+        let result = handler(
+            &storage,
+            json!({
+                "UserPoolId": pool_id,
+                "ClientId": client_id,
+                "ChallengeName": "NEW_PASSWORD_REQUIRED",
+                "ChallengeResponses": {
+                    "USERNAME": "testuser",
+                    "NEW_PASSWORD": "NewPassword123!",
+                    "SECRET_HASH": calculate_secret_hash(client_id, client_secret, "testuser").unwrap()
+                }
+            }),
+        )
+        .await;
+        assert!(result.is_ok());
     }
 }

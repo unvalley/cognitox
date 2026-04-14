@@ -14,7 +14,9 @@ use crate::{
     validation::validate_username,
 };
 
-use super::helpers::{generate_confirmation_code, require_code_delivery_details};
+use super::helpers::{
+    generate_confirmation_code, require_code_delivery_details, verify_secret_hash,
+};
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "PascalCase")]
@@ -46,6 +48,7 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
         .get_user_pool_client(&req.client_id)
         .await
         .ok_or(AppError::UserPoolClientNotFound)?;
+    verify_secret_hash(&client, &req.username, req.secret_hash.as_deref())?;
 
     let user = storage
         .get_user_by_username(&client.user_pool_id, &req.username)

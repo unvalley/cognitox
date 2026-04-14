@@ -19,7 +19,7 @@ use crate::{
     types::{AuthEvent, ClientId, PendingAuthChallenge, RefreshToken, UserStatus},
 };
 
-use super::helpers::verify_password;
+use super::helpers::{verify_password, verify_secret_hash};
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "PascalCase")]
@@ -127,6 +127,11 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
                 .get_user_by_username(&client.user_pool_id, username)
                 .await
                 .ok_or(AppError::UserNotFound)?;
+            verify_secret_hash(
+                &client,
+                username,
+                params.get("SECRET_HASH").map(String::as_str),
+            )?;
 
             // Check if user is enabled
             if !user.enabled {
@@ -249,6 +254,11 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
                 .get_user(&stored_token.user_id)
                 .await
                 .ok_or(AppError::UserNotFound)?;
+            verify_secret_hash(
+                &client,
+                &user.username,
+                params.get("SECRET_HASH").map(String::as_str),
+            )?;
 
             // Check if user is enabled (user could be disabled after getting refresh token)
             if !user.enabled {
@@ -300,6 +310,7 @@ mod tests {
     use super::*;
     use serde_json::json;
 
+    use crate::action::user::helpers::calculate_secret_hash;
     use crate::action::user::sign_up;
     use crate::action::user_pool::{create_user_pool, create_user_pool_client};
 
@@ -493,5 +504,72 @@ mod tests {
             refresh_result.unwrap_err(),
             AppError::InvalidRefreshToken
         ));
+    }
+
+    #[tokio::test]
+    async fn test_initiate_auth_requires_secret_hash_for_secret_client() {
+        let storage = Storage::new();
+
+        let pool = create_user_pool::handler(&storage, json!({"PoolName": "test"}))
+            .await
+            .unwrap();
+        let pool_id = pool["UserPool"]["Id"].as_str().unwrap();
+
+        let client = create_user_pool_client::handler(
+            &storage,
+            json!({
+                "UserPoolId": pool_id,
+                "ClientName": "secret-client",
+                "GenerateSecret": true
+            }),
+        )
+        .await
+        .unwrap();
+        let client_id = client["UserPoolClient"]["ClientId"].as_str().unwrap();
+        let client_secret = client["UserPoolClient"]["ClientSecret"].as_str().unwrap();
+
+        let sign_up_result = sign_up::handler(
+            &storage,
+            json!({
+                "ClientId": client_id,
+                "Username": "testuser",
+                "Password": "Password123!",
+                "SecretHash": calculate_secret_hash(client_id, client_secret, "testuser").unwrap()
+            }),
+        )
+        .await
+        .unwrap();
+        let user_sub = sign_up_result["UserSub"].as_str().unwrap();
+        let user_id = uuid::Uuid::parse_str(user_sub).unwrap();
+        storage.confirm_user(&user_id).await;
+
+        let result = handler(
+            &storage,
+            json!({
+                "ClientId": client_id,
+                "AuthFlow": "USER_PASSWORD_AUTH",
+                "AuthParameters": {
+                    "USERNAME": "testuser",
+                    "PASSWORD": "Password123!"
+                }
+            }),
+        )
+        .await;
+        assert!(matches!(result, Err(AppError::NotAuthorized(_))));
+
+        let result = handler(
+            &storage,
+            json!({
+                "ClientId": client_id,
+                "AuthFlow": "USER_PASSWORD_AUTH",
+                "AuthParameters": {
+                    "USERNAME": "testuser",
+                    "PASSWORD": "Password123!",
+                    "SECRET_HASH": calculate_secret_hash(client_id, client_secret, "testuser").unwrap()
+                }
+            }),
+        )
+        .await;
+        assert!(result.is_ok());
     }
 }

@@ -20,7 +20,7 @@ use crate::{
     validation::validate_password,
 };
 
-use super::helpers::hash_password;
+use super::helpers::{hash_password, verify_secret_hash};
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "PascalCase")]
@@ -125,6 +125,11 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
             {
                 return Err(AppError::InvalidParameter("USERNAME mismatch".to_string()));
             }
+            verify_secret_hash(
+                &client,
+                &user.username,
+                responses.get("SECRET_HASH").map(String::as_str),
+            )?;
 
             user.password_hash = hash_password(new_password).map_err(AppError::Internal)?;
             user.user_status = UserStatus::Confirmed;

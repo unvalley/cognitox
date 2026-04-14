@@ -19,7 +19,7 @@ use crate::{
     types::{AuthEvent, ClientId, PendingAuthChallenge, RefreshToken, UserPoolId, UserStatus},
 };
 
-use super::helpers::verify_password;
+use super::helpers::{verify_password, verify_secret_hash};
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "PascalCase")]
@@ -138,6 +138,11 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
                 .get_user_by_username(&req.user_pool_id, username)
                 .await
                 .ok_or(AppError::UserNotFound)?;
+            verify_secret_hash(
+                &client,
+                username,
+                params.get("SECRET_HASH").map(String::as_str),
+            )?;
 
             if !user.enabled {
                 return Err(AppError::UserDisabled);
@@ -257,6 +262,11 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
                 .get_user(&stored_token.user_id)
                 .await
                 .ok_or(AppError::UserNotFound)?;
+            verify_secret_hash(
+                &client,
+                &user.username,
+                params.get("SECRET_HASH").map(String::as_str),
+            )?;
 
             if !user.enabled {
                 return Err(AppError::UserDisabled);

@@ -3,9 +3,19 @@
 mod common;
 
 use axum::http::StatusCode;
+use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64_STANDARD};
+use hmac::{Hmac, Mac};
 use serde_json::json;
+use sha2::Sha256;
 
 use common::TestClient;
+
+fn calculate_secret_hash(client_id: &str, client_secret: &str, username: &str) -> String {
+    let mut mac = Hmac::<Sha256>::new_from_slice(client_secret.as_bytes()).unwrap();
+    mac.update(username.as_bytes());
+    mac.update(client_id.as_bytes());
+    BASE64_STANDARD.encode(mac.finalize().into_bytes())
+}
 
 async fn setup_user_and_client(client: &TestClient) -> (String, String, String, String) {
     // Create user pool
@@ -108,6 +118,7 @@ async fn setup_user_and_confidential_client(
                 "ClientId": client_id,
                 "Username": "testuser",
                 "Password": "Test123!",
+                "SecretHash": calculate_secret_hash(&client_id, &client_secret, "testuser"),
                 "UserAttributes": [
                     { "Name": "email", "Value": "test@example.com" }
                 ]

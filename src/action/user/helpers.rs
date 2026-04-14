@@ -1,13 +1,16 @@
 //! Shared helper functions for user domain
 
+use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64_STANDARD};
+use hmac::{Hmac, Mac};
 use serde_json::{Value, json};
+use sha2::Sha256;
 use std::sync::OnceLock;
 use uuid::Uuid;
 
 use crate::{
     error::AppError,
     jwt,
-    types::{Device, User, UserAttribute},
+    types::{Device, User, UserAttribute, UserPoolClient},
 };
 
 pub const SOFTWARE_TOKEN_MFA_FACTOR: &str = "SOFTWARE_TOKEN_MFA";
@@ -19,6 +22,7 @@ const DEFAULT_BCRYPT_COST: u32 = 4;
 const MIN_BCRYPT_COST: u32 = 4;
 const MAX_BCRYPT_COST: u32 = 31;
 static BCRYPT_COST: OnceLock<u32> = OnceLock::new();
+type HmacSha256 = Hmac<Sha256>;
 
 fn configured_bcrypt_cost() -> u32 {
     *BCRYPT_COST.get_or_init(|| {
@@ -135,6 +139,43 @@ pub fn require_code_delivery_details(user: &User) -> crate::error::Result<Value>
             )
         },
     )
+}
+
+pub(crate) fn calculate_secret_hash(
+    client_id: &str,
+    client_secret: &str,
+    username: &str,
+) -> std::result::Result<String, String> {
+    let mut mac = HmacSha256::new_from_slice(client_secret.as_bytes())
+        .map_err(|e| format!("Failed to initialize secret hash: {e}"))?;
+    mac.update(username.as_bytes());
+    mac.update(client_id.as_bytes());
+    Ok(BASE64_STANDARD.encode(mac.finalize().into_bytes()))
+}
+
+pub fn verify_secret_hash(
+    client: &UserPoolClient,
+    username: &str,
+    provided_secret_hash: Option<&str>,
+) -> crate::error::Result<()> {
+    let Some(client_secret) = client.client_secret.as_deref() else {
+        return Ok(());
+    };
+
+    let provided_secret_hash = provided_secret_hash.ok_or_else(|| {
+        AppError::NotAuthorized("Unable to verify secret hash for client".to_string())
+    })?;
+    let expected_secret_hash =
+        calculate_secret_hash(client.client_id.as_str(), client_secret, username)
+            .map_err(AppError::Internal)?;
+
+    if provided_secret_hash != expected_secret_hash {
+        return Err(AppError::NotAuthorized(
+            "Unable to verify secret hash for client".to_string(),
+        ));
+    }
+
+    Ok(())
 }
 
 /// Verify access token signature and extract user ID

@@ -18,7 +18,7 @@ use crate::{
 
 use super::helpers::{
     build_code_delivery_details, find_user_attribute_value, generate_confirmation_code,
-    hash_password,
+    hash_password, verify_secret_hash,
 };
 
 #[derive(Debug, Deserialize)]
@@ -86,6 +86,7 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
         .get_user_pool_client(&req.client_id)
         .await
         .ok_or(AppError::UserPoolClientNotFound)?;
+    verify_secret_hash(&client, &req.username, req.secret_hash.as_deref())?;
 
     if storage
         .get_user_by_username(&client.user_pool_id, &req.username)
@@ -157,6 +158,7 @@ mod tests {
     use super::*;
     use serde_json::json;
 
+    use crate::action::user::helpers::calculate_secret_hash;
     use crate::action::user_pool::{create_user_pool, create_user_pool_client};
     use crate::types::UserPoolId;
 
@@ -251,6 +253,53 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(user.phone_number.as_deref(), Some("+15555550100"));
+    }
+
+    #[tokio::test]
+    async fn test_sign_up_requires_secret_hash_for_secret_client() {
+        let storage = Storage::new();
+
+        let pool = create_user_pool::handler(&storage, json!({"PoolName": "test"}))
+            .await
+            .unwrap();
+        let pool_id = pool["UserPool"]["Id"].as_str().unwrap();
+
+        let client = create_user_pool_client::handler(
+            &storage,
+            json!({
+                "UserPoolId": pool_id,
+                "ClientName": "secret-client",
+                "GenerateSecret": true
+            }),
+        )
+        .await
+        .unwrap();
+        let client_id = client["UserPoolClient"]["ClientId"].as_str().unwrap();
+        let client_secret = client["UserPoolClient"]["ClientSecret"].as_str().unwrap();
+
+        let result = handler(
+            &storage,
+            json!({
+                "ClientId": client_id,
+                "Username": "secretuser",
+                "Password": "Password123!"
+            }),
+        )
+        .await;
+        assert!(matches!(result, Err(AppError::NotAuthorized(_))));
+
+        let secret_hash = calculate_secret_hash(client_id, client_secret, "secretuser").unwrap();
+        let result = handler(
+            &storage,
+            json!({
+                "ClientId": client_id,
+                "Username": "secretuser",
+                "Password": "Password123!",
+                "SecretHash": secret_hash
+            }),
+        )
+        .await;
+        assert!(result.is_ok());
     }
 
     #[tokio::test]
