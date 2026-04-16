@@ -868,7 +868,7 @@ pub struct RefreshToken {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PendingAuthChallenge {
     pub session: String,
-    pub challenge_name: String,
+    pub challenge_name: ChallengeType,
     pub user_id: UserId,
     pub client_id: ClientId,
     pub user_pool_id: UserPoolId,

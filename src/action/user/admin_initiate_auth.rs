@@ -4,22 +4,20 @@
 
 use std::collections::HashMap;
 
-use chrono::{Duration, Utc};
 use serde::Deserialize;
-use serde_json::{Value, json};
-use uuid::Uuid;
+use serde_json::Value;
 
 use crate::{
+    action::io::parse_request,
     error::{AppError, Result},
-    jwt::{
-        generate_access_token, generate_id_token, resolve_access_token_expiry,
-        resolve_id_token_expiry, resolve_refresh_token_expiry,
-    },
     storage::Storage,
-    types::{AuthEvent, ClientId, PendingAuthChallenge, RefreshToken, UserPoolId, UserStatus},
+    types::{ClientId, UserPoolId},
 };
 
-use super::helpers::{verify_password, verify_secret_hash};
+use super::auth_flow::{
+    AdminInitiateAuthFlow, AuthParameters, PasswordAuthResult, authenticate_with_password,
+    authenticate_with_refresh_token, build_auth_response, issue_authentication_result,
+};
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "PascalCase")]
@@ -58,32 +56,8 @@ struct Request {
     client_metadata: Option<HashMap<String, String>>,
 }
 
-fn build_auth_response(authentication_result: Value) -> Value {
-    json!({
-        "AuthenticationResult": authentication_result,
-        "AvailableChallenges": [],
-        "ChallengeName": null,
-        "ChallengeParameters": {},
-        "Session": null
-    })
-}
-
-fn build_challenge_response(session: &str, user_id: &uuid::Uuid) -> Value {
-    json!({
-        "AuthenticationResult": null,
-        "AvailableChallenges": ["NEW_PASSWORD_REQUIRED"],
-        "ChallengeName": "NEW_PASSWORD_REQUIRED",
-        "ChallengeParameters": {
-            "USER_ID_FOR_SRP": user_id.to_string(),
-            "userAttributes": "{}"
-        },
-        "Session": session
-    })
-}
-
 pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
-    let req: Request = serde_json::from_value(body)
-        .map_err(|e| AppError::InvalidParameter(format!("Invalid request: {}", e)))?;
+    let req: Request = parse_request(body)?;
     let _ = (
         &req.session,
         &req.client_metadata,
@@ -121,191 +95,75 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
         return Err(AppError::UserPoolClientNotFound);
     }
 
-    match req.auth_flow.as_str() {
-        "ADMIN_USER_PASSWORD_AUTH" | "ADMIN_NO_SRP_AUTH" => {
+    match AdminInitiateAuthFlow::parse(&req.auth_flow)? {
+        AdminInitiateAuthFlow::PasswordAuth => {
             let params = req
                 .auth_parameters
-                .ok_or_else(|| AppError::InvalidParameter("AuthParameters required".to_string()))?;
+                .as_ref()
+                .ok_or_else(|| AppError::InvalidParameter("AuthParameters required".to_string()))
+                .map(AuthParameters::new)?;
 
-            let username = params
-                .get("USERNAME")
-                .ok_or_else(|| AppError::InvalidParameter("USERNAME required".to_string()))?;
-            let password = params
-                .get("PASSWORD")
-                .ok_or_else(|| AppError::InvalidParameter("PASSWORD required".to_string()))?;
+            let username = params.require("USERNAME")?;
+            let password = params.require("PASSWORD")?;
 
-            let user = storage
-                .get_user_by_username(&req.user_pool_id, username)
-                .await
-                .ok_or(AppError::UserNotFound)?;
-            verify_secret_hash(
+            match authenticate_with_password(
+                storage,
                 &client,
+                &req.client_id,
+                &req.user_pool_id,
                 username,
-                params.get("SECRET_HASH").map(String::as_str),
-            )?;
-
-            if !user.enabled {
-                return Err(AppError::UserDisabled);
-            }
-
-            // For admin auth, we can authenticate users in FORCE_CHANGE_PASSWORD status
-            // but return a challenge
-            if user.user_status == UserStatus::ForceChangePassword {
-                if !verify_password(password, &user.password_hash) {
-                    return Err(AppError::NotAuthorized(
-                        "Incorrect username or password.".to_string(),
-                    ));
-                }
-
-                let session = Uuid::new_v4().to_string();
-                storage
-                    .save_auth_challenge_session(PendingAuthChallenge {
-                        session: session.clone(),
-                        challenge_name: "NEW_PASSWORD_REQUIRED".to_string(),
-                        user_id: user.id,
-                        client_id: req.client_id.clone(),
-                        user_pool_id: req.user_pool_id.clone(),
-                        expires_at: Utc::now() + Duration::minutes(5),
-                    })
-                    .await;
-
-                return Ok(build_challenge_response(&session, &user.id));
-            }
-
-            if user.user_status != UserStatus::Confirmed {
-                return Err(AppError::UserNotConfirmed);
-            }
-
-            if !verify_password(password, &user.password_hash) {
-                return Err(AppError::NotAuthorized(
-                    "Incorrect username or password.".to_string(),
-                ));
-            }
-
-            let groups = storage.get_groups_for_user(&user.id).await;
-
-            let access_expiry = resolve_access_token_expiry(&client);
-            let id_expiry = resolve_id_token_expiry(&client);
-            let refresh_expiry = resolve_refresh_token_expiry(&client);
-
-            let access_token = generate_access_token(
-                &user,
-                req.client_id.as_str(),
-                &req.user_pool_id,
-                &groups,
-                &client.allowed_oauth_scopes,
-                access_expiry,
+                password,
+                params.secret_hash(),
             )
-            .map_err(AppError::Internal)?;
-            let id_token = generate_id_token(
-                &user,
-                req.client_id.as_str(),
-                &req.user_pool_id,
-                &groups,
-                id_expiry,
-            )
-            .map_err(AppError::Internal)?;
-
-            let refresh_token = Uuid::new_v4().to_string();
-            let refresh = RefreshToken {
-                token: refresh_token.clone(),
-                user_id: user.id,
-                client_id: req.client_id.clone(),
-                expires_at: Utc::now() + refresh_expiry,
-            };
-            storage.save_refresh_token(refresh).await;
-
-            storage
-                .create_auth_event(AuthEvent {
-                    event_id: Uuid::new_v4().to_string(),
-                    user_id: user.id,
-                    event_type: "SignIn".to_string(),
-                    creation_date: Utc::now(),
-                    event_response: "Pass".to_string(),
-                    feedback_value: None,
-                    feedback_provided_by: None,
-                    feedback_date: None,
-                })
-                .await;
-
-            Ok(build_auth_response(json!({
-                "AccessToken": access_token,
-                "IdToken": id_token,
-                "RefreshToken": refresh_token,
-                "ExpiresIn": access_expiry.num_seconds(),
-                "TokenType": "Bearer"
-            })))
+            .await?
+            {
+                PasswordAuthResult::Authenticated(user) => Ok(build_auth_response(
+                    issue_authentication_result(
+                        storage,
+                        &client,
+                        &req.client_id,
+                        &req.user_pool_id,
+                        &user,
+                        true,
+                        true,
+                    )
+                    .await?,
+                )),
+                PasswordAuthResult::Challenged(response) => Ok(response),
+            }
         }
-        "REFRESH_TOKEN" | "REFRESH_TOKEN_AUTH" => {
+        AdminInitiateAuthFlow::RefreshTokenAuth => {
             let params = req
                 .auth_parameters
-                .ok_or_else(|| AppError::InvalidParameter("AuthParameters required".to_string()))?;
+                .as_ref()
+                .ok_or_else(|| AppError::InvalidParameter("AuthParameters required".to_string()))
+                .map(AuthParameters::new)?;
 
-            let refresh_token = params
-                .get("REFRESH_TOKEN")
-                .ok_or_else(|| AppError::InvalidParameter("REFRESH_TOKEN required".to_string()))?;
+            let refresh_token = params.require("REFRESH_TOKEN")?;
 
-            let stored_token = storage
-                .get_refresh_token(refresh_token)
-                .await
-                .ok_or(AppError::InvalidRefreshToken)?;
-
-            if stored_token.client_id != req.client_id {
-                return Err(AppError::InvalidRefreshToken);
-            }
-
-            if stored_token.expires_at < Utc::now() {
-                return Err(AppError::InvalidRefreshToken);
-            }
-
-            let user = storage
-                .get_user(&stored_token.user_id)
-                .await
-                .ok_or(AppError::UserNotFound)?;
-            verify_secret_hash(
+            let user = authenticate_with_refresh_token(
+                storage,
                 &client,
-                &user.username,
-                params.get("SECRET_HASH").map(String::as_str),
-            )?;
-
-            if !user.enabled {
-                return Err(AppError::UserDisabled);
-            }
-
-            let groups = storage.get_groups_for_user(&user.id).await;
-
-            let access_expiry = resolve_access_token_expiry(&client);
-            let id_expiry = resolve_id_token_expiry(&client);
-
-            let access_token = generate_access_token(
-                &user,
-                req.client_id.as_str(),
+                &req.client_id,
                 &req.user_pool_id,
-                &groups,
-                &client.allowed_oauth_scopes,
-                access_expiry,
+                refresh_token,
+                params.secret_hash(),
             )
-            .map_err(AppError::Internal)?;
-            let id_token = generate_id_token(
-                &user,
-                req.client_id.as_str(),
-                &req.user_pool_id,
-                &groups,
-                id_expiry,
-            )
-            .map_err(AppError::Internal)?;
+            .await?;
 
-            Ok(build_auth_response(json!({
-                "AccessToken": access_token,
-                "IdToken": id_token,
-                "ExpiresIn": access_expiry.num_seconds(),
-                "TokenType": "Bearer"
-            })))
+            Ok(build_auth_response(
+                issue_authentication_result(
+                    storage,
+                    &client,
+                    &req.client_id,
+                    &req.user_pool_id,
+                    &user,
+                    false,
+                    false,
+                )
+                .await?,
+            ))
         }
-        _ => Err(AppError::NotImplemented(format!(
-            "Auth flow: {}",
-            req.auth_flow
-        ))),
     }
 }
 
@@ -314,7 +172,9 @@ mod tests {
     use super::*;
     use crate::action::user::admin_create_user;
     use crate::action::user::admin_set_user_password;
+    use crate::action::user::helpers::upsert_user_attribute;
     use crate::action::user_pool::{create_user_pool, create_user_pool_client};
+    use crate::types::UserPoolId;
     use serde_json::json;
 
     async fn setup_pool_and_client(storage: &Storage) -> (String, String) {
@@ -338,6 +198,50 @@ mod tests {
             .to_string();
 
         (pool_id, client_id)
+    }
+
+    async fn create_confirmed_user_with_software_mfa(
+        storage: &Storage,
+        pool_id: &str,
+        username: &str,
+        password: &str,
+    ) {
+        admin_create_user::handler(
+            storage,
+            json!({
+                "UserPoolId": pool_id,
+                "Username": username
+            }),
+        )
+        .await
+        .unwrap();
+
+        admin_set_user_password::handler(
+            storage,
+            json!({
+                "UserPoolId": pool_id,
+                "Username": username,
+                "Password": password,
+                "Permanent": true
+            }),
+        )
+        .await
+        .unwrap();
+
+        let pool_id = UserPoolId::new(pool_id).unwrap();
+        let mut user = storage
+            .get_user_by_username(&pool_id, username)
+            .await
+            .unwrap();
+        storage
+            .add_user_auth_factor(&user.id, "SOFTWARE_TOKEN_MFA")
+            .await;
+        upsert_user_attribute(
+            &mut user.attributes,
+            "preferred_mfa_setting",
+            Some("SOFTWARE_TOKEN_MFA".to_string()),
+        );
+        storage.update_user(user).await.unwrap();
     }
 
     #[tokio::test]
@@ -572,5 +476,32 @@ mod tests {
             refresh_result.unwrap_err(),
             AppError::InvalidRefreshToken
         ));
+    }
+
+    #[tokio::test]
+    async fn test_admin_initiate_auth_returns_software_token_mfa_challenge() {
+        let storage = Storage::new();
+        let (pool_id, client_id) = setup_pool_and_client(&storage).await;
+
+        create_confirmed_user_with_software_mfa(&storage, &pool_id, "testuser", "Password123!")
+            .await;
+
+        let result = handler(
+            &storage,
+            json!({
+                "UserPoolId": pool_id,
+                "ClientId": client_id,
+                "AuthFlow": "ADMIN_USER_PASSWORD_AUTH",
+                "AuthParameters": {
+                    "USERNAME": "testuser",
+                    "PASSWORD": "Password123!"
+                }
+            }),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(result["ChallengeName"], "SOFTWARE_TOKEN_MFA");
+        assert!(result["Session"].as_str().is_some());
     }
 }

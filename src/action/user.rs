@@ -1,3 +1,4 @@
+pub(crate) mod auth_flow;
 pub(crate) mod helpers;
 
 pub mod admin_confirm_sign_up;
