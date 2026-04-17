@@ -829,6 +829,35 @@ pub async fn openid_configuration(headers: axum::http::HeaderMap) -> Json<Value>
 
 /// Generate a simple login HTML page
 fn generate_login_html(params: &AuthorizeParams) -> String {
+    let response_type = escape_html_attr(&params.response_type);
+    let client_id = escape_html_attr(&params.client_id);
+    let redirect_uri = escape_html_attr(&params.redirect_uri);
+    let scope = escape_html_attr(params.scope.as_deref().unwrap_or("openid"));
+    let state = params
+        .state
+        .as_deref()
+        .map(escape_html_attr)
+        .map(|s| format!(r#"<input type="hidden" name="state" value="{}">"#, s))
+        .unwrap_or_default();
+    let nonce = params
+        .nonce
+        .as_deref()
+        .map(escape_html_attr)
+        .map(|s| format!(r#"<input type="hidden" name="nonce" value="{}">"#, s))
+        .unwrap_or_default();
+    let code_challenge = params
+        .code_challenge
+        .as_deref()
+        .map(escape_html_attr)
+        .map(|challenge| {
+            let method = escape_html_attr(params.code_challenge_method.as_deref().unwrap_or("S256"));
+            format!(
+                r#"<input type="hidden" name="code_challenge" value="{}"><input type="hidden" name="code_challenge_method" value="{}">"#,
+                challenge, method
+            )
+        })
+        .unwrap_or_default();
+
     format!(
         r#"<!DOCTYPE html>
 <html>
@@ -864,16 +893,45 @@ fn generate_login_html(params: &AuthorizeParams) -> String {
     </div>
 </body>
 </html>"#,
-        params.response_type,
-        params.client_id,
-        params.redirect_uri,
-        params.scope.as_deref().unwrap_or("openid"),
-        params.state.as_ref().map(|s| format!(r#"<input type="hidden" name="state" value="{}">"#, s)).unwrap_or_default(),
-        params.nonce.as_ref().map(|s| format!(r#"<input type="hidden" name="nonce" value="{}">"#, s)).unwrap_or_default(),
-        params.code_challenge.as_ref().map(|s| format!(
-            r#"<input type="hidden" name="code_challenge" value="{}"><input type="hidden" name="code_challenge_method" value="{}">"#,
-            s,
-            params.code_challenge_method.as_deref().unwrap_or("S256")
-        )).unwrap_or_default(),
+        response_type, client_id, redirect_uri, scope, state, nonce, code_challenge,
     )
+}
+
+fn escape_html_attr(value: &str) -> String {
+    value
+        .replace('&', "&amp;")
+        .replace('"', "&quot;")
+        .replace('\'', "&#x27;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_generate_login_html_escapes_attribute_values() {
+        let params = AuthorizeParams {
+            response_type: "code".to_string(),
+            client_id: "client\"onfocus=alert(1)".to_string(),
+            redirect_uri: "https://example.com/callback?x=<x>".to_string(),
+            scope: Some("openid profile".to_string()),
+            state: Some("<script>alert('xss')</script>".to_string()),
+            nonce: Some("a&b".to_string()),
+            code_challenge: Some("c\"d".to_string()),
+            code_challenge_method: Some("S256".to_string()),
+            username: None,
+            password: None,
+        };
+
+        let html = generate_login_html(&params);
+
+        assert!(html.contains("client&quot;onfocus=alert(1)"));
+        assert!(html.contains("https://example.com/callback?x=&lt;x&gt;"));
+        assert!(html.contains("&lt;script&gt;alert(&#x27;xss&#x27;)&lt;/script&gt;"));
+        assert!(html.contains("a&amp;b"));
+        assert!(html.contains("c&quot;d"));
+        assert!(!html.contains("<script>alert('xss')</script>"));
+    }
 }
