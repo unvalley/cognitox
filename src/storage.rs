@@ -789,24 +789,39 @@ impl Storage {
     }
 
     pub async fn delete_user(&self, id: &UserId) -> Option<User> {
-        let mut store = self.principal_store.write().await;
-        if let Some(user) = store.users.remove(id) {
-            store
+        let mut principal_store = self.principal_store.write().await;
+        let mut group_store = self.group_store.write().await;
+
+        if let Some(user) = principal_store.users.remove(id) {
+            principal_store
                 .username_index
                 .remove(&(user.user_pool_id.clone(), user.username.clone()));
-            store.devices.retain(|(user_id, _), _| user_id != id);
-            store.user_auth_factors.remove(id);
-            store
+            principal_store.confirmation_codes.remove(id);
+            principal_store.password_reset_codes.remove(id);
+            principal_store
+                .devices
+                .retain(|(user_id, _), _| user_id != id);
+            principal_store.user_auth_factors.remove(id);
+            principal_store.webauthn_credentials.remove(id);
+            principal_store.webauthn_registration_challenges.remove(id);
+            principal_store
                 .auth_challenge_sessions
                 .retain(|_, challenge| &challenge.user_id != id);
-            store
+            principal_store
                 .software_token_sessions
                 .retain(|_, (user_id, _)| user_id != id);
-            if let Some(event_ids) = store.user_auth_event_index.remove(id) {
+            principal_store
+                .refresh_tokens
+                .retain(|_, token| &token.user_id != id);
+            principal_store
+                .authorization_codes
+                .retain(|_, code| &code.user_id != id);
+            if let Some(event_ids) = principal_store.user_auth_event_index.remove(id) {
                 for event_id in event_ids {
-                    store.auth_events.remove(&event_id);
+                    principal_store.auth_events.remove(&event_id);
                 }
             }
+            group_store.user_groups.remove(id);
             Some(user)
         } else {
             None
@@ -1135,8 +1150,8 @@ impl Storage {
         user_pool_id: &UserPoolId,
         group_name: &GroupName,
     ) -> Vec<User> {
-        let group_store = self.group_store.read().await;
         let principal_store = self.principal_store.read().await;
+        let group_store = self.group_store.read().await;
 
         group_store
             .user_groups
