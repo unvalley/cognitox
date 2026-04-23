@@ -7,6 +7,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 use crate::{
+    action::user::auth_flow::require_refresh_token_auth_flow,
     error::{AppError, Result},
     jwt::{
         generate_access_token, generate_id_token, resolve_access_token_expiry,
@@ -39,6 +40,7 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
         .get_user_pool_client(&req.client_id)
         .await
         .ok_or(AppError::UserPoolClientNotFound)?;
+    require_refresh_token_auth_flow(&client)?;
 
     if let Some(expected_secret) = client.client_secret.as_ref() {
         match req.client_secret.as_deref() {
