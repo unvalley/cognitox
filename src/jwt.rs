@@ -16,10 +16,12 @@ use rsa::{RsaPrivateKey, RsaPublicKey};
 use serde::{Deserialize, Serialize};
 use std::{fs, sync::OnceLock};
 
-use crate::types::{TokenValidityUnit, User, UserPoolClient, UserPoolId};
+use crate::types::{ClientId, TokenValidityUnit, User, UserPoolClient, UserPoolId};
 
 /// Global JWT key pair (generated once at startup)
 static JWT_KEYS: OnceLock<JwtKeys> = OnceLock::new();
+static JWT_ISSUER_BASE_URL: OnceLock<String> = OnceLock::new();
+const DEFAULT_ISSUER_BASE_URL: &str = "http://localhost:9229";
 
 /// RSA key pair for JWT signing
 pub struct JwtKeys {
@@ -129,6 +131,27 @@ pub fn get_jwt_keys() -> &'static JwtKeys {
     })
 }
 
+fn normalize_issuer_base_url(value: impl Into<String>) -> String {
+    value.into().trim_end_matches('/').to_string()
+}
+
+/// Override the issuer base URL used in generated tokens and discovery metadata.
+pub fn set_issuer_base_url(value: impl Into<String>) -> Result<(), String> {
+    JWT_ISSUER_BASE_URL
+        .set(normalize_issuer_base_url(value))
+        .map_err(|_| "JWT issuer base URL has already been initialized".to_string())
+}
+
+/// Return the issuer base URL used for generated OIDC tokens.
+pub fn issuer_base_url() -> String {
+    JWT_ISSUER_BASE_URL
+        .get()
+        .cloned()
+        .or_else(|| std::env::var("COGNITOX_ISSUER_BASE_URL").ok())
+        .map(normalize_issuer_base_url)
+        .unwrap_or_else(|| DEFAULT_ISSUER_BASE_URL.to_string())
+}
+
 /// Claims for ID Token
 #[derive(Debug, Serialize, Deserialize)]
 pub struct IdTokenClaims {
@@ -187,7 +210,7 @@ pub struct AccessTokenClaims {
 pub fn generate_id_token(
     user: &User,
     client_id: &str,
-    user_pool_id: &UserPoolId,
+    _user_pool_id: &UserPoolId,
     groups: &[String],
     expiry: Duration,
 ) -> Result<String, String> {
@@ -198,7 +221,7 @@ pub fn generate_id_token(
     let claims = IdTokenClaims {
         sub: user.id.to_string(),
         aud: client_id.to_string(),
-        iss: format!("https://cognito-idp.local.amazonaws.com/{}", user_pool_id),
+        iss: issuer_base_url(),
         iat: now.timestamp(),
         exp: (now + expiry).timestamp(),
         auth_time,
@@ -222,7 +245,7 @@ pub fn generate_id_token(
 pub fn generate_access_token(
     user: &User,
     client_id: &str,
-    user_pool_id: &UserPoolId,
+    _user_pool_id: &UserPoolId,
     groups: &[String],
     scopes: &[String],
     expiry: Duration,
@@ -239,7 +262,7 @@ pub fn generate_access_token(
 
     let claims = AccessTokenClaims {
         sub: user.id.to_string(),
-        iss: format!("https://cognito-idp.local.amazonaws.com/{}", user_pool_id),
+        iss: issuer_base_url(),
         iat: now.timestamp(),
         exp: (now + expiry).timestamp(),
         auth_time,
@@ -255,6 +278,36 @@ pub fn generate_access_token(
 
     encode(&header, &claims, &keys.encoding_key)
         .map_err(|e| format!("Failed to encode access token: {}", e))
+}
+
+/// Generate an OAuth client credentials access token.
+pub fn generate_client_credentials_access_token(
+    client_id: &ClientId,
+    scopes: &[String],
+    expiry: Duration,
+) -> Result<String, String> {
+    let keys = get_jwt_keys();
+    let now = Utc::now();
+    let client_id = client_id.as_str();
+
+    let claims = AccessTokenClaims {
+        sub: client_id.to_string(),
+        iss: issuer_base_url(),
+        iat: now.timestamp(),
+        exp: (now + expiry).timestamp(),
+        auth_time: now.timestamp(),
+        token_use: "access".to_string(),
+        client_id: client_id.to_string(),
+        cognito_groups: Vec::new(),
+        scope: scopes.join(" "),
+        username: client_id.to_string(),
+    };
+
+    let mut header = Header::new(Algorithm::RS256);
+    header.kid = Some(keys.key_id.clone());
+
+    encode(&header, &claims, &keys.encoding_key)
+        .map_err(|e| format!("Failed to encode client credentials access token: {e}"))
 }
 
 /// Verify and decode an access token

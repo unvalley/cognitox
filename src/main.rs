@@ -1,7 +1,7 @@
 use std::{net::SocketAddr, path::PathBuf, sync::Arc};
 
 use bpaf::Bpaf;
-use cognitox::{api, config::StorageConfig, storage::Storage};
+use cognitox::{api, config::StorageConfig, jwt::set_issuer_base_url, storage::Storage};
 use tower_http::{
     cors::{Any, CorsLayer},
     trace::TraceLayer,
@@ -104,6 +104,12 @@ async fn main() {
         tracing::error!("{e}");
         std::process::exit(1);
     });
+
+    if std::env::var("COGNITOX_ISSUER_BASE_URL").is_err()
+        && let Err(e) = set_issuer_base_url(format!("http://localhost:{}", cli.port))
+    {
+        tracing::warn!("Failed to configure JWT issuer base URL: {e}");
+    }
 
     // Initialize storage
     let storage = Arc::new(Storage::with_config(storage_config).unwrap_or_else(|e| {
