@@ -19,8 +19,9 @@ use uuid::Uuid;
 use crate::{
     error::OAuthError,
     jwt::{
-        generate_access_token, generate_id_token, resolve_access_token_expiry,
-        resolve_id_token_expiry, resolve_refresh_token_expiry, verify_access_token,
+        generate_access_token, generate_client_credentials_access_token, generate_id_token,
+        issuer_base_url, resolve_access_token_expiry, resolve_id_token_expiry,
+        resolve_refresh_token_expiry, verify_access_token,
     },
     storage::Storage,
     types::{AuthorizationCode, ClientId, OAuthFlow, RefreshToken, UserStatus},
@@ -98,6 +99,52 @@ fn prefers_json_redirect(headers: &HeaderMap) -> bool {
             .unwrap_or(false)
 }
 
+fn parse_scopes(raw: Option<&str>, default: &str) -> Vec<String> {
+    raw.unwrap_or(default)
+        .split_whitespace()
+        .map(String::from)
+        .collect()
+}
+
+fn validate_requested_scopes(
+    allowed_scopes: &[String],
+    requested_scopes: &[String],
+) -> Result<(), OAuthError> {
+    if let Some(scope) = requested_scopes
+        .iter()
+        .find(|scope| !allowed_scopes.contains(scope))
+    {
+        return Err(OAuthError {
+            error: "invalid_scope".to_string(),
+            error_description: Some(format!("Scope '{scope}' is not allowed for this client")),
+        });
+    }
+    Ok(())
+}
+
+fn append_query_param(target: &mut String, name: &str, value: &str) {
+    target.push_str(if target.contains('?') { "&" } else { "?" });
+    target.push_str(name);
+    target.push('=');
+    target.push_str(&urlencoding::encode(value));
+}
+
+fn append_fragment_param(target: &mut String, name: &str, value: &str) {
+    target.push_str(if target.contains('#') { "&" } else { "#" });
+    target.push_str(name);
+    target.push('=');
+    target.push_str(&urlencoding::encode(value));
+}
+
+fn html_escape(value: &str) -> String {
+    value
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&#39;")
+}
+
 /// GET /oauth2/authorize - Authorization endpoint
 ///
 /// For testing purposes, this endpoint can directly authenticate users
@@ -139,13 +186,8 @@ pub async fn authorize(
     }
 
     // Parse scopes
-    let scopes: Vec<String> = params
-        .scope
-        .as_deref()
-        .unwrap_or("openid")
-        .split_whitespace()
-        .map(String::from)
-        .collect();
+    let scopes = parse_scopes(params.scope.as_deref(), "openid");
+    validate_requested_scopes(&client.allowed_oauth_scopes, &scopes)?;
 
     // Validate response_type
     match params.response_type.as_str() {
@@ -205,12 +247,10 @@ pub async fn authorize(
                 };
                 storage.save_authorization_code(auth_code).await;
 
-                // Build redirect URL
                 let mut redirect_url = params.redirect_uri.clone();
-                redirect_url.push_str(if redirect_url.contains('?') { "&" } else { "?" });
-                redirect_url.push_str(&format!("code={}", code));
+                append_query_param(&mut redirect_url, "code", &code);
                 if let Some(state) = &params.state {
-                    redirect_url.push_str(&format!("&state={}", state));
+                    append_query_param(&mut redirect_url, "state", state);
                 }
 
                 if prefers_json_redirect(&headers) {
@@ -283,11 +323,13 @@ pub async fn authorize(
                     error_description: Some(e),
                 })?;
 
-                let mut redirect_url = format!(
-                    "{}#access_token={}&token_type=Bearer&expires_in={}",
-                    params.redirect_uri,
-                    access_token,
-                    access_expiry.num_seconds()
+                let mut redirect_url = params.redirect_uri.clone();
+                append_fragment_param(&mut redirect_url, "access_token", &access_token);
+                append_fragment_param(&mut redirect_url, "token_type", "Bearer");
+                append_fragment_param(
+                    &mut redirect_url,
+                    "expires_in",
+                    &access_expiry.num_seconds().to_string(),
                 );
 
                 if scopes.contains(&"openid".to_string()) {
@@ -302,11 +344,11 @@ pub async fn authorize(
                         error: "server_error".to_string(),
                         error_description: Some(e),
                     })?;
-                    redirect_url.push_str(&format!("&id_token={}", id_token));
+                    append_fragment_param(&mut redirect_url, "id_token", &id_token);
                 }
 
                 if let Some(state) = &params.state {
-                    redirect_url.push_str(&format!("&state={}", state));
+                    append_fragment_param(&mut redirect_url, "state", state);
                 }
 
                 return Ok(Redirect::temporary(&redirect_url).into_response());
@@ -585,13 +627,8 @@ pub async fn token(
             }
 
             let groups = storage.get_groups_for_user(&user.id).await;
-            let scopes: Vec<String> = req
-                .scope
-                .as_deref()
-                .unwrap_or("openid")
-                .split_whitespace()
-                .map(String::from)
-                .collect();
+            let scopes = parse_scopes(req.scope.as_deref(), "openid");
+            validate_requested_scopes(&client.allowed_oauth_scopes, &scopes)?;
 
             let access_expiry = resolve_access_token_expiry(&client);
             let id_expiry = resolve_id_token_expiry(&client);
@@ -689,26 +726,17 @@ pub async fn token(
                 });
             }
 
-            // For client_credentials, generate a minimal access token
-            // Note: This is a simplified implementation
-            let scopes: Vec<String> = req
-                .scope
-                .as_deref()
-                .unwrap_or("")
-                .split_whitespace()
-                .map(String::from)
-                .collect();
+            let scopes = parse_scopes(req.scope.as_deref(), "");
+            validate_requested_scopes(&client.allowed_oauth_scopes, &scopes)?;
 
-            let now = Utc::now();
             let access_expiry = resolve_access_token_expiry(&client);
 
-            // Use a simple token format for client_credentials
-            let access_token = format!(
-                "client_{}_{}_{}",
-                client_id,
-                now.timestamp(),
-                Uuid::new_v4()
-            );
+            let access_token =
+                generate_client_credentials_access_token(&client_id, &scopes, access_expiry)
+                    .map_err(|e| OAuthError {
+                        error: "server_error".to_string(),
+                        error_description: Some(e),
+                    })?;
 
             Ok(Json(TokenResponse {
                 access_token,
@@ -798,17 +826,11 @@ pub async fn userinfo(
 }
 
 /// GET /.well-known/openid-configuration - OpenID Connect Discovery
-pub async fn openid_configuration(headers: axum::http::HeaderMap) -> Json<Value> {
-    // Get the host from the request to build proper URLs
-    let host = headers
-        .get(header::HOST)
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("localhost:9229");
-
-    let base_url = format!("http://{}", host);
+pub async fn openid_configuration(_headers: axum::http::HeaderMap) -> Json<Value> {
+    let base_url = issuer_base_url();
 
     Json(json!({
-        "issuer": format!("{}", base_url),
+        "issuer": base_url.clone(),
         "authorization_endpoint": format!("{}/oauth2/authorize", base_url),
         "token_endpoint": format!("{}/oauth2/token", base_url),
         "userinfo_endpoint": format!("{}/oauth2/userInfo", base_url),
@@ -829,6 +851,38 @@ pub async fn openid_configuration(headers: axum::http::HeaderMap) -> Json<Value>
 
 /// Generate a simple login HTML page
 fn generate_login_html(params: &AuthorizeParams) -> String {
+    let state_input = params
+        .state
+        .as_ref()
+        .map(|s| {
+            format!(
+                r#"<input type="hidden" name="state" value="{}">"#,
+                html_escape(s)
+            )
+        })
+        .unwrap_or_default();
+    let nonce_input = params
+        .nonce
+        .as_ref()
+        .map(|s| {
+            format!(
+                r#"<input type="hidden" name="nonce" value="{}">"#,
+                html_escape(s)
+            )
+        })
+        .unwrap_or_default();
+    let code_challenge_input = params
+        .code_challenge
+        .as_ref()
+        .map(|s| {
+            format!(
+                r#"<input type="hidden" name="code_challenge" value="{}"><input type="hidden" name="code_challenge_method" value="{}">"#,
+                html_escape(s),
+                html_escape(params.code_challenge_method.as_deref().unwrap_or("S256"))
+            )
+        })
+        .unwrap_or_default();
+
     format!(
         r#"<!DOCTYPE html>
 <html>
@@ -864,16 +918,12 @@ fn generate_login_html(params: &AuthorizeParams) -> String {
     </div>
 </body>
 </html>"#,
-        params.response_type,
-        params.client_id,
-        params.redirect_uri,
-        params.scope.as_deref().unwrap_or("openid"),
-        params.state.as_ref().map(|s| format!(r#"<input type="hidden" name="state" value="{}">"#, s)).unwrap_or_default(),
-        params.nonce.as_ref().map(|s| format!(r#"<input type="hidden" name="nonce" value="{}">"#, s)).unwrap_or_default(),
-        params.code_challenge.as_ref().map(|s| format!(
-            r#"<input type="hidden" name="code_challenge" value="{}"><input type="hidden" name="code_challenge_method" value="{}">"#,
-            s,
-            params.code_challenge_method.as_deref().unwrap_or("S256")
-        )).unwrap_or_default(),
+        html_escape(&params.response_type),
+        html_escape(&params.client_id),
+        html_escape(&params.redirect_uri),
+        html_escape(params.scope.as_deref().unwrap_or("openid")),
+        state_input,
+        nonce_input,
+        code_challenge_input,
     )
 }

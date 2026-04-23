@@ -4,6 +4,7 @@ mod common;
 
 use axum::http::StatusCode;
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64_STANDARD};
+use cognitox::jwt::{verify_access_token, verify_id_token};
 use hmac::{Hmac, Mac};
 use serde_json::json;
 use sha2::Sha256;
@@ -230,6 +231,16 @@ async fn test_authorization_code_flow() {
     assert!(token_body["id_token"].as_str().is_some());
     assert!(token_body["refresh_token"].as_str().is_some());
     assert_eq!(token_body["token_type"], "Bearer");
+
+    let discovery: serde_json::Value = client
+        .get("/.well-known/openid-configuration")
+        .await
+        .json()
+        .await
+        .unwrap();
+    let id_token = token_body["id_token"].as_str().unwrap();
+    let claims = verify_id_token(id_token, &client_id).unwrap().claims;
+    assert_eq!(claims.iss, discovery["issuer"].as_str().unwrap());
 }
 
 #[tokio::test]
@@ -258,6 +269,52 @@ async fn test_authorization_code_flow_returns_json_redirect_for_xhr_login() {
     let redirect_url = body["redirectUrl"].as_str().unwrap();
     assert!(redirect_url.contains("code="));
     assert!(redirect_url.starts_with("https://example.com/callback"));
+}
+
+#[tokio::test]
+async fn test_authorization_redirect_encodes_state() {
+    let client = TestClient::new();
+    let (_, client_id, username, password) = setup_user_and_client(&client).await;
+
+    let auth_url = format!(
+        "/oauth2/authorize?response_type=code&client_id={}&redirect_uri={}&scope={}&state={}&username={}&password={}",
+        client_id,
+        "https://example.com/callback",
+        "openid",
+        "a%20b%26c%3D%3Cx%3E",
+        username,
+        password
+    );
+
+    let response = client.get(&auth_url).await;
+    assert_eq!(response.status(), StatusCode::TEMPORARY_REDIRECT);
+
+    let location = response
+        .headers()
+        .get("location")
+        .unwrap()
+        .to_str()
+        .unwrap();
+    assert!(location.contains("state=a%20b%26c%3D%3Cx%3E"));
+    assert!(!location.contains("state=a b&c=<x>"));
+}
+
+#[tokio::test]
+async fn test_login_html_escapes_hidden_values() {
+    let client = TestClient::new();
+    let (_, client_id, _, _) = setup_user_and_client(&client).await;
+
+    let response = client
+        .get(&format!(
+            "/oauth2/authorize?response_type=code&client_id={}&redirect_uri=https://example.com/callback&scope=openid&state=%22%3E%3Cscript%3Ealert(1)%3C%2Fscript%3E",
+            client_id
+        ))
+        .await;
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = response.body_string();
+    assert!(body.contains("&quot;&gt;&lt;script&gt;alert(1)&lt;/script&gt;"));
+    assert!(!body.contains("\"><script>alert(1)</script>"));
 }
 
 #[tokio::test]
@@ -706,6 +763,78 @@ async fn test_authorize_rejects_client_without_code_flow() {
     assert_eq!(response.status(), StatusCode::BAD_REQUEST);
     let body: serde_json::Value = response.json().await.unwrap();
     assert_eq!(body["error"], "unauthorized_client");
+}
+
+#[tokio::test]
+async fn test_authorize_rejects_disallowed_scope() {
+    let client = TestClient::new();
+    let (_, client_id, username, password) = setup_user_and_client(&client).await;
+
+    let auth_url = format!(
+        "/oauth2/authorize?response_type=code&client_id={}&redirect_uri={}&scope={}&username={}&password={}",
+        client_id, "https://example.com/callback", "openid%20phone", username, password
+    );
+
+    let response = client.get(&auth_url).await;
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let body: serde_json::Value = response.json().await.unwrap();
+    assert_eq!(body["error"], "invalid_scope");
+}
+
+#[tokio::test]
+async fn test_client_credentials_returns_jwt_access_token() {
+    let client = TestClient::new();
+    let (_, pool_body) = client
+        .request(
+            "CreateUserPool",
+            json!({ "PoolName": "ClientCredentialsPool" }),
+        )
+        .await;
+    let pool_id = pool_body["UserPool"]["Id"].as_str().unwrap().to_string();
+
+    let (_, client_body) = client
+        .request(
+            "CreateUserPoolClient",
+            json!({
+                "UserPoolId": pool_id,
+                "ClientName": "MachineClient",
+                "GenerateSecret": true,
+                "AllowedOAuthFlows": ["client_credentials"],
+                "AllowedOAuthScopes": ["api/read"],
+                "AllowedOAuthFlowsUserPoolClient": true
+            }),
+        )
+        .await;
+    let client_id = client_body["UserPoolClient"]["ClientId"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let client_secret = client_body["UserPoolClient"]["ClientSecret"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let token_response = client
+        .post_form(
+            "/oauth2/token",
+            &[
+                ("grant_type", "client_credentials"),
+                ("client_id", &client_id),
+                ("client_secret", &client_secret),
+                ("scope", "api/read"),
+            ],
+        )
+        .await;
+
+    assert_eq!(token_response.status(), StatusCode::OK);
+    let body: serde_json::Value = token_response.json().await.unwrap();
+    let access_token = body["access_token"].as_str().unwrap();
+    assert_eq!(access_token.split('.').count(), 3);
+
+    let claims = verify_access_token(access_token).unwrap().claims;
+    assert_eq!(claims.client_id, client_id);
+    assert_eq!(claims.scope, "api/read");
 }
 
 #[tokio::test]
