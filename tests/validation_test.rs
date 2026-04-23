@@ -692,3 +692,126 @@ async fn test_update_user_pool_client_invalid_callback_url() {
     let body: serde_json::Value = response.json().await.unwrap();
     assert_eq!(body["__type"], "InvalidParameterException");
 }
+
+#[tokio::test]
+async fn test_admin_delete_user_cascades_refresh_tokens_and_group_membership() {
+    let client = TestClient::new();
+
+    let pool_response = client
+        .cognito_request("CreateUserPool", json!({"PoolName": "test-pool"}))
+        .await;
+    let pool_id = pool_response["UserPool"]["Id"].as_str().unwrap();
+
+    let client_response = client
+        .cognito_request(
+            "CreateUserPoolClient",
+            json!({
+                "UserPoolId": pool_id,
+                "ClientName": "test-client"
+            }),
+        )
+        .await;
+    let client_id = client_response["UserPoolClient"]["ClientId"]
+        .as_str()
+        .unwrap();
+
+    client
+        .cognito_request(
+            "SignUp",
+            json!({
+                "ClientId": client_id,
+                "Username": "testuser",
+                "Password": "password123"
+            }),
+        )
+        .await;
+    client
+        .cognito_request(
+            "AdminConfirmSignUp",
+            json!({
+                "UserPoolId": pool_id,
+                "Username": "testuser"
+            }),
+        )
+        .await;
+    client
+        .cognito_request(
+            "CreateGroup",
+            json!({
+                "UserPoolId": pool_id,
+                "GroupName": "admins"
+            }),
+        )
+        .await;
+    client
+        .cognito_request(
+            "AdminAddUserToGroup",
+            json!({
+                "UserPoolId": pool_id,
+                "Username": "testuser",
+                "GroupName": "admins"
+            }),
+        )
+        .await;
+
+    let auth_response = client
+        .cognito_request(
+            "InitiateAuth",
+            json!({
+                "ClientId": client_id,
+                "AuthFlow": "USER_PASSWORD_AUTH",
+                "AuthParameters": {
+                    "USERNAME": "testuser",
+                    "PASSWORD": "password123"
+                }
+            }),
+        )
+        .await;
+    let refresh_token = auth_response["AuthenticationResult"]["RefreshToken"]
+        .as_str()
+        .unwrap();
+
+    client
+        .cognito_request(
+            "AdminDeleteUser",
+            json!({
+                "UserPoolId": pool_id,
+                "Username": "testuser"
+            }),
+        )
+        .await;
+
+    let group_users = client
+        .cognito_request(
+            "ListUsersInGroup",
+            json!({
+                "UserPoolId": pool_id,
+                "GroupName": "admins"
+            }),
+        )
+        .await;
+    assert_eq!(group_users["Users"].as_array().unwrap().len(), 0);
+
+    let response = client
+        .cognito_request_raw(
+            "InitiateAuth",
+            json!({
+                "ClientId": client_id,
+                "AuthFlow": "REFRESH_TOKEN_AUTH",
+                "AuthParameters": {
+                    "REFRESH_TOKEN": refresh_token
+                }
+            }),
+        )
+        .await;
+
+    assert_eq!(response.status(), 401);
+    let body: serde_json::Value = response.json().await.unwrap();
+    assert_eq!(body["__type"], "NotAuthorizedException");
+    assert!(
+        body["message"]
+            .as_str()
+            .unwrap()
+            .contains("Invalid refresh token")
+    );
+}
