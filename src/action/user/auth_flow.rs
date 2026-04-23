@@ -11,8 +11,8 @@ use crate::{
     },
     storage::Storage,
     types::{
-        AuthEvent, AuthFlow, ChallengeType, ClientId, PendingAuthChallenge, RefreshToken, User,
-        UserPoolClient, UserPoolId, UserStatus,
+        AuthEvent, AuthFlow, ChallengeType, ClientId, ExplicitAuthFlow, PendingAuthChallenge,
+        RefreshToken, User, UserPoolClient, UserPoolId, UserStatus,
     },
 };
 
@@ -136,6 +136,56 @@ pub(crate) fn challenge_type_name(challenge_name: ChallengeType) -> &'static str
         ChallengeType::DeviceSrpAuth => "DEVICE_SRP_AUTH",
         ChallengeType::DevicePasswordVerifier => "DEVICE_PASSWORD_VERIFIER",
         ChallengeType::AdminNoSrpAuth => "ADMIN_NO_SRP_AUTH",
+    }
+}
+
+fn explicit_flows_allow(client: &UserPoolClient, allowed: &[ExplicitAuthFlow]) -> bool {
+    client.explicit_auth_flows.is_empty()
+        || client
+            .explicit_auth_flows
+            .iter()
+            .any(|flow| allowed.contains(flow))
+}
+
+pub(crate) fn require_user_password_auth_flow(client: &UserPoolClient) -> Result<()> {
+    if explicit_flows_allow(
+        client,
+        &[
+            ExplicitAuthFlow::UserPasswordAuth,
+            ExplicitAuthFlow::AllowUserPasswordAuth,
+        ],
+    ) {
+        Ok(())
+    } else {
+        Err(AppError::NotAuthorized(
+            "USER_PASSWORD_AUTH is not enabled for this client".to_string(),
+        ))
+    }
+}
+
+pub(crate) fn require_admin_password_auth_flow(client: &UserPoolClient) -> Result<()> {
+    if explicit_flows_allow(
+        client,
+        &[
+            ExplicitAuthFlow::AdminNoSrpAuth,
+            ExplicitAuthFlow::AllowAdminUserPasswordAuth,
+        ],
+    ) {
+        Ok(())
+    } else {
+        Err(AppError::NotAuthorized(
+            "ADMIN_USER_PASSWORD_AUTH is not enabled for this client".to_string(),
+        ))
+    }
+}
+
+pub(crate) fn require_refresh_token_auth_flow(client: &UserPoolClient) -> Result<()> {
+    if explicit_flows_allow(client, &[ExplicitAuthFlow::AllowRefreshTokenAuth]) {
+        Ok(())
+    } else {
+        Err(AppError::NotAuthorized(
+            "REFRESH_TOKEN_AUTH is not enabled for this client".to_string(),
+        ))
     }
 }
 

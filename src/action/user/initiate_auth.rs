@@ -17,6 +17,7 @@ use crate::{
 use super::auth_flow::{
     AuthParameters, PasswordAuthResult, UserInitiateAuthFlow, authenticate_with_password,
     authenticate_with_refresh_token, build_auth_response, issue_authentication_result,
+    require_refresh_token_auth_flow, require_user_password_auth_flow,
 };
 
 #[derive(Debug, Deserialize)]
@@ -86,6 +87,7 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
 
     match UserInitiateAuthFlow::parse(&req.auth_flow)? {
         UserInitiateAuthFlow::UserPasswordAuth => {
+            require_user_password_auth_flow(&client)?;
             let params = req
                 .auth_parameters
                 .as_ref()
@@ -122,6 +124,7 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
             }
         }
         UserInitiateAuthFlow::RefreshTokenAuth => {
+            require_refresh_token_auth_flow(&client)?;
             let params = req
                 .auth_parameters
                 .as_ref()

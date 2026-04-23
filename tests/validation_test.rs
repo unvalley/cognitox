@@ -694,6 +694,68 @@ async fn test_update_user_pool_client_invalid_callback_url() {
 }
 
 #[tokio::test]
+async fn test_initiate_auth_rejects_flow_not_enabled_for_client() {
+    let client = TestClient::new();
+
+    let pool_response = client
+        .cognito_request("CreateUserPool", json!({"PoolName": "test-pool"}))
+        .await;
+    let pool_id = pool_response["UserPool"]["Id"].as_str().unwrap();
+
+    let client_response = client
+        .cognito_request(
+            "CreateUserPoolClient",
+            json!({
+                "UserPoolId": pool_id,
+                "ClientName": "refresh-only-client",
+                "ExplicitAuthFlows": ["ALLOW_REFRESH_TOKEN_AUTH"]
+            }),
+        )
+        .await;
+    let client_id = client_response["UserPoolClient"]["ClientId"]
+        .as_str()
+        .unwrap();
+
+    client
+        .cognito_request(
+            "SignUp",
+            json!({
+                "ClientId": client_id,
+                "Username": "testuser",
+                "Password": "password123"
+            }),
+        )
+        .await;
+    client
+        .cognito_request(
+            "AdminConfirmSignUp",
+            json!({
+                "UserPoolId": pool_id,
+                "Username": "testuser"
+            }),
+        )
+        .await;
+
+    let response = client
+        .cognito_request_raw(
+            "InitiateAuth",
+            json!({
+                "ClientId": client_id,
+                "AuthFlow": "USER_PASSWORD_AUTH",
+                "AuthParameters": {
+                    "USERNAME": "testuser",
+                    "PASSWORD": "password123"
+                }
+            }),
+        )
+        .await;
+
+    assert_eq!(response.status(), 401);
+    let body: serde_json::Value = response.json().await.unwrap();
+    assert_eq!(body["__type"], "NotAuthorizedException");
+}
+
+#[tokio::test]
 async fn test_admin_delete_user_cascades_refresh_tokens_and_group_membership() {
     let client = TestClient::new();
 
