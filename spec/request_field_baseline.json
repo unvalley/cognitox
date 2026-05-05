@@ -163,10 +163,7 @@
         "extra": []
       },
       "response": {
-        "missing": [
-          "Groups",
-          "NextToken"
-        ],
+        "missing": [],
         "extra": []
       }
     },
@@ -577,6 +574,17 @@
         "extra": []
       }
     },
+    "DescribeUserPoolClient": {
+      "path": "src/action/user_pool/describe_user_pool_client.rs",
+      "request": {
+        "missing": [],
+        "extra": []
+      },
+      "response": {
+        "missing": [],
+        "extra": []
+      }
+    },
     "DescribeUserPoolDomain": {
       "path": "src/action/user_pool/describe_user_pool_domain.rs",
       "request": {
@@ -645,6 +653,17 @@
     },
     "GetLogDeliveryConfiguration": {
       "path": "src/action/user_pool/get_log_delivery_configuration.rs",
+      "request": {
+        "missing": [],
+        "extra": []
+      },
+      "response": {
+        "missing": [],
+        "extra": []
+      }
+    },
+    "GetSigningCertificate": {
+      "path": "src/action/user_pool/get_signing_certificate.rs",
       "request": {
         "missing": [],
         "extra": []
@@ -749,10 +768,7 @@
         "extra": []
       },
       "response": {
-        "missing": [
-          "Groups",
-          "NextToken"
-        ],
+        "missing": [],
         "extra": []
       }
     },
@@ -780,6 +796,17 @@
     },
     "ListTagsForResource": {
       "path": "src/action/user_pool/list_tags_for_resource.rs",
+      "request": {
+        "missing": [],
+        "extra": []
+      },
+      "response": {
+        "missing": [],
+        "extra": []
+      }
+    },
+    "ListTerms": {
+      "path": "src/action/user_pool/list_terms.rs",
       "request": {
         "missing": [],
         "extra": []
@@ -829,10 +856,7 @@
         "extra": []
       },
       "response": {
-        "missing": [
-          "NextToken",
-          "Users"
-        ],
+        "missing": [],
         "extra": []
       }
     },
@@ -1023,6 +1047,17 @@
         "extra": []
       }
     },
+    "UpdateTerms": {
+      "path": "src/action/user_pool/update_terms.rs",
+      "request": {
+        "missing": [],
+        "extra": []
+      },
+      "response": {
+        "missing": [],
+        "extra": []
+      }
+    },
     "UpdateUserAttributes": {
       "path": "src/action/user/update_user_attributes.rs",
       "request": {
@@ -1036,6 +1071,28 @@
     },
     "UpdateUserPool": {
       "path": "src/action/user_pool/update_user_pool.rs",
+      "request": {
+        "missing": [],
+        "extra": []
+      },
+      "response": {
+        "missing": [],
+        "extra": []
+      }
+    },
+    "UpdateUserPoolClient": {
+      "path": "src/action/user_pool/update_user_pool_client.rs",
+      "request": {
+        "missing": [],
+        "extra": []
+      },
+      "response": {
+        "missing": [],
+        "extra": []
+      }
+    },
+    "VerifySoftwareToken": {
+      "path": "src/action/user/verify_software_token.rs",
       "request": {
         "missing": [],
         "extra": []

@@ -4,7 +4,7 @@ Based on [Amazon Cognito User Pools API Reference](https://docs.aws.amazon.com/c
 
 ## cognito-idp
 
-80% spec-aligned (95/119)
+85% spec-aligned (101/119)
 
 ### Admin Operations
 - [x] AdminAddUserToGroup ([spec](https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_AdminAddUserToGroup.html), [cognitox](src/action/group/admin_add_user_to_group.rs))
@@ -44,9 +44,9 @@ Based on [Amazon Cognito User Pools API Reference](https://docs.aws.amazon.com/c
 ### User Pool Client Operations
 - [ ] CreateUserPoolClient ([spec](https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_CreateUserPoolClient.html), [cognitox](src/action/user_pool/create_user_pool_client.rs))
 - [x] DeleteUserPoolClient ([spec](https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_DeleteUserPoolClient.html), [cognitox](src/action/user_pool/delete_user_pool_client.rs))
-- [ ] DescribeUserPoolClient ([spec](https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_DescribeUserPoolClient.html), [cognitox](src/action/user_pool/describe_user_pool_client.rs))
+- [x] DescribeUserPoolClient ([spec](https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_DescribeUserPoolClient.html), [cognitox](src/action/user_pool/describe_user_pool_client.rs))
 - [x] ListUserPoolClients ([spec](https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_ListUserPoolClients.html), [cognitox](src/action/user_pool/list_user_pool_clients.rs))
-- [ ] UpdateUserPoolClient ([spec](https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_UpdateUserPoolClient.html), [cognitox](src/action/user_pool/update_user_pool_client.rs))
+- [x] UpdateUserPoolClient ([spec](https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_UpdateUserPoolClient.html), [cognitox](src/action/user_pool/update_user_pool_client.rs))
 
 ### User Pool Domain Operations
 - [ ] CreateUserPoolDomain ([spec](https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_CreateUserPoolDomain.html), [cognitox](src/action/user_pool/create_user_pool_domain.rs))
@@ -78,7 +78,7 @@ Based on [Amazon Cognito User Pools API Reference](https://docs.aws.amazon.com/c
 ### MFA Operations
 - [x] AssociateSoftwareToken ([spec](https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_AssociateSoftwareToken.html), [cognitox](src/action/user/associate_software_token.rs))
 - [x] SetUserMFAPreference ([spec](https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_SetUserMFAPreference.html), [cognitox](src/action/user/set_user_mfa_preference.rs))
-- [ ] VerifySoftwareToken ([spec](https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_VerifySoftwareToken.html), [cognitox](src/action/user/verify_software_token.rs))
+- [x] VerifySoftwareToken ([spec](https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_VerifySoftwareToken.html), [cognitox](src/action/user/verify_software_token.rs))
 - [x] GetUserPoolMfaConfig ([spec](https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_GetUserPoolMfaConfig.html), [cognitox](src/action/user_pool/get_user_pool_mfa_config.rs))
 - [x] SetUserPoolMfaConfig ([spec](https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_SetUserPoolMfaConfig.html), [cognitox](src/action/user_pool/set_user_pool_mfa_config.rs))
 - [x] SetUserSettings ([spec](https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_SetUserSettings.html), [cognitox](src/action/user/set_user_settings.rs))
@@ -138,8 +138,8 @@ Based on [Amazon Cognito User Pools API Reference](https://docs.aws.amazon.com/c
 - [x] CreateTerms ([spec](https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_CreateTerms.html), [cognitox](src/action/user_pool/create_terms.rs))
 - [x] DeleteTerms ([spec](https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_DeleteTerms.html), [cognitox](src/action/user_pool/delete_terms.rs))
 - [x] DescribeTerms ([spec](https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_DescribeTerms.html), [cognitox](src/action/user_pool/describe_terms.rs))
-- [ ] ListTerms ([spec](https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_ListTerms.html), [cognitox](src/action/user_pool/list_terms.rs))
-- [ ] UpdateTerms ([spec](https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_UpdateTerms.html), [cognitox](src/action/user_pool/update_terms.rs))
+- [x] ListTerms ([spec](https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_ListTerms.html), [cognitox](src/action/user_pool/list_terms.rs))
+- [x] UpdateTerms ([spec](https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_UpdateTerms.html), [cognitox](src/action/user_pool/update_terms.rs))
 
 ### Risk Configuration Operations
 - [x] DescribeRiskConfiguration ([spec](https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_DescribeRiskConfiguration.html), [cognitox](src/action/user_pool/describe_risk_configuration.rs))
@@ -163,6 +163,6 @@ Based on [Amazon Cognito User Pools API Reference](https://docs.aws.amazon.com/c
 
 ### Other Operations
 - [x] AddCustomAttributes ([spec](https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_AddCustomAttributes.html), [cognitox](src/action/user_pool/add_custom_attributes.rs))
-- [ ] GetSigningCertificate ([spec](https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_GetSigningCertificate.html), [cognitox](src/action/user_pool/get_signing_certificate.rs))
+- [x] GetSigningCertificate ([spec](https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_GetSigningCertificate.html), [cognitox](src/action/user_pool/get_signing_certificate.rs))
 - [ ] UpdateAuthEventFeedback ([spec](https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_UpdateAuthEventFeedback.html), [cognitox](src/action/user/update_auth_event_feedback.rs))
 - [x] UpdateDeviceStatus ([spec](https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_UpdateDeviceStatus.html), [cognitox](src/action/user/update_device_status.rs))

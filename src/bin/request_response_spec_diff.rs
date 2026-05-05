@@ -217,21 +217,17 @@ fn parse_top_level_json_object_keys(object_lines: &[String]) -> Vec<String> {
     keys
 }
 
-fn extract_json_response_fields(path: &Path) -> Result<Option<Vec<String>>, String> {
-    let content =
-        fs::read_to_string(path).map_err(|e| format!("failed to read {}: {e}", path.display()))?;
-    let lines: Vec<&str> = content.lines().collect();
-
+fn collect_json_object_after_marker(lines: &[&str], marker: &str) -> Option<Vec<String>> {
     let mut object_lines = Vec::new();
     let mut collecting = false;
     let mut depth = 0i32;
 
     for line in lines {
         if !collecting {
-            let Some(ok_pos) = line.find("Ok(json!(") else {
+            let Some(marker_pos) = line.find(marker) else {
                 continue;
             };
-            let remain = &line[ok_pos + "Ok(json!(".len()..];
+            let remain = &line[marker_pos + marker.len()..];
             let Some(obj_start) = remain.find('{') else {
                 continue;
             };
@@ -246,18 +242,57 @@ fn extract_json_response_fields(path: &Path) -> Result<Option<Vec<String>>, Stri
             continue;
         }
 
-        object_lines.push(line.to_string());
+        object_lines.push((*line).to_string());
         depth += brace_delta(line);
         if depth <= 0 {
             break;
         }
     }
 
-    if object_lines.is_empty() {
-        return Ok(None);
+    (!object_lines.is_empty()).then_some(object_lines)
+}
+
+fn collect_response_index_keys(lines: &[&str]) -> Vec<String> {
+    let mut keys = Vec::new();
+
+    for line in lines {
+        let trimmed = line.trim_start();
+        let Some(rest) = trimmed.strip_prefix("response[\"") else {
+            continue;
+        };
+        let Some(end_quote) = rest.find('"') else {
+            continue;
+        };
+        let key = &rest[..end_quote];
+        let after_quote = &rest[end_quote + 1..];
+        if after_quote.trim_start().starts_with(']') {
+            keys.push(key.to_string());
+        }
     }
 
-    Ok(Some(parse_top_level_json_object_keys(&object_lines)))
+    keys
+}
+
+fn extract_json_response_fields(path: &Path) -> Result<Option<Vec<String>>, String> {
+    let content =
+        fs::read_to_string(path).map_err(|e| format!("failed to read {}: {e}", path.display()))?;
+    let lines: Vec<&str> = content.lines().collect();
+
+    if let Some(object_lines) = collect_json_object_after_marker(&lines, "Ok(json!(") {
+        return Ok(Some(parse_top_level_json_object_keys(&object_lines)));
+    }
+
+    if let Some(object_lines) =
+        collect_json_object_after_marker(&lines, "let mut response = json!(")
+    {
+        let mut keys = parse_top_level_json_object_keys(&object_lines);
+        keys.extend(collect_response_index_keys(&lines));
+        keys.sort();
+        keys.dedup();
+        return Ok(Some(keys));
+    }
+
+    Ok(None)
 }
 
 fn extract_response_fields(path: &Path) -> Result<Vec<String>, String> {
