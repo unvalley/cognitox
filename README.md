@@ -87,9 +87,10 @@ http://localhost:9229/admin/
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `COGNITOX_PORT` | `9229` | Server port |
-| `RUST_LOG` | `info` | Log level (`debug` for verbose output) |
+| `RUST_LOG` | `cognitox=info,tower_http=info` | Log filter (e.g. `debug` or `cognitox=debug,tower_http=info`) |
 | `COGNITOX_STORAGE_MODE` | `persistent` | Storage mode: `persistent` (file-backed) or `memory` (no persistence). |
 | `COGNITOX_DATA_FILE` | `cognitox-data.json` | Path to persist emulator state (JSON snapshot) when storage mode is `persistent`. |
+| `COGNITOX_ISSUER_BASE_URL` | `http://localhost:<COGNITOX_PORT>` | Base URL used as the JWT `iss` claim and in OpenID discovery. |
 
 ### Persistence
 
@@ -109,7 +110,7 @@ COGNITOX_STORAGE_MODE=memory cargo run
 
 ## API Coverage
 
-cognitox has all 119 API operations but some have partial functionality or known limitations (see below).
+cognitox routes all 119 cognito-idp operations, with **101 (85%) currently spec-aligned**. The remaining 18 have known partial functionality or limitations (see below).
 See [COVERAGE.md](COVERAGE.md) for the full list with links to each handler. If you find any missing or incorrectly implemented operations, please open an issue.
 
 ## Spec Drift Check
@@ -118,10 +119,10 @@ See [spec/README.md](spec/README.md).
 
 ## Known Limitations
 
-- **SRP authentication** (`USER_SRP_AUTH`) -- partially implemented
+- **Auth flows** -- `USER_PASSWORD_AUTH`, `REFRESH_TOKEN_AUTH`, `ADMIN_USER_PASSWORD_AUTH`, and `ADMIN_NO_SRP_AUTH` are supported. `USER_SRP_AUTH` and `USER_AUTH` return `NotImplementedException`.
 - **Lambda triggers** -- not supported (no pre/post auth hooks)
-- **Email/SMS delivery** -- confirmation codes are returned in API responses but not sent
-- **Password policy per pool** -- only global min/max length is enforced
+- **Email/SMS delivery** -- nothing is sent. SignUp / ForgotPassword / ResendConfirmationCode return `CodeDeliveryDetails` only; the actual confirmation code is logged to the server (`tracing::info!`) and persisted in the data file.
+- **Password policy per pool** -- the per-pool `PasswordPolicy` is stored and returned but not enforced. A fixed global rule (length 6–256) is applied to all passwords.
 - **MFA enforcement** -- MFA operations are implemented but not enforced during auth
 - **Advanced security features** -- risk configuration is stored but not evaluated
 
