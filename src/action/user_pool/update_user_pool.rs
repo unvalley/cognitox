@@ -97,76 +97,77 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
         verification_message_template: req.verification_message_template.clone(),
     })?;
 
-    let mut pool = storage
-        .get_user_pool(&req.user_pool_id)
+    let user_pool_id = req.user_pool_id.clone();
+    let result = storage
+        .update_user_pool_with(&user_pool_id, |pool| -> Result<()> {
+            if let Some(pool_name) = req.pool_name {
+                validate_pool_name(&pool_name)?;
+                pool.name = pool_name.trim().to_string();
+            }
+            if let Some(value) = req.account_recovery_setting {
+                pool.account_recovery_setting = Some(value);
+            }
+            if let Some(value) = req.admin_create_user_config {
+                pool.admin_create_user_config = Some(value);
+            }
+            if let Some(value) = req.auto_verified_attributes {
+                pool.auto_verified_attributes = Some(value);
+            }
+            if let Some(value) = req.deletion_protection {
+                pool.deletion_protection = Some(value);
+            }
+            if let Some(value) = req.device_configuration {
+                pool.device_configuration = Some(value);
+            }
+            if let Some(value) = req.email_configuration {
+                pool.email_configuration = Some(value);
+            }
+            if let Some(value) = req.email_verification_message {
+                pool.email_verification_message = Some(value);
+            }
+            if let Some(value) = req.email_verification_subject {
+                pool.email_verification_subject = Some(value);
+            }
+            if let Some(value) = req.lambda_config {
+                pool.lambda_config = Some(value);
+            }
+            if let Some(value) = req.mfa_configuration {
+                pool.mfa_configuration = Some(value);
+            }
+            if let Some(value) = req.policies {
+                pool.policies = Some(value);
+            }
+            if let Some(value) = req.sms_authentication_message {
+                pool.sms_authentication_message = Some(value);
+            }
+            if let Some(value) = req.sms_configuration {
+                pool.sms_configuration = Some(value);
+            }
+            if let Some(value) = req.sms_verification_message {
+                pool.sms_verification_message = Some(value);
+            }
+            if let Some(value) = req.user_attribute_update_settings {
+                pool.user_attribute_update_settings = Some(value);
+            }
+            if let Some(value) = req.user_pool_add_ons {
+                pool.user_pool_add_ons = Some(value);
+            }
+            if let Some(value) = req.user_pool_tags {
+                pool.user_pool_tags = Some(value);
+            }
+            if let Some(value) = req.user_pool_tier {
+                pool.user_pool_tier = Some(value);
+            }
+            if let Some(value) = req.verification_message_template {
+                pool.verification_message_template = Some(value);
+            }
+
+            pool.last_modified_date = Utc::now();
+            Ok(())
+        })
         .await
         .ok_or(AppError::UserPoolNotFound)?;
-
-    if let Some(pool_name) = req.pool_name {
-        validate_pool_name(&pool_name)?;
-        pool.name = pool_name.trim().to_string();
-    }
-    if let Some(value) = req.account_recovery_setting {
-        pool.account_recovery_setting = Some(value);
-    }
-    if let Some(value) = req.admin_create_user_config {
-        pool.admin_create_user_config = Some(value);
-    }
-    if let Some(value) = req.auto_verified_attributes {
-        pool.auto_verified_attributes = Some(value);
-    }
-    if let Some(value) = req.deletion_protection {
-        pool.deletion_protection = Some(value);
-    }
-    if let Some(value) = req.device_configuration {
-        pool.device_configuration = Some(value);
-    }
-    if let Some(value) = req.email_configuration {
-        pool.email_configuration = Some(value);
-    }
-    if let Some(value) = req.email_verification_message {
-        pool.email_verification_message = Some(value);
-    }
-    if let Some(value) = req.email_verification_subject {
-        pool.email_verification_subject = Some(value);
-    }
-    if let Some(value) = req.lambda_config {
-        pool.lambda_config = Some(value);
-    }
-    if let Some(value) = req.mfa_configuration {
-        pool.mfa_configuration = Some(value);
-    }
-    if let Some(value) = req.policies {
-        pool.policies = Some(value);
-    }
-    if let Some(value) = req.sms_authentication_message {
-        pool.sms_authentication_message = Some(value);
-    }
-    if let Some(value) = req.sms_configuration {
-        pool.sms_configuration = Some(value);
-    }
-    if let Some(value) = req.sms_verification_message {
-        pool.sms_verification_message = Some(value);
-    }
-    if let Some(value) = req.user_attribute_update_settings {
-        pool.user_attribute_update_settings = Some(value);
-    }
-    if let Some(value) = req.user_pool_add_ons {
-        pool.user_pool_add_ons = Some(value);
-    }
-    if let Some(value) = req.user_pool_tags {
-        pool.user_pool_tags = Some(value);
-    }
-    if let Some(value) = req.user_pool_tier {
-        pool.user_pool_tier = Some(value);
-    }
-    if let Some(value) = req.verification_message_template {
-        pool.verification_message_template = Some(value);
-    }
-
-    pool.last_modified_date = Utc::now();
-
-    storage.update_user_pool(pool).await;
+    result?;
 
     Ok(serde_json::json!({}))
 }

@@ -38,7 +38,14 @@ pub(crate) trait PersistenceBackend: Send + Sync + 'static {
     fn load(&self) -> Result<PersistedStorageState, String>;
 
     /// Save the given state snapshot.
-    fn save(&self, state: &PersistedStorageState) -> Result<(), String>;
+    #[cfg(test)]
+    fn save(&self, state: &PersistedStorageState) -> Result<(), String> {
+        let snapshot = encode_snapshot(state)?;
+        self.save_snapshot(&snapshot)
+    }
+
+    /// Save an already encoded snapshot.
+    fn save_snapshot(&self, snapshot: &[u8]) -> Result<(), String>;
 
     /// Return the flush interval if this backend needs a periodic flush loop.
     /// Returning `None` means no background flushing (e.g. memory-only).
@@ -56,7 +63,7 @@ impl PersistenceBackend for NullBackend {
         Ok(PersistedStorageState::default())
     }
 
-    fn save(&self, _state: &PersistedStorageState) -> Result<(), String> {
+    fn save_snapshot(&self, _snapshot: &[u8]) -> Result<(), String> {
         Ok(())
     }
 
@@ -89,9 +96,8 @@ impl PersistenceBackend for FileBackend {
         }
     }
 
-    fn save(&self, state: &PersistedStorageState) -> Result<(), String> {
-        let snapshot = encode_snapshot(state)?;
-        write_snapshot_file(&self.data_file, &snapshot)
+    fn save_snapshot(&self, snapshot: &[u8]) -> Result<(), String> {
+        write_snapshot_file(&self.data_file, snapshot)
     }
 
     fn flush_interval(&self) -> Option<Duration> {
@@ -186,6 +192,14 @@ pub(crate) struct PersistedStorageState {
     branding_store: BrandingStore,
 }
 
+#[derive(Debug, Serialize)]
+struct PersistedStorageStateRef<'a> {
+    pool_store: &'a PoolStore,
+    principal_store: &'a PrincipalStore,
+    group_store: &'a GroupStore,
+    branding_store: &'a BrandingStore,
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 struct PersistedSnapshot {
     version: u32,
@@ -222,7 +236,7 @@ fn decode_snapshot(content: &str) -> Result<PersistedStorageState, String> {
         .map_err(|e| format!("Failed to deserialize snapshot payload: {e}"))
 }
 
-fn encode_snapshot(state: &PersistedStorageState) -> Result<Vec<u8>, String> {
+fn encode_snapshot<T: Serialize>(state: &T) -> Result<Vec<u8>, String> {
     let payload =
         bincode::serialize(state).map_err(|e| format!("Failed to serialize storage state: {e}"))?;
     let snapshot = PersistedSnapshot {
@@ -309,20 +323,18 @@ impl Storage {
                 let Some(branding_store) = branding_store.upgrade() else {
                     break;
                 };
-                let state = Storage::capture_state(
+                let snapshot = match Storage::encode_current_state(
                     &pool_store,
                     &principal_store,
                     &group_store,
                     &branding_store,
                 )
-                .await;
-                let snapshot = {
-                    match encode_snapshot(&state) {
-                        Ok(snapshot) => snapshot,
-                        Err(e) => {
-                            error!("Failed to serialize storage snapshot: {e}");
-                            continue;
-                        }
+                .await
+                {
+                    Ok(snapshot) => snapshot,
+                    Err(e) => {
+                        error!("Failed to serialize storage snapshot: {e}");
+                        continue;
                     }
                 };
 
@@ -330,7 +342,7 @@ impl Storage {
                     continue;
                 }
 
-                if let Err(e) = backend.save(&state) {
+                if let Err(e) = backend.save_snapshot(&snapshot) {
                     error!("Failed to persist storage snapshot: {e}");
                     continue;
                 }
@@ -340,35 +352,35 @@ impl Storage {
         });
     }
 
-    async fn capture_state(
+    async fn encode_current_state(
         pool_store: &RwLock<PoolStore>,
         principal_store: &RwLock<PrincipalStore>,
         group_store: &RwLock<GroupStore>,
         branding_store: &RwLock<BrandingStore>,
-    ) -> PersistedStorageState {
+    ) -> Result<Vec<u8>, String> {
         let pool_store = pool_store.read().await;
         let principal_store = principal_store.read().await;
         let group_store = group_store.read().await;
         let branding_store = branding_store.read().await;
 
-        PersistedStorageState {
-            pool_store: pool_store.clone(),
-            principal_store: principal_store.clone(),
-            group_store: group_store.clone(),
-            branding_store: branding_store.clone(),
-        }
+        encode_snapshot(&PersistedStorageStateRef {
+            pool_store: &pool_store,
+            principal_store: &principal_store,
+            group_store: &group_store,
+            branding_store: &branding_store,
+        })
     }
 
     /// Flush in-memory state to the persistence backend immediately.
     pub async fn flush_persistence(&self) -> Result<(), String> {
-        let state = Self::capture_state(
+        let snapshot = Self::encode_current_state(
             &self.pool_store,
             &self.principal_store,
             &self.group_store,
             &self.branding_store,
         )
-        .await;
-        self.backend.save(&state)
+        .await?;
+        self.backend.save_snapshot(&snapshot)
     }
 
     /// Returns a description of the active storage backend.
@@ -387,6 +399,20 @@ impl Storage {
     pub async fn get_user_pool(&self, id: &UserPoolId) -> Option<UserPool> {
         let store = self.pool_store.read().await;
         store.user_pools.get(id).cloned()
+    }
+
+    pub async fn user_pool_exists(&self, id: &UserPoolId) -> bool {
+        let store = self.pool_store.read().await;
+        store.user_pools.contains_key(id)
+    }
+
+    pub async fn with_user_pool<R>(
+        &self,
+        id: &UserPoolId,
+        f: impl FnOnce(&UserPool) -> R,
+    ) -> Option<R> {
+        let store = self.pool_store.read().await;
+        store.user_pools.get(id).map(f)
     }
 
     pub async fn delete_user_pool(&self, id: &UserPoolId) -> Option<UserPool> {
@@ -507,6 +533,15 @@ impl Storage {
         }
     }
 
+    pub async fn update_user_pool_with<R>(
+        &self,
+        id: &UserPoolId,
+        f: impl FnOnce(&mut UserPool) -> R,
+    ) -> Option<R> {
+        let mut store = self.pool_store.write().await;
+        store.user_pools.get_mut(id).map(f)
+    }
+
     // ==================== User Pool Client Operations ====================
 
     pub async fn create_user_pool_client(&self, client: UserPoolClient) -> UserPoolClient {
@@ -520,6 +555,15 @@ impl Storage {
     pub async fn get_user_pool_client(&self, client_id: &ClientId) -> Option<UserPoolClient> {
         let store = self.pool_store.read().await;
         store.user_pool_clients.get(client_id).cloned()
+    }
+
+    pub async fn with_user_pool_client<R>(
+        &self,
+        client_id: &ClientId,
+        f: impl FnOnce(&UserPoolClient) -> R,
+    ) -> Option<R> {
+        let store = self.pool_store.read().await;
+        store.user_pool_clients.get(client_id).map(f)
     }
 
     pub async fn delete_user_pool_client(&self, client_id: &ClientId) -> Option<UserPoolClient> {
@@ -547,6 +591,15 @@ impl Storage {
         } else {
             None
         }
+    }
+
+    pub async fn update_user_pool_client_with<R>(
+        &self,
+        client_id: &ClientId,
+        f: impl FnOnce(&mut UserPoolClient) -> R,
+    ) -> Option<R> {
+        let mut store = self.pool_store.write().await;
+        store.user_pool_clients.get_mut(client_id).map(f)
     }
 
     // ==================== User Pool Domain Operations ====================
@@ -620,7 +673,9 @@ impl Storage {
         let store = self.pool_store.read().await;
         store
             .identity_providers
-            .get(&(user_pool_id.clone(), provider_name.to_string()))
+            .iter()
+            .find(|((pool_id, name), _)| pool_id == user_pool_id && name == provider_name)
+            .map(|(_, provider)| provider)
             .cloned()
     }
 
@@ -706,7 +761,11 @@ impl Storage {
         let store = self.pool_store.read().await;
         store
             .resource_servers
-            .get(&(user_pool_id.clone(), identifier.to_string()))
+            .iter()
+            .find(|((pool_id, stored_identifier), _)| {
+                pool_id == user_pool_id && stored_identifier == identifier
+            })
+            .map(|(_, resource_server)| resource_server)
             .cloned()
     }
 
@@ -766,6 +825,11 @@ impl Storage {
         store.users.get(id).cloned()
     }
 
+    pub async fn with_user<R>(&self, id: &UserId, f: impl FnOnce(&User) -> R) -> Option<R> {
+        let store = self.principal_store.read().await;
+        store.users.get(id).map(f)
+    }
+
     pub async fn get_user_by_username(
         &self,
         user_pool_id: &UserPoolId,
@@ -774,7 +838,11 @@ impl Storage {
         let store = self.principal_store.read().await;
         let user_id = store
             .username_index
-            .get(&(user_pool_id.clone(), username.to_string()))?;
+            .iter()
+            .find(|((pool_id, stored_username), _)| {
+                pool_id == user_pool_id && stored_username == username
+            })
+            .map(|(_, user_id)| user_id)?;
         store.users.get(user_id).cloned()
     }
 
@@ -786,6 +854,15 @@ impl Storage {
         } else {
             None
         }
+    }
+
+    pub async fn update_user_with<R>(
+        &self,
+        id: &UserId,
+        f: impl FnOnce(&mut User) -> R,
+    ) -> Option<R> {
+        let mut store = self.principal_store.write().await;
+        store.users.get_mut(id).map(f)
     }
 
     pub async fn delete_user(&self, id: &UserId) -> Option<User> {
@@ -838,6 +915,15 @@ impl Storage {
             .collect()
     }
 
+    pub async fn count_users(&self, user_pool_id: &UserPoolId) -> usize {
+        let store = self.principal_store.read().await;
+        store
+            .users
+            .values()
+            .filter(|u| &u.user_pool_id == user_pool_id)
+            .count()
+    }
+
     // ==================== Device Operations ====================
 
     pub async fn put_device(&self, device: Device) -> Device {
@@ -852,7 +938,11 @@ impl Storage {
         let store = self.principal_store.read().await;
         store
             .devices
-            .get(&(*user_id, device_key.to_string()))
+            .iter()
+            .find(|((stored_user_id, stored_device_key), _)| {
+                stored_user_id == user_id && stored_device_key == device_key
+            })
+            .map(|(_, device)| device)
             .cloned()
     }
 
@@ -1075,7 +1165,9 @@ impl Storage {
         let store = self.group_store.read().await;
         store
             .groups
-            .get(&(user_pool_id.clone(), group_name.clone()))
+            .iter()
+            .find(|((pool_id, name), _)| pool_id == user_pool_id && name == group_name)
+            .map(|(_, group)| group)
             .cloned()
     }
 
@@ -1348,11 +1440,15 @@ impl Storage {
         terms_name: &str,
     ) -> Option<TermsDocument> {
         let store = self.pool_store.read().await;
-        let id = store.terms_name_index.get(&(
-            user_pool_id.clone(),
-            client_id.clone(),
-            terms_name.to_string(),
-        ))?;
+        let id = store
+            .terms_name_index
+            .iter()
+            .find(|((pool_id, stored_client_id, stored_terms_name), _)| {
+                pool_id == user_pool_id
+                    && stored_client_id == client_id
+                    && stored_terms_name == terms_name
+            })
+            .map(|(_, terms_id)| terms_id)?;
         store.terms_documents.get(id).cloned()
     }
 

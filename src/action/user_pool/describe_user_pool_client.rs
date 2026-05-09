@@ -23,22 +23,24 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
     let req: Request = serde_json::from_value(body)
         .map_err(|e| AppError::InvalidParameter(format!("Invalid request: {}", e)))?;
 
-    storage
-        .get_user_pool(&req.user_pool_id)
-        .await
-        .ok_or(AppError::UserPoolNotFound)?;
-
-    let client = storage
-        .get_user_pool_client(&req.client_id)
-        .await
-        .ok_or(AppError::UserPoolClientNotFound)?;
-
-    if client.user_pool_id != req.user_pool_id {
-        return Err(AppError::UserPoolClientNotFound);
+    if !storage.user_pool_exists(&req.user_pool_id).await {
+        return Err(AppError::UserPoolNotFound);
     }
 
+    let user_pool_client = storage
+        .with_user_pool_client(&req.client_id, |client| {
+            if client.user_pool_id != req.user_pool_id {
+                return Err(AppError::UserPoolClientNotFound);
+            }
+
+            Ok(build_client_response(client))
+        })
+        .await
+        .ok_or(AppError::UserPoolClientNotFound)?;
+    let user_pool_client = user_pool_client?;
+
     Ok(json!({
-        "UserPoolClient": build_client_response(&client)
+        "UserPoolClient": user_pool_client
     }))
 }
 

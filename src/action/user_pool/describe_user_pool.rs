@@ -21,14 +21,20 @@ struct Request {
 pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
     let req: Request = parse_request(body)?;
 
-    let pool = storage
-        .get_user_pool(&req.user_pool_id)
+    if !storage.user_pool_exists(&req.user_pool_id).await {
+        return Err(AppError::UserPoolNotFound);
+    }
+
+    let estimated_number_of_users = storage.count_users(&req.user_pool_id).await;
+    let user_pool = storage
+        .with_user_pool(&req.user_pool_id, |pool| {
+            build_user_pool_view(pool, estimated_number_of_users)
+        })
         .await
         .ok_or(AppError::UserPoolNotFound)?;
-    let estimated_number_of_users = storage.list_users(&pool.id).await.len();
 
     Ok(json!({
-        "UserPool": build_user_pool_view(&pool, estimated_number_of_users)
+        "UserPool": user_pool
     }))
 }
 
