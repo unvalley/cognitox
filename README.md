@@ -31,6 +31,13 @@ docker run -p 9229:9229 cognitox
 ### With Cargo
 
 ```bash
+cargo binstall cognitox
+cognitox
+```
+
+If a pre-built binary is not available for your platform, install from source:
+
+```bash
 cargo install cognitox
 cognitox
 ```

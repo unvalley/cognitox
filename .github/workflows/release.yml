@@ -70,10 +70,97 @@ jobs:
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.TAG_NAME }}
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
 
+  build_binaries:
+    name: Build Binary (${{ matrix.target }})
+    runs-on: ${{ matrix.os }}
+    needs: verify
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+          - os: macos-13
+            target: x86_64-apple-darwin
+          - os: macos-14
+            target: aarch64-apple-darwin
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          ref: refs/tags/${{ env.TAG_NAME }}
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
+        with:
+          toolchain: 1.94.1
+          targets: ${{ matrix.target }}
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@fe02b34f77f8bc703788d5817da081398fad5dd2 # v4.0.0
+        with:
+          version: 9
+
+      - name: Install Node
+        uses: actions/setup-node@1d0ff469b7ec7b3cb9d8673fde0c81c44821de2a # v4.2.0
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: ui/pnpm-lock.yaml
+
+      - name: Build UI (embedded into binary by rust-embed)
+        working-directory: ui
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm run build
+
+      - name: Build release binary
+        run: cargo build --release --locked --target ${{ matrix.target }}
+
+      - name: Package release binary
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          version="${TAG_NAME#v}"
+          package="cognitox-${{ matrix.target }}-v${version}"
+          mkdir "${package}"
+          cp "target/${{ matrix.target }}/release/cognitox" "${package}/"
+          tar -czf "${package}.tgz" "${package}"
+          shasum -a 256 "${package}.tgz" > "${package}.tgz.sha256"
+
+      - name: Package release binary
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          $version = $env:TAG_NAME -replace '^v', ''
+          $package = "cognitox-$env:TARGET-v$version"
+          New-Item -ItemType Directory -Path $package | Out-Null
+          Copy-Item "target\$env:TARGET\release\cognitox.exe" "$package\"
+          Compress-Archive -Path $package -DestinationPath "$package.zip"
+          $hash = (Get-FileHash -Algorithm SHA256 "$package.zip").Hash.ToLower()
+          "$hash  $package.zip" | Out-File -Encoding ascii "$package.zip.sha256"
+
+      - name: Upload release artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: release-${{ matrix.target }}
+          path: |
+            cognitox-${{ matrix.target }}-v*.tgz
+            cognitox-${{ matrix.target }}-v*.zip
+            cognitox-${{ matrix.target }}-v*.sha256
+          if-no-files-found: error
+
   release:
     name: Publish GitHub Release
     runs-on: ubuntu-latest
-    needs: verify
+    needs:
+      - verify
+      - build_binaries
     steps:
       - name: Checkout Repository
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
@@ -109,11 +196,19 @@ jobs:
             fi
           } > RELEASE_NOTES.md
 
+      - name: Download release artifacts
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          path: dist
+          pattern: release-*
+          merge-multiple: true
+
       - name: Publish to GitHub Releases
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           gh release create "${TAG_NAME}" \
+            dist/* \
             --title "${TAG_NAME}" \
             --notes-file RELEASE_NOTES.md
 
