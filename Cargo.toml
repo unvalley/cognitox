@@ -28,36 +28,23 @@ include = [
 axum = { version = "0.8", features = ["macros"] }
 tower = "0.5"
 tower-http = { version = "0.6", features = ["cors", "trace"] }
-
-# Async runtime
 tokio = { version = "1", features = ["full"] }
-
-# Serialization
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 bincode = "1"
 
-# Authentication
-jsonwebtoken = "9"
+jsonwebtoken = "10"
 uuid = { version = "1", features = ["v4", "serde"] }
 base64 = "0.22"
 rsa = { version = "0.9", features = ["std"] }
 sha2 = "0.10"
 hmac = "0.12"
 rand = "0.8"
-bcrypt = "0.16"
-
-# Error handling
+bcrypt = "0.19"
 thiserror = "2"
-
-# Logging
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-
-# Time
 chrono = { version = "0.4", features = ["serde"] }
-
-# CLI
 bpaf = { version = "0.9", features = ["derive"] }
 
 # Config
