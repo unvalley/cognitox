@@ -9,7 +9,8 @@ use tower_http::{
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 const DEFAULT_PORT: u16 = 9229;
-const DEFAULT_STORAGE_MODE: &str = "memory";
+const DEFAULT_STORAGE_MODE: &str = "persistent";
+const DEFAULT_DATA_FILE: &str = "cognitox-data.json";
 const DEFAULT_LOG_FILTER: &str = "cognitox=info,tower_http=info";
 
 /// AWS Cognito User Pools emulator for local development.
@@ -33,8 +34,8 @@ struct Cli {
     )]
     port: u16,
 
-    /// Storage mode: "memory" (no persistence) or "persistent" (file-backed).
-    /// When "persistent", --data-file is required.
+    /// Storage mode: "persistent" (file-backed, default) or "memory" (no persistence).
+    /// When "persistent", --data-file defaults to "cognitox-data.json".
     #[bpaf(
         long,
         env("COGNITOX_STORAGE_MODE"),
@@ -43,7 +44,8 @@ struct Cli {
     )]
     storage_mode: String,
 
-    /// Path to persist emulator state (JSON snapshot). Required when --storage-mode=persistent.
+    /// Path to persist emulator state (JSON snapshot).
+    /// Defaults to "cognitox-data.json" when --storage-mode=persistent.
     #[bpaf(short, long, env("COGNITOX_DATA_FILE"), argument("FILE"))]
     data_file: Option<PathBuf>,
 
@@ -70,9 +72,10 @@ impl Cli {
                 }
             }
             "persistent" => {
-                let path = self.data_file.clone().ok_or_else(|| {
-                    "--data-file is required when --storage-mode=persistent".to_string()
-                })?;
+                let path = self
+                    .data_file
+                    .clone()
+                    .unwrap_or_else(|| PathBuf::from(DEFAULT_DATA_FILE));
                 Ok(StorageConfig::persistent(path))
             }
             other => Err(format!(
