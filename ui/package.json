@@ -11,7 +11,7 @@
   },
   "dependencies": {
     "preact": "^10.29.1",
-    "preact-iso": "^2.11.1"
+    "preact-iso": "^2.12.0"
   },
   "devDependencies": {
     "@preact/preset-vite": "^2.10.5",
@@ -19,6 +19,6 @@
     "daisyui": "^5.5.19",
     "tailwindcss": "^4.2.2",
     "typescript": "^5.9.3",
-    "vite": "^7.3.1"
+    "vite": "^8.0.11"
   }
 }
