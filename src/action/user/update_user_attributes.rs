@@ -16,7 +16,7 @@ use crate::{
 
 use super::helpers::{
     apply_user_attribute_updates, mask_email, mask_phone_number, upsert_user_attribute,
-    verify_and_extract_user_id,
+    verify_and_extract_active_user_id,
 };
 
 #[derive(Debug, Deserialize)]
@@ -32,8 +32,9 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
     let req: Request = parse_request(body)?;
     let _ = &req.client_metadata;
 
-    let user_id =
-        verify_and_extract_user_id(&req.access_token).map_err(|_| AppError::InvalidAccessToken)?;
+    let user_id = verify_and_extract_active_user_id(storage, &req.access_token)
+        .await
+        .map_err(|_| AppError::InvalidAccessToken)?;
 
     let mut user = storage
         .get_user(&user_id)

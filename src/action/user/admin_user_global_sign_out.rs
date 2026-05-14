@@ -34,6 +34,7 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
 
     // Delete all refresh tokens for this user
     storage.delete_refresh_tokens_for_user(&user.id).await;
+    storage.invalidate_access_tokens_for_user(&user.id).await;
 
     Ok(json!({}))
 }

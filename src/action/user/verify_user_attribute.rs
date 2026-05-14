@@ -12,7 +12,7 @@ use crate::{
     types::UserAttribute,
 };
 
-use super::helpers::{normalize_confirmation_code, verify_and_extract_user_id};
+use super::helpers::{normalize_confirmation_code, verify_and_extract_active_user_id};
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "PascalCase")]
@@ -38,8 +38,9 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
         }
     };
 
-    let user_id =
-        verify_and_extract_user_id(&req.access_token).map_err(|_| AppError::InvalidAccessToken)?;
+    let user_id = verify_and_extract_active_user_id(storage, &req.access_token)
+        .await
+        .map_err(|_| AppError::InvalidAccessToken)?;
 
     let mut user = storage
         .get_user(&user_id)
@@ -167,7 +168,9 @@ mod tests {
         assert_eq!(code_result["CodeDeliveryDetails"]["AttributeName"], "email");
 
         // Get the code from storage (in real scenario, user receives via email)
-        let user_id = verify_and_extract_user_id(&access_token).unwrap();
+        let user_id = verify_and_extract_active_user_id(&storage, &access_token)
+            .await
+            .unwrap();
         let stored_code = storage.get_confirmation_code(&user_id).await.unwrap();
 
         // Verify the attribute

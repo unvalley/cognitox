@@ -13,7 +13,7 @@ use crate::{
 };
 
 use super::helpers::{
-    generate_confirmation_code, mask_email, mask_phone_number, verify_and_extract_user_id,
+    generate_confirmation_code, mask_email, mask_phone_number, verify_and_extract_active_user_id,
 };
 
 #[derive(Debug, Deserialize)]
@@ -30,8 +30,9 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
         .map_err(|e| AppError::InvalidParameter(format!("Invalid request: {}", e)))?;
     let _ = &req.client_metadata;
 
-    let user_id =
-        verify_and_extract_user_id(&req.access_token).map_err(|_| AppError::InvalidAccessToken)?;
+    let user_id = verify_and_extract_active_user_id(storage, &req.access_token)
+        .await
+        .map_err(|_| AppError::InvalidAccessToken)?;
 
     let user = storage
         .get_user(&user_id)

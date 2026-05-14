@@ -14,7 +14,7 @@ use crate::{
 
 use super::helpers::{
     EMAIL_OTP_FACTOR, SMS_MFA_FACTOR, SOFTWARE_TOKEN_MFA_FACTOR, remove_user_attribute,
-    upsert_user_attribute, verify_and_extract_user_id,
+    upsert_user_attribute, verify_and_extract_active_user_id,
 };
 
 #[derive(Debug, Deserialize)]
@@ -110,8 +110,9 @@ pub(crate) async fn apply_user_mfa_preferences(
 pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
     let req: Request = parse_request(body)?;
 
-    let user_id =
-        verify_and_extract_user_id(&req.access_token).map_err(|_| AppError::InvalidAccessToken)?;
+    let user_id = verify_and_extract_active_user_id(storage, &req.access_token)
+        .await
+        .map_err(|_| AppError::InvalidAccessToken)?;
 
     let mut user = storage
         .get_user(&user_id)
@@ -260,7 +261,9 @@ mod tests {
         let storage = Storage::new();
         let access_token = setup_and_get_token(&storage).await;
 
-        let user_id = verify_and_extract_user_id(&access_token).unwrap();
+        let user_id = verify_and_extract_active_user_id(&storage, &access_token)
+            .await
+            .unwrap();
         let user = storage.get_user(&user_id).await.unwrap();
         update_user_pool::handler(
             &storage,

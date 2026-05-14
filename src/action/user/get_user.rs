@@ -11,7 +11,8 @@ use crate::{
 };
 
 use super::helpers::{
-    build_mfa_options, build_user_attributes, preferred_mfa_setting, verify_and_extract_user_id,
+    build_mfa_options, build_user_attributes, preferred_mfa_setting,
+    verify_and_extract_active_user_id,
 };
 
 #[derive(Debug, Deserialize)]
@@ -24,8 +25,9 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
     let req: Request = serde_json::from_value(body)
         .map_err(|e| AppError::InvalidParameter(format!("Invalid request: {}", e)))?;
 
-    let user_id =
-        verify_and_extract_user_id(&req.access_token).map_err(|_| AppError::InvalidAccessToken)?;
+    let user_id = verify_and_extract_active_user_id(storage, &req.access_token)
+        .await
+        .map_err(|_| AppError::InvalidAccessToken)?;
 
     let user = storage
         .get_user(&user_id)

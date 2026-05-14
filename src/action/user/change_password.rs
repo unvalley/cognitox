@@ -12,7 +12,7 @@ use crate::{
     validation::validate_password,
 };
 
-use super::helpers::{hash_password, verify_and_extract_user_id, verify_password};
+use super::helpers::{hash_password, verify_and_extract_active_user_id, verify_password};
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "PascalCase")]
@@ -29,8 +29,9 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
     // Validate new password
     validate_password(&req.proposed_password)?;
 
-    let user_id =
-        verify_and_extract_user_id(&req.access_token).map_err(|_| AppError::InvalidAccessToken)?;
+    let user_id = verify_and_extract_active_user_id(storage, &req.access_token)
+        .await
+        .map_err(|_| AppError::InvalidAccessToken)?;
 
     let mut user = storage
         .get_user(&user_id)

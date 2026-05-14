@@ -10,6 +10,7 @@ use uuid::Uuid;
 use crate::{
     error::AppError,
     jwt,
+    storage::Storage,
     types::{Device, User, UserAttribute, UserPoolClient},
 };
 
@@ -178,11 +179,24 @@ pub fn verify_secret_hash(
     Ok(())
 }
 
-/// Verify access token signature and extract user ID
-/// Returns the user ID if the token is valid, or an error message if validation fails
-pub fn verify_and_extract_user_id(token: &str) -> std::result::Result<Uuid, String> {
+pub async fn verify_and_extract_active_user_id(
+    storage: &Storage,
+    token: &str,
+) -> std::result::Result<Uuid, String> {
     let token_data = jwt::verify_access_token(token)?;
-    Uuid::parse_str(&token_data.claims.sub).map_err(|e| format!("Invalid user ID in token: {}", e))
+    let user_id = Uuid::parse_str(&token_data.claims.sub)
+        .map_err(|e| format!("Invalid user ID in token: {}", e))?;
+    if storage
+        .is_access_token_revoked(
+            &user_id,
+            token_data.claims.iat,
+            token_data.claims.cognitox_iat_ms,
+        )
+        .await
+    {
+        return Err("Access token has been revoked".to_string());
+    }
+    Ok(user_id)
 }
 
 /// Build device response payload in Cognito-compatible shape.
