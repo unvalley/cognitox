@@ -14,7 +14,6 @@ use crate::{
 #[serde(rename_all = "PascalCase")]
 struct Request {
     resource_arn: String,
-    #[allow(dead_code)]
     tag_keys: Vec<String>,
 }
 
@@ -35,8 +34,10 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
         .await
         .ok_or(AppError::UserPoolNotFound)?;
 
-    // Note: In a full implementation, we would remove the specified tags.
-    // For the emulator, we accept the request but don't persist tags.
+    storage
+        .untag_user_pool(&pool_id_parsed, &req.tag_keys)
+        .await
+        .ok_or(AppError::UserPoolNotFound)?;
 
     Ok(json!({}))
 }
@@ -60,7 +61,7 @@ fn extract_pool_id_from_arn(arn: &str) -> Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::action::user_pool::create_user_pool;
+    use crate::action::user_pool::{create_user_pool, tag_resource};
     use serde_json::json;
 
     #[tokio::test]
@@ -76,6 +77,18 @@ mod tests {
             "arn:aws:cognito-idp:us-east-1:123456789:userpool/{}",
             pool_id
         );
+        tag_resource::handler(
+            &storage,
+            json!({
+                "ResourceArn": arn,
+                "Tags": {
+                    "Environment": "test",
+                    "Team": "backend"
+                }
+            }),
+        )
+        .await
+        .unwrap();
 
         let result = handler(
             &storage,
@@ -88,6 +101,12 @@ mod tests {
 
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), json!({}));
+        let tags = storage
+            .list_user_pool_tags(&pool_id.parse().unwrap())
+            .await
+            .unwrap();
+        assert!(!tags.contains_key("Environment"));
+        assert!(!tags.contains_key("Team"));
     }
 
     #[tokio::test]

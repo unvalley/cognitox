@@ -29,16 +29,13 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
         .parse()
         .map_err(|e| AppError::InvalidParameter(format!("Invalid user pool ID in ARN: {}", e)))?;
 
-    storage
-        .get_user_pool(&pool_id_parsed)
+    let tags = storage
+        .list_user_pool_tags(&pool_id_parsed)
         .await
         .ok_or(AppError::UserPoolNotFound)?;
 
-    // Return tags for the resource
-    // Note: In a full implementation, we would store and retrieve actual tags.
-    // For the emulator, we return an empty tag set.
     Ok(json!({
-        "Tags": {}
+        "Tags": tags
     }))
 }
 
@@ -64,7 +61,7 @@ fn extract_pool_id_from_arn(arn: &str) -> Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::action::user_pool::create_user_pool;
+    use crate::action::user_pool::{create_user_pool, tag_resource};
     use serde_json::json;
 
     #[tokio::test]
@@ -80,6 +77,17 @@ mod tests {
             "arn:aws:cognito-idp:us-east-1:123456789:userpool/{}",
             pool_id
         );
+        tag_resource::handler(
+            &storage,
+            json!({
+                "ResourceArn": arn,
+                "Tags": {
+                    "Environment": "test"
+                }
+            }),
+        )
+        .await
+        .unwrap();
 
         let result = handler(
             &storage,
@@ -91,7 +99,7 @@ mod tests {
 
         assert!(result.is_ok());
         let body = result.unwrap();
-        assert!(body["Tags"].is_object());
+        assert_eq!(body["Tags"]["Environment"], "test");
     }
 
     #[tokio::test]

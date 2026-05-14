@@ -16,7 +16,6 @@ use crate::{
 #[serde(rename_all = "PascalCase")]
 struct Request {
     resource_arn: String,
-    #[allow(dead_code)]
     tags: HashMap<String, String>,
 }
 
@@ -37,8 +36,10 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
         .await
         .ok_or(AppError::UserPoolNotFound)?;
 
-    // Note: In a full implementation, we would store the tags.
-    // For the emulator, we accept the request but don't persist tags.
+    storage
+        .tag_user_pool(&pool_id_parsed, req.tags)
+        .await
+        .ok_or(AppError::UserPoolNotFound)?;
 
     Ok(json!({}))
 }
@@ -93,6 +94,14 @@ mod tests {
 
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), json!({}));
+        assert_eq!(
+            storage
+                .list_user_pool_tags(&pool_id.parse().unwrap())
+                .await
+                .unwrap()
+                .get("Environment"),
+            Some(&"test".to_string())
+        );
     }
 
     #[tokio::test]
