@@ -5,7 +5,7 @@
 //! modes (memory-only, file-based, etc.) to be selected via [`StorageConfig`].
 
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     fs,
     path::{Path, PathBuf},
     sync::Arc,
@@ -476,6 +476,8 @@ impl Storage {
             .filter(|(_, u)| &u.user_pool_id == id)
             .map(|(uid, _)| *uid)
             .collect();
+        let user_id_set: HashSet<UserId> = user_ids.iter().copied().collect();
+        let client_id_set: HashSet<ClientId> = client_ids.iter().cloned().collect();
         for uid in &user_ids {
             principal_store.users.remove(uid);
             principal_store.confirmation_codes.remove(uid);
@@ -504,16 +506,16 @@ impl Storage {
             .retain(|(pool_id, _), _| pool_id != id);
         principal_store
             .refresh_tokens
-            .retain(|_, token| !user_ids.contains(&token.user_id));
+            .retain(|_, token| !user_id_set.contains(&token.user_id));
         principal_store
             .software_token_sessions
-            .retain(|_, (uid, _)| !user_ids.contains(uid));
+            .retain(|_, (uid, _)| !user_id_set.contains(uid));
         for uid in &user_ids {
             principal_store.software_token_secrets.remove(uid);
         }
         principal_store
             .authorization_codes
-            .retain(|_, code| !client_ids.contains(&code.client_id));
+            .retain(|_, code| !client_id_set.contains(&code.client_id));
 
         // Clean up group_store
         group_store.groups.retain(|(pool_id, _), _| pool_id != id);
@@ -725,9 +727,7 @@ impl Storage {
         let store = self.pool_store.read().await;
         store
             .identity_providers
-            .iter()
-            .find(|((pool_id, name), _)| pool_id == user_pool_id && name == provider_name)
-            .map(|(_, provider)| provider)
+            .get(&(user_pool_id.clone(), provider_name.to_string()))
             .cloned()
     }
 
@@ -938,11 +938,7 @@ impl Storage {
         let store = self.principal_store.read().await;
         let user_id = store
             .username_index
-            .iter()
-            .find(|((pool_id, stored_username), _)| {
-                pool_id == user_pool_id && stored_username == username
-            })
-            .map(|(_, user_id)| user_id)?;
+            .get(&(user_pool_id.clone(), username.to_string()))?;
         store.users.get(user_id).cloned()
     }
 
@@ -1043,11 +1039,7 @@ impl Storage {
         let store = self.principal_store.read().await;
         store
             .devices
-            .iter()
-            .find(|((stored_user_id, stored_device_key), _)| {
-                stored_user_id == user_id && stored_device_key == device_key
-            })
-            .map(|(_, device)| device)
+            .get(&(*user_id, device_key.to_string()))
             .cloned()
     }
 
