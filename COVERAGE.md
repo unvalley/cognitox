@@ -4,7 +4,12 @@ Based on [Amazon Cognito User Pools API Reference](https://docs.aws.amazon.com/c
 
 ## cognito-idp
 
-85% spec-aligned (101/119)
+All 119 Cognito IDP operations are routed to handlers.
+
+85% spec-aligned (101/119). In the operation lists below, `[x]` means the
+handler is intended to be spec-aligned enough for normal SDK use; `[ ]` means
+the operation is routed but still partial, simplified, or intentionally limited
+for emulator use.
 
 ### Admin Operations
 - [x] AdminAddUserToGroup ([spec](https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_AdminAddUserToGroup.html), [cognitox](src/action/group/admin_add_user_to_group.rs))
