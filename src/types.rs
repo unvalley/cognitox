@@ -988,6 +988,21 @@ pub struct IdentityProvider {
     pub last_modified_date: DateTime<Utc>,
 }
 
+/// A federated identity linked to a local Cognito user.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct ProviderUserIdentifier {
+    pub provider_name: String,
+    pub provider_attribute_name: Option<String>,
+    pub provider_attribute_value: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FederatedUserLink {
+    pub user_pool_id: UserPoolId,
+    pub destination_user_id: UserId,
+    pub source_user: ProviderUserIdentifier,
+}
+
 /// Resource server scope
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ResourceServerScope {

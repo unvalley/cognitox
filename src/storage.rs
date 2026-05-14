@@ -21,10 +21,10 @@ use tracing::error;
 use crate::config::{StorageConfig, StorageMode};
 use crate::types::{
     AuthEvent, AuthorizationCode, BrandingId, ClientId, ConfirmationCode, Device, DomainPrefix,
-    Group, GroupName, IdentityProvider, ManagedLoginBranding, PasswordResetCode,
-    PendingAuthChallenge, RefreshToken, ResourceServer, TermsDocument, UiCustomization, User,
-    UserId, UserImportJob, UserPool, UserPoolClient, UserPoolDomain, UserPoolId,
-    WebAuthnCredential,
+    FederatedUserLink, Group, GroupName, IdentityProvider, ManagedLoginBranding, PasswordResetCode,
+    PendingAuthChallenge, ProviderUserIdentifier, RefreshToken, ResourceServer, TermsDocument,
+    UiCustomization, User, UserId, UserImportJob, UserPool, UserPoolClient, UserPoolDomain,
+    UserPoolId, WebAuthnCredential,
 };
 
 // ==================== Persistence Backend Trait ====================
@@ -161,6 +161,8 @@ struct PrincipalStore {
     refresh_tokens: HashMap<String, RefreshToken>,
     auth_challenge_sessions: HashMap<String, PendingAuthChallenge>,
     software_token_sessions: HashMap<String, (UserId, String)>,
+    #[serde(default)]
+    software_token_secrets: HashMap<UserId, String>,
     user_auth_factors: HashMap<UserId, Vec<String>>,
     auth_events: HashMap<String, AuthEvent>,
     user_auth_event_index: HashMap<UserId, Vec<String>>,
@@ -169,6 +171,10 @@ struct PrincipalStore {
     password_reset_codes: HashMap<UserId, PasswordResetCode>,
     webauthn_credentials: HashMap<UserId, Vec<WebAuthnCredential>>,
     webauthn_registration_challenges: HashMap<UserId, String>,
+    #[serde(default)]
+    federated_user_links: HashMap<(UserPoolId, ProviderUserIdentifier), FederatedUserLink>,
+    #[serde(default)]
+    access_tokens_invalid_before: HashMap<UserId, chrono::DateTime<chrono::Utc>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -487,10 +493,14 @@ impl Storage {
                     principal_store.auth_events.remove(&event_id);
                 }
             }
+            principal_store.access_tokens_invalid_before.remove(uid);
         }
 
         principal_store
             .username_index
+            .retain(|(pool_id, _), _| pool_id != id);
+        principal_store
+            .federated_user_links
             .retain(|(pool_id, _), _| pool_id != id);
         principal_store
             .refresh_tokens
@@ -498,6 +508,9 @@ impl Storage {
         principal_store
             .software_token_sessions
             .retain(|_, (uid, _)| !user_ids.contains(uid));
+        for uid in &user_ids {
+            principal_store.software_token_secrets.remove(uid);
+        }
         principal_store
             .authorization_codes
             .retain(|_, code| !client_ids.contains(&code.client_id));
@@ -540,6 +553,45 @@ impl Storage {
     ) -> Option<R> {
         let mut store = self.pool_store.write().await;
         store.user_pools.get_mut(id).map(f)
+    }
+
+    pub async fn tag_user_pool(
+        &self,
+        id: &UserPoolId,
+        tags: std::collections::HashMap<String, String>,
+    ) -> Option<()> {
+        let mut store = self.pool_store.write().await;
+        let pool = store.user_pools.get_mut(id)?;
+        let pool_tags = pool.user_pool_tags.get_or_insert_with(Default::default);
+        pool_tags.extend(tags);
+        pool.last_modified_date = chrono::Utc::now();
+        Some(())
+    }
+
+    pub async fn untag_user_pool(&self, id: &UserPoolId, tag_keys: &[String]) -> Option<()> {
+        let mut store = self.pool_store.write().await;
+        let pool = store.user_pools.get_mut(id)?;
+        if let Some(tags) = &mut pool.user_pool_tags {
+            for key in tag_keys {
+                tags.remove(key);
+            }
+            if tags.is_empty() {
+                pool.user_pool_tags = None;
+            }
+        }
+        pool.last_modified_date = chrono::Utc::now();
+        Some(())
+    }
+
+    pub async fn list_user_pool_tags(
+        &self,
+        id: &UserPoolId,
+    ) -> Option<std::collections::HashMap<String, String>> {
+        let store = self.pool_store.read().await;
+        store
+            .user_pools
+            .get(id)
+            .map(|pool| pool.user_pool_tags.clone().unwrap_or_default())
     }
 
     // ==================== User Pool Client Operations ====================
@@ -733,10 +785,58 @@ impl Storage {
         user_pool_id: &UserPoolId,
         provider_name: &str,
     ) -> Option<IdentityProvider> {
-        let mut store = self.pool_store.write().await;
-        store
+        let mut pool_store = self.pool_store.write().await;
+        let mut principal_store = self.principal_store.write().await;
+        let removed = pool_store
             .identity_providers
-            .remove(&(user_pool_id.clone(), provider_name.to_string()))
+            .remove(&(user_pool_id.clone(), provider_name.to_string()))?;
+        principal_store
+            .federated_user_links
+            .retain(|(pool_id, source), _| {
+                pool_id != user_pool_id || source.provider_name != provider_name
+            });
+        Some(removed)
+    }
+
+    pub async fn link_federated_user(
+        &self,
+        user_pool_id: UserPoolId,
+        destination_user_id: UserId,
+        source_user: ProviderUserIdentifier,
+    ) -> FederatedUserLink {
+        let mut store = self.principal_store.write().await;
+        let link = FederatedUserLink {
+            user_pool_id: user_pool_id.clone(),
+            destination_user_id,
+            source_user: source_user.clone(),
+        };
+        store
+            .federated_user_links
+            .insert((user_pool_id, source_user), link.clone());
+        link
+    }
+
+    pub async fn get_federated_user_link(
+        &self,
+        user_pool_id: &UserPoolId,
+        source_user: &ProviderUserIdentifier,
+    ) -> Option<FederatedUserLink> {
+        let store = self.principal_store.read().await;
+        store
+            .federated_user_links
+            .get(&(user_pool_id.clone(), source_user.clone()))
+            .cloned()
+    }
+
+    pub async fn unlink_federated_user(
+        &self,
+        user_pool_id: &UserPoolId,
+        source_user: &ProviderUserIdentifier,
+    ) -> Option<FederatedUserLink> {
+        let mut store = self.principal_store.write().await;
+        store
+            .federated_user_links
+            .remove(&(user_pool_id.clone(), source_user.clone()))
     }
 
     // ==================== Resource Server Operations ====================
@@ -887,9 +987,14 @@ impl Storage {
             principal_store
                 .software_token_sessions
                 .retain(|_, (user_id, _)| user_id != id);
+            principal_store.software_token_secrets.remove(id);
             principal_store
                 .refresh_tokens
                 .retain(|_, token| &token.user_id != id);
+            principal_store
+                .federated_user_links
+                .retain(|_, link| &link.destination_user_id != id);
+            principal_store.access_tokens_invalid_before.remove(id);
             principal_store
                 .authorization_codes
                 .retain(|_, code| &code.user_id != id);
@@ -1052,6 +1157,29 @@ impl Storage {
         store.refresh_tokens.retain(|_, v| &v.user_id != user_id);
     }
 
+    pub async fn invalidate_access_tokens_for_user(&self, user_id: &UserId) {
+        let mut store = self.principal_store.write().await;
+        store
+            .access_tokens_invalid_before
+            .insert(*user_id, chrono::Utc::now());
+    }
+
+    pub async fn is_access_token_revoked(
+        &self,
+        user_id: &UserId,
+        issued_at: i64,
+        issued_at_ms: Option<i64>,
+    ) -> bool {
+        let store = self.principal_store.read().await;
+        store
+            .access_tokens_invalid_before
+            .get(user_id)
+            .is_some_and(|invalid_before| match issued_at_ms {
+                Some(issued_at_ms) => issued_at_ms <= invalid_before.timestamp_millis(),
+                None => issued_at <= invalid_before.timestamp(),
+            })
+    }
+
     // ==================== Software Token MFA Operations ====================
 
     pub async fn save_software_token_session(
@@ -1074,6 +1202,16 @@ impl Storage {
     pub async fn delete_software_token_session(&self, session: &str) {
         let mut store = self.principal_store.write().await;
         store.software_token_sessions.remove(session);
+    }
+
+    pub async fn save_software_token_secret(&self, user_id: &UserId, secret: String) {
+        let mut store = self.principal_store.write().await;
+        store.software_token_secrets.insert(*user_id, secret);
+    }
+
+    pub async fn get_software_token_secret(&self, user_id: &UserId) -> Option<String> {
+        let store = self.principal_store.read().await;
+        store.software_token_secrets.get(user_id).cloned()
     }
 
     pub async fn add_user_auth_factor(&self, user_id: &UserId, factor: &str) {
