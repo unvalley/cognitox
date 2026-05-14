@@ -194,6 +194,7 @@ mod tests {
     use super::*;
     use serde_json::json;
 
+    use crate::action::user::verify_software_token::generate_totp_code;
     use crate::action::user::{helpers::upsert_user_attribute, initiate_auth, sign_up};
     use crate::action::user_pool::{create_user_pool, create_user_pool_client};
 
@@ -241,6 +242,9 @@ mod tests {
         storage.confirm_user(&user_id).await;
         storage
             .add_user_auth_factor(&user_id, "SOFTWARE_TOKEN_MFA")
+            .await;
+        storage
+            .save_software_token_secret(&user_id, "JBSWY3DPEHPK3PXP".to_string())
             .await;
 
         let mut user = storage.get_user(&user_id).await.unwrap();
@@ -316,6 +320,8 @@ mod tests {
 
         assert_eq!(initiated["ChallengeName"], "SOFTWARE_TOKEN_MFA");
         let session = initiated["Session"].as_str().unwrap();
+        let user_code =
+            generate_totp_code("JBSWY3DPEHPK3PXP", chrono::Utc::now().timestamp()).unwrap();
 
         let result = handler(
             &storage,
@@ -325,7 +331,7 @@ mod tests {
                 "Session": session,
                 "ChallengeResponses": {
                     "USERNAME": "testuser",
-                    "SOFTWARE_TOKEN_MFA_CODE": "123456"
+                    "SOFTWARE_TOKEN_MFA_CODE": user_code
                 }
             }),
         )

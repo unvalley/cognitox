@@ -20,6 +20,7 @@ use super::helpers::{
     SOFTWARE_TOKEN_MFA_FACTOR, hash_password, preferred_mfa_setting, verify_password,
     verify_secret_hash,
 };
+use super::verify_software_token::generate_totp_code;
 
 pub(crate) struct AuthParameters<'a> {
     inner: &'a std::collections::HashMap<String, String>,
@@ -468,6 +469,28 @@ pub(crate) async fn complete_software_token_mfa_challenge(
     {
         return Err(AppError::InvalidParameter(
             "User does not have SOFTWARE_TOKEN_MFA configured".to_string(),
+        ));
+    }
+
+    let secret = storage
+        .get_software_token_secret(&user.id)
+        .await
+        .ok_or_else(|| {
+            AppError::InvalidParameter(
+                "User does not have SOFTWARE_TOKEN_MFA configured".to_string(),
+            )
+        })?;
+    let now = Utc::now().timestamp();
+    let mut valid = false;
+    for step in -1..=1 {
+        if generate_totp_code(&secret, now + step * 30)? == code {
+            valid = true;
+            break;
+        }
+    }
+    if !valid {
+        return Err(AppError::InvalidParameter(
+            "Invalid software token code".to_string(),
         ));
     }
 

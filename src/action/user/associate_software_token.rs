@@ -11,7 +11,7 @@ use crate::{
     storage::Storage,
 };
 
-use super::helpers::verify_and_extract_user_id;
+use super::helpers::verify_and_extract_active_user_id;
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "PascalCase")]
@@ -27,8 +27,9 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
         .map_err(|e| AppError::InvalidParameter(format!("Invalid request: {}", e)))?;
 
     let user_id = if let Some(access_token) = req.access_token.as_deref() {
-        let user_id =
-            verify_and_extract_user_id(access_token).map_err(|_| AppError::InvalidAccessToken)?;
+        let user_id = verify_and_extract_active_user_id(storage, access_token)
+            .await
+            .map_err(|_| AppError::InvalidAccessToken)?;
         storage
             .get_user(&user_id)
             .await

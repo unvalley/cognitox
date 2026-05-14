@@ -263,6 +263,7 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
 mod tests {
     use super::*;
     use crate::action::user::helpers::{calculate_secret_hash, upsert_user_attribute};
+    use crate::action::user::verify_software_token::generate_totp_code;
     use crate::action::user::{admin_create_user, admin_initiate_auth};
     use crate::action::user_pool::{create_user_pool, create_user_pool_client};
     use crate::types::UserPoolId;
@@ -326,6 +327,9 @@ mod tests {
             .unwrap();
         storage
             .add_user_auth_factor(&user.id, "SOFTWARE_TOKEN_MFA")
+            .await;
+        storage
+            .save_software_token_secret(&user.id, "JBSWY3DPEHPK3PXP".to_string())
             .await;
         upsert_user_attribute(
             &mut user.attributes,
@@ -596,6 +600,8 @@ mod tests {
 
         assert_eq!(initiated["ChallengeName"], "SOFTWARE_TOKEN_MFA");
         let session = initiated["Session"].as_str().unwrap();
+        let user_code =
+            generate_totp_code("JBSWY3DPEHPK3PXP", chrono::Utc::now().timestamp()).unwrap();
 
         let result = handler(
             &storage,
@@ -606,7 +612,7 @@ mod tests {
                 "Session": session,
                 "ChallengeResponses": {
                     "USERNAME": "testuser",
-                    "SOFTWARE_TOKEN_MFA_CODE": "123456"
+                    "SOFTWARE_TOKEN_MFA_CODE": user_code
                 }
             }),
         )

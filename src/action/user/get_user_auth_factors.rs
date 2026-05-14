@@ -10,7 +10,7 @@ use crate::{
     storage::Storage,
 };
 
-use super::helpers::{preferred_mfa_setting, verify_and_extract_user_id};
+use super::helpers::{preferred_mfa_setting, verify_and_extract_active_user_id};
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "PascalCase")]
@@ -22,8 +22,9 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
     let req: Request = serde_json::from_value(body)
         .map_err(|e| AppError::InvalidParameter(format!("Invalid request: {}", e)))?;
 
-    let user_id =
-        verify_and_extract_user_id(&req.access_token).map_err(|_| AppError::InvalidAccessToken)?;
+    let user_id = verify_and_extract_active_user_id(storage, &req.access_token)
+        .await
+        .map_err(|_| AppError::InvalidAccessToken)?;
 
     let user = storage
         .get_user(&user_id)
@@ -126,7 +127,7 @@ mod tests {
         let storage = Storage::new();
         let access_token = setup_and_get_token(&storage).await;
 
-        associate_software_token::handler(
+        let associated = associate_software_token::handler(
             &storage,
             json!({
                 "AccessToken": access_token.clone()
@@ -134,12 +135,17 @@ mod tests {
         )
         .await
         .unwrap();
+        let session = associated["Session"].as_str().unwrap();
+        let secret = associated["SecretCode"].as_str().unwrap();
+        let user_code =
+            verify_software_token::generate_totp_code(secret, chrono::Utc::now().timestamp())
+                .unwrap();
 
         verify_software_token::handler(
             &storage,
             json!({
-                "AccessToken": access_token.clone(),
-                "UserCode": "123456"
+                "Session": session,
+                "UserCode": user_code
             }),
         )
         .await

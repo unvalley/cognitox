@@ -2,15 +2,20 @@
 //!
 //! <https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_VerifySoftwareToken.html>
 
+use chrono::Utc;
+use hmac::{Hmac, Mac};
 use serde::Deserialize;
 use serde_json::{Value, json};
+use sha1::Sha1;
 
 use crate::{
     error::{AppError, Result},
     storage::Storage,
 };
 
-use super::helpers::verify_and_extract_user_id;
+use super::helpers::verify_and_extract_active_user_id;
+
+type HmacSha1 = Hmac<Sha1>;
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "PascalCase")]
@@ -39,14 +44,25 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
         ));
     }
 
-    let user_id = if let Some(access_token) = req.access_token.as_deref() {
-        verify_and_extract_user_id(access_token).map_err(|_| AppError::InvalidAccessToken)?
-    } else if let Some(session) = req.session.as_deref() {
-        storage
+    let (user_id, secret) = if let Some(session) = req.session.as_deref() {
+        let (user_id, secret) = storage
             .get_software_token_session(session)
             .await
-            .map(|(user_id, _)| user_id)
-            .ok_or_else(|| AppError::InvalidParameter("Invalid session".to_string()))?
+            .ok_or_else(|| AppError::InvalidParameter("Invalid session".to_string()))?;
+        (user_id, secret)
+    } else if let Some(access_token) = req.access_token.as_deref() {
+        let user_id = verify_and_extract_active_user_id(storage, access_token)
+            .await
+            .map_err(|_| AppError::InvalidAccessToken)?;
+        let secret = storage
+            .get_software_token_secret(&user_id)
+            .await
+            .ok_or_else(|| {
+                AppError::InvalidParameter(
+                    "User does not have SOFTWARE_TOKEN_MFA configured".to_string(),
+                )
+            })?;
+        (user_id, secret)
     } else {
         return Err(AppError::InvalidParameter(
             "AccessToken or Session is required".to_string(),
@@ -58,8 +74,15 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
         .await
         .ok_or(AppError::UserNotFound)?;
 
+    if !is_valid_totp_code(&secret, &req.user_code, Utc::now().timestamp())? {
+        return Err(AppError::InvalidParameter(
+            "Invalid software token code".to_string(),
+        ));
+    }
+
     if let Some(session) = req.session.as_deref() {
         storage.delete_software_token_session(session).await;
+        storage.save_software_token_secret(&user_id, secret).await;
     }
     storage
         .add_user_auth_factor(&user_id, "SOFTWARE_TOKEN_MFA")
@@ -71,6 +94,67 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
         "Status": "SUCCESS",
         "Session": req.session
     }))
+}
+
+fn decode_base32_secret(secret: &str) -> Result<Vec<u8>> {
+    let mut buffer = 0u32;
+    let mut bits = 0u8;
+    let mut output = Vec::new();
+
+    for ch in secret
+        .chars()
+        .filter(|ch| !ch.is_whitespace() && *ch != '=')
+    {
+        let value = match ch.to_ascii_uppercase() {
+            'A'..='Z' => ch.to_ascii_uppercase() as u8 - b'A',
+            '2'..='7' => ch as u8 - b'2' + 26,
+            _ => {
+                return Err(AppError::InvalidParameter(
+                    "Invalid software token secret".to_string(),
+                ));
+            }
+        } as u32;
+        buffer = (buffer << 5) | value;
+        bits += 5;
+        if bits >= 8 {
+            bits -= 8;
+            output.push((buffer >> bits) as u8);
+            buffer &= (1 << bits) - 1;
+        }
+    }
+
+    if output.is_empty() {
+        return Err(AppError::InvalidParameter(
+            "Invalid software token secret".to_string(),
+        ));
+    }
+
+    Ok(output)
+}
+
+pub(crate) fn generate_totp_code(secret: &str, timestamp: i64) -> Result<String> {
+    let key = decode_base32_secret(secret)?;
+    let counter = (timestamp / 30) as u64;
+    let mut mac = HmacSha1::new_from_slice(&key)
+        .map_err(|_| AppError::Internal("Failed to initialize TOTP".to_string()))?;
+    mac.update(&counter.to_be_bytes());
+    let digest = mac.finalize().into_bytes();
+    let offset = (digest[19] & 0x0f) as usize;
+    let binary = (((digest[offset] & 0x7f) as u32) << 24)
+        | ((digest[offset + 1] as u32) << 16)
+        | ((digest[offset + 2] as u32) << 8)
+        | (digest[offset + 3] as u32);
+    Ok(format!("{:06}", binary % 1_000_000))
+}
+
+fn is_valid_totp_code(secret: &str, code: &str, timestamp: i64) -> Result<bool> {
+    for step in -1..=1 {
+        let candidate = generate_totp_code(secret, timestamp + step * 30)?;
+        if candidate == code {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 #[cfg(test)]
@@ -137,11 +221,23 @@ mod tests {
         let storage = Storage::new();
         let access_token = setup_and_get_token(&storage).await;
 
+        let associated = crate::action::user::associate_software_token::handler(
+            &storage,
+            json!({
+                "AccessToken": access_token
+            }),
+        )
+        .await
+        .unwrap();
+        let session = associated["Session"].as_str().unwrap();
+        let secret = associated["SecretCode"].as_str().unwrap();
+        let user_code = generate_totp_code(secret, Utc::now().timestamp()).unwrap();
+
         let result = handler(
             &storage,
             json!({
-                "AccessToken": access_token,
-                "UserCode": "123456"
+                "Session": session,
+                "UserCode": user_code
             }),
         )
         .await;
@@ -201,11 +297,13 @@ mod tests {
         .unwrap();
 
         let session = associated["Session"].as_str().unwrap();
+        let secret = associated["SecretCode"].as_str().unwrap();
+        let user_code = generate_totp_code(secret, Utc::now().timestamp()).unwrap();
         let result = handler(
             &storage,
             json!({
                 "Session": session,
-                "UserCode": "123456"
+                "UserCode": user_code
             }),
         )
         .await;
