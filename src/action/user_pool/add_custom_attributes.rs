@@ -23,12 +23,6 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
     let req: Request = serde_json::from_value(body)
         .map_err(|e| AppError::InvalidParameter(format!("Invalid request: {}", e)))?;
 
-    // Verify user pool exists
-    storage
-        .get_user_pool(&req.user_pool_id)
-        .await
-        .ok_or(AppError::UserPoolNotFound)?;
-
     // Validate custom attributes
     if req.custom_attributes.is_empty() {
         return Err(AppError::InvalidParameter(
@@ -54,9 +48,33 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
         }
     }
 
-    // Note: In a full implementation, we would store the schema attributes
-    // in the user pool. For the emulator, we accept all custom attributes
-    // without strict schema enforcement.
+    let mut seen = std::collections::HashSet::new();
+    for attr in &req.custom_attributes {
+        if !seen.insert(attr.name.clone()) {
+            return Err(AppError::InvalidParameter(format!(
+                "Duplicate custom attribute: {}",
+                attr.name
+            )));
+        }
+    }
+
+    storage
+        .update_user_pool_with(&req.user_pool_id, |pool| {
+            let schema = pool.schema_attributes.get_or_insert_with(Vec::new);
+            for attr in &req.custom_attributes {
+                if schema.iter().any(|existing| existing.name == attr.name) {
+                    return Err(AppError::InvalidParameter(format!(
+                        "Custom attribute already exists: {}",
+                        attr.name
+                    )));
+                }
+            }
+            schema.extend(req.custom_attributes);
+            pool.last_modified_date = chrono::Utc::now();
+            Ok(())
+        })
+        .await
+        .ok_or(AppError::UserPoolNotFound)??;
 
     Ok(json!({}))
 }
@@ -64,7 +82,7 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::action::user_pool::create_user_pool;
+    use crate::action::user_pool::{create_user_pool, describe_user_pool};
     use serde_json::json;
 
     #[tokio::test]
@@ -94,6 +112,14 @@ mod tests {
 
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), json!({}));
+
+        let described = describe_user_pool::handler(&storage, json!({"UserPoolId": pool_id}))
+            .await
+            .unwrap();
+        let schema = described["UserPool"]["SchemaAttributes"]
+            .as_array()
+            .unwrap();
+        assert!(schema.iter().any(|attr| attr["Name"] == "department"));
     }
 
     #[tokio::test]
@@ -156,6 +182,44 @@ mod tests {
                 "CustomAttributes": [
                     {
                         "Name": "invalid-name",
+                        "AttributeDataType": "String"
+                    }
+                ]
+            }),
+        )
+        .await;
+
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), AppError::InvalidParameter(_)));
+    }
+
+    #[tokio::test]
+    async fn test_add_custom_attributes_duplicate_existing() {
+        let storage = Storage::new();
+
+        let pool = create_user_pool::handler(
+            &storage,
+            json!({
+                "PoolName": "test",
+                "Schema": [
+                    {
+                        "Name": "department",
+                        "AttributeDataType": "String"
+                    }
+                ]
+            }),
+        )
+        .await
+        .unwrap();
+        let pool_id = pool["UserPool"]["Id"].as_str().unwrap();
+
+        let result = handler(
+            &storage,
+            json!({
+                "UserPoolId": pool_id,
+                "CustomAttributes": [
+                    {
+                        "Name": "department",
                         "AttributeDataType": "String"
                     }
                 ]
