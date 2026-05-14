@@ -10,7 +10,7 @@ use crate::{
     storage::Storage,
 };
 
-use super::helpers::verify_and_extract_user_id;
+use super::helpers::verify_and_extract_active_user_id;
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "PascalCase")]
@@ -23,8 +23,9 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
     let req: Request = serde_json::from_value(body)
         .map_err(|e| AppError::InvalidParameter(format!("Invalid request: {}", e)))?;
 
-    let user_id =
-        verify_and_extract_user_id(&req.access_token).map_err(|_| AppError::InvalidAccessToken)?;
+    let user_id = verify_and_extract_active_user_id(storage, &req.access_token)
+        .await
+        .map_err(|_| AppError::InvalidAccessToken)?;
     storage
         .get_user(&user_id)
         .await
@@ -47,6 +48,7 @@ mod tests {
         complete_webauthn_registration, initiate_auth, sign_up, start_webauthn_registration,
     };
     use crate::action::user_pool::{create_user_pool, create_user_pool_client};
+    use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 
     async fn setup_and_get_token(storage: &Storage) -> String {
         let pool = create_user_pool::handler(storage, json!({"PoolName": "test"}))
@@ -102,17 +104,36 @@ mod tests {
         let storage = Storage::new();
         let access_token = setup_and_get_token(&storage).await;
 
-        start_webauthn_registration::handler(
+        let started = start_webauthn_registration::handler(
             &storage,
             json!({"AccessToken": access_token.clone()}),
         )
         .await
         .unwrap();
+        let challenge = started["CredentialCreationOptions"]["Challenge"]
+            .as_str()
+            .unwrap();
+        let client_data_json = URL_SAFE_NO_PAD.encode(
+            serde_json::to_vec(&json!({
+                "type": "webauthn.create",
+                "challenge": challenge,
+                "origin": "http://localhost"
+            }))
+            .unwrap(),
+        );
         complete_webauthn_registration::handler(
             &storage,
             json!({
                 "AccessToken": access_token.clone(),
-                "Credential": {"id": "cred-1"}
+                "Credential": {
+                    "id": "cred-1",
+                    "rawId": "cred-1",
+                    "type": "public-key",
+                    "response": {
+                        "clientDataJSON": client_data_json,
+                        "attestationObject": URL_SAFE_NO_PAD.encode([1, 2, 3])
+                    }
+                }
             }),
         )
         .await
