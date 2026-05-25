@@ -39,16 +39,6 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
         .await
         .ok_or(AppError::UserNotFound)?;
 
-    // Generate verification code
-    let code = generate_confirmation_code();
-    let confirmation_code = ConfirmationCode {
-        user_id: user.id,
-        code: code.clone(),
-        expires_at: Utc::now() + Duration::hours(24),
-    };
-
-    storage.save_confirmation_code(confirmation_code).await;
-
     // Determine delivery details based on attribute
     let (destination, delivery_medium) = match req.attribute_name.as_str() {
         "email" => {
@@ -76,6 +66,17 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
             )));
         }
     };
+
+    // Generate verification code after the attribute is known to be deliverable.
+    let code = generate_confirmation_code();
+    let confirmation_code = ConfirmationCode {
+        user_id: user.id,
+        attribute_name: Some(req.attribute_name.clone()),
+        code: code.clone(),
+        expires_at: Utc::now() + Duration::hours(24),
+    };
+
+    storage.save_confirmation_code(confirmation_code).await;
 
     Ok(json!({
         "CodeDeliveryDetails": {

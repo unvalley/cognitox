@@ -53,6 +53,10 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
         .await
         .ok_or(AppError::InvalidConfirmationCode)?;
 
+    if stored_code.attribute_name.as_deref() != Some(req.attribute_name.as_str()) {
+        return Err(AppError::InvalidConfirmationCode);
+    }
+
     if stored_code.expires_at < Utc::now() {
         return Err(AppError::ExpiredCode);
     }
@@ -234,6 +238,39 @@ mod tests {
             result.unwrap_err(),
             AppError::InvalidConfirmationCode
         ));
+    }
+
+    #[tokio::test]
+    async fn test_verify_user_attribute_rejects_code_for_different_attribute() {
+        let storage = Storage::new();
+        let access_token = setup_and_get_token(&storage).await;
+
+        get_user_attribute_verification_code::handler(
+            &storage,
+            json!({
+                "AccessToken": access_token,
+                "AttributeName": "email"
+            }),
+        )
+        .await
+        .unwrap();
+
+        let user_id = verify_and_extract_active_user_id(&storage, &access_token)
+            .await
+            .unwrap();
+        let stored_code = storage.get_confirmation_code(&user_id).await.unwrap();
+
+        let result = handler(
+            &storage,
+            json!({
+                "AccessToken": access_token,
+                "AttributeName": "phone_number",
+                "Code": stored_code.code
+            }),
+        )
+        .await;
+
+        assert!(matches!(result, Err(AppError::InvalidConfirmationCode)));
     }
 
     #[tokio::test]

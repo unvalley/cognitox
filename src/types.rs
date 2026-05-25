@@ -853,6 +853,8 @@ pub struct AuthEvent {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConfirmationCode {
     pub user_id: UserId,
+    #[serde(default)]
+    pub attribute_name: Option<String>,
     pub code: String,
     pub expires_at: DateTime<Utc>,
 }

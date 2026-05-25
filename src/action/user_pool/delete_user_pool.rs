@@ -9,7 +9,7 @@ use crate::{
     action::io::{parse_request, to_response_value},
     error::{AppError, Result},
     storage::Storage,
-    types::UserPoolId,
+    types::{DeletionProtection, UserPoolId},
 };
 
 #[derive(Debug, Deserialize)]
@@ -23,6 +23,17 @@ struct Response {}
 
 pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
     let req: Request = parse_request(body)?;
+
+    let pool = storage
+        .get_user_pool(&req.user_pool_id)
+        .await
+        .ok_or(AppError::UserPoolNotFound)?;
+
+    if pool.deletion_protection == Some(DeletionProtection::Active) {
+        return Err(AppError::InvalidParameter(
+            "Cannot delete user pool while deletion protection is ACTIVE".to_string(),
+        ));
+    }
 
     storage
         .delete_user_pool(&req.user_pool_id)
@@ -62,6 +73,32 @@ mod tests {
                 .get_user_pool(&pool_id.parse().unwrap())
                 .await
                 .is_none()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_delete_user_pool_rejects_active_deletion_protection() {
+        let storage = Storage::new();
+
+        let pool = create_user_pool::handler(
+            &storage,
+            json!({
+                "PoolName": "protected-pool",
+                "DeletionProtection": "ACTIVE"
+            }),
+        )
+        .await
+        .unwrap();
+        let pool_id = pool["UserPool"]["Id"].as_str().unwrap();
+
+        let result = handler(&storage, json!({"UserPoolId": pool_id})).await;
+
+        assert!(matches!(result, Err(AppError::InvalidParameter(_))));
+        assert!(
+            storage
+                .get_user_pool(&pool_id.parse().unwrap())
+                .await
+                .is_some()
         );
     }
 

@@ -856,6 +856,7 @@ pub async fn signup_submit(
     // Save confirmation code separately
     let confirmation = ConfirmationCode {
         user_id,
+        attribute_name: None,
         code: code.clone(),
         expires_at: now + Duration::hours(24),
     };
@@ -1030,6 +1031,7 @@ pub async fn forgot_password_submit(
         let reset_code = generate_confirmation_code();
         let confirmation = ConfirmationCode {
             user_id: user.id,
+            attribute_name: None,
             code: reset_code.clone(),
             expires_at: Utc::now() + Duration::hours(1),
         };

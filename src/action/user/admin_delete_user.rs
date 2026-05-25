@@ -22,6 +22,11 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
     let req: Request = serde_json::from_value(body)
         .map_err(|e| AppError::InvalidParameter(format!("Invalid request: {}", e)))?;
 
+    storage
+        .get_user_pool(&req.user_pool_id)
+        .await
+        .ok_or(AppError::UserPoolNotFound)?;
+
     let user = storage
         .get_user_by_username(&req.user_pool_id, &req.username)
         .await
@@ -102,5 +107,21 @@ mod tests {
 
         assert!(result.is_err());
         assert!(matches!(result.unwrap_err(), AppError::UserNotFound));
+    }
+
+    #[tokio::test]
+    async fn test_admin_delete_user_pool_not_found() {
+        let storage = Storage::new();
+
+        let result = handler(
+            &storage,
+            json!({
+                "UserPoolId": "local_nonexistent",
+                "Username": "testuser"
+            }),
+        )
+        .await;
+
+        assert!(matches!(result, Err(AppError::UserPoolNotFound)));
     }
 }

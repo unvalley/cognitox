@@ -66,6 +66,7 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
     let code = generate_confirmation_code();
     let confirmation = ConfirmationCode {
         user_id: user.id,
+        attribute_name: None,
         code: code.clone(),
         expires_at: Utc::now() + Duration::hours(24),
     };

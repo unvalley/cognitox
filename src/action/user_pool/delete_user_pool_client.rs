@@ -14,7 +14,6 @@ use crate::{
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "PascalCase")]
 struct Request {
-    #[allow(dead_code)]
     user_pool_id: UserPoolId,
     client_id: ClientId,
 }
@@ -22,6 +21,18 @@ struct Request {
 pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
     let req: Request = serde_json::from_value(body)
         .map_err(|e| AppError::InvalidParameter(format!("Invalid request: {}", e)))?;
+
+    if !storage.user_pool_exists(&req.user_pool_id).await {
+        return Err(AppError::UserPoolNotFound);
+    }
+
+    let client = storage
+        .get_user_pool_client(&req.client_id)
+        .await
+        .ok_or(AppError::UserPoolClientNotFound)?;
+    if client.user_pool_id != req.user_pool_id {
+        return Err(AppError::UserPoolClientNotFound);
+    }
 
     storage
         .delete_user_pool_client(&req.client_id)
@@ -94,5 +105,63 @@ mod tests {
         .await;
 
         assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_delete_user_pool_client_pool_not_found() {
+        let storage = Storage::new();
+
+        let result = handler(
+            &storage,
+            json!({
+                "UserPoolId": "local_pool123",
+                "ClientId": "nonexistent123456789012345"
+            }),
+        )
+        .await;
+
+        assert!(matches!(result, Err(AppError::UserPoolNotFound)));
+    }
+
+    #[tokio::test]
+    async fn test_delete_user_pool_client_wrong_pool() {
+        let storage = Storage::new();
+
+        let pool1 = create_user_pool::handler(&storage, json!({"PoolName": "pool-1"}))
+            .await
+            .unwrap();
+        let pool1_id = pool1["UserPool"]["Id"].as_str().unwrap();
+        let pool2 = create_user_pool::handler(&storage, json!({"PoolName": "pool-2"}))
+            .await
+            .unwrap();
+        let pool2_id = pool2["UserPool"]["Id"].as_str().unwrap();
+
+        let client = create_user_pool_client::handler(
+            &storage,
+            json!({
+                "UserPoolId": pool1_id,
+                "ClientName": "test-client"
+            }),
+        )
+        .await
+        .unwrap();
+        let client_id = client["UserPoolClient"]["ClientId"].as_str().unwrap();
+
+        let result = handler(
+            &storage,
+            json!({
+                "UserPoolId": pool2_id,
+                "ClientId": client_id
+            }),
+        )
+        .await;
+
+        assert!(matches!(result, Err(AppError::UserPoolClientNotFound)));
+        assert!(
+            storage
+                .get_user_pool_client(&client_id.parse().unwrap())
+                .await
+                .is_some()
+        );
     }
 }
