@@ -16,7 +16,9 @@ use crate::{
     validation::{validate_email, validate_password, validate_phone_number, validate_username},
 };
 
-use super::helpers::{find_user_attribute_value, hash_password, sync_user_profile_attributes};
+use super::helpers::{
+    build_user_attributes, find_user_attribute_value, hash_password, sync_user_profile_attributes,
+};
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "PascalCase")]
@@ -107,12 +109,7 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
             "UserStatus": created.user_status,
             "UserCreateDate": created.creation_date.timestamp(),
             "UserLastModifiedDate": created.last_modified_date.timestamp(),
-            "Attributes": created.attributes.iter().map(|a| {
-                json!({
-                    "Name": a.name,
-                    "Value": a.value
-                })
-            }).collect::<Vec<_>>()
+            "Attributes": build_user_attributes(&created)
         }
     }))
 }
@@ -157,6 +154,15 @@ mod tests {
             .get_user_by_username(&pool_id, "testuser")
             .await
             .unwrap();
+        assert_eq!(
+            body["User"]["Attributes"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|attribute| attribute["Name"] == "sub")
+                .and_then(|attribute| attribute["Value"].as_str()),
+            Some(user.id.to_string()).as_deref()
+        );
         assert_eq!(user.email.as_deref(), Some("test@example.com"));
     }
 

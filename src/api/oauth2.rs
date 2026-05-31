@@ -24,7 +24,7 @@ use crate::{
         resolve_refresh_token_expiry, verify_access_token,
     },
     storage::Storage,
-    types::{AuthorizationCode, ClientId, OAuthFlow, RefreshToken, UserStatus},
+    types::{AuthorizationCode, ClientId, OAuthFlow, RefreshToken, User, UserPoolId, UserStatus},
 };
 
 use super::super::action::user::helpers::verify_password;
@@ -70,6 +70,16 @@ pub struct TokenRequest {
     pub code_verifier: Option<String>,
     #[serde(default)]
     pub scope: Option<String>,
+}
+
+/// Logout endpoint query parameters
+#[derive(Debug, Deserialize)]
+pub struct LogoutParams {
+    pub client_id: String,
+    #[serde(default)]
+    pub logout_uri: Option<String>,
+    #[serde(default)]
+    pub redirect_uri: Option<String>,
 }
 
 /// Token response
@@ -145,6 +155,25 @@ fn html_escape(value: &str) -> String {
         .replace('\'', "&#39;")
 }
 
+async fn get_user_by_username_or_email(
+    storage: &Storage,
+    user_pool_id: &UserPoolId,
+    username_or_email: &str,
+) -> Option<User> {
+    if let Some(user) = storage
+        .get_user_by_username(user_pool_id, username_or_email)
+        .await
+    {
+        return Some(user);
+    }
+
+    storage
+        .list_users(user_pool_id)
+        .await
+        .into_iter()
+        .find(|user| user.email.as_deref() == Some(username_or_email))
+}
+
 /// GET /oauth2/authorize - Authorization endpoint
 ///
 /// For testing purposes, this endpoint can directly authenticate users
@@ -202,8 +231,7 @@ pub async fn authorize(
 
             // For testing: direct authentication if credentials provided
             if let (Some(username), Some(password)) = (&params.username, &params.password) {
-                let user = storage
-                    .get_user_by_username(&client.user_pool_id, username)
+                let user = get_user_by_username_or_email(&storage, &client.user_pool_id, username)
                     .await
                     .ok_or_else(|| OAuthError {
                         error: "access_denied".to_string(),
@@ -282,8 +310,7 @@ pub async fn authorize(
 
             // For implicit flow with direct auth
             if let (Some(username), Some(password)) = (&params.username, &params.password) {
-                let user = storage
-                    .get_user_by_username(&client.user_pool_id, username)
+                let user = get_user_by_username_or_email(&storage, &client.user_pool_id, username)
                     .await
                     .ok_or_else(|| OAuthError {
                         error: "access_denied".to_string(),
@@ -823,6 +850,45 @@ pub async fn userinfo(
         username: user.username,
         groups,
     }))
+}
+
+/// GET /logout - Hosted UI logout endpoint
+pub async fn logout(
+    State(storage): State<Storage>,
+    Query(params): Query<LogoutParams>,
+) -> Result<impl IntoResponse, OAuthError> {
+    let parsed_client_id = ClientId::new(&params.client_id).map_err(|_| OAuthError {
+        error: "invalid_client".to_string(),
+        error_description: Some("Invalid client ID format".to_string()),
+    })?;
+
+    let client = storage
+        .get_user_pool_client(&parsed_client_id)
+        .await
+        .ok_or_else(|| OAuthError {
+            error: "invalid_client".to_string(),
+            error_description: Some("Client not found".to_string()),
+        })?;
+
+    let redirect_target = params
+        .logout_uri
+        .as_deref()
+        .or(params.redirect_uri.as_deref())
+        .ok_or_else(|| OAuthError {
+            error: "invalid_request".to_string(),
+            error_description: Some("Missing logout_uri parameter".to_string()),
+        })?;
+
+    if !client.logout_urls.is_empty()
+        && !client.logout_urls.iter().any(|url| url == redirect_target)
+    {
+        return Err(OAuthError {
+            error: "invalid_request".to_string(),
+            error_description: Some("Invalid logout_uri".to_string()),
+        });
+    }
+
+    Ok(Redirect::to(redirect_target))
 }
 
 /// GET /.well-known/openid-configuration - OpenID Connect Discovery

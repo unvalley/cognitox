@@ -102,6 +102,7 @@ pub fn create_router(storage: Storage) -> Router {
         .route("/oauth2/authorize", get(oauth2::authorize))
         .route("/oauth2/token", post(oauth2::token))
         .route("/oauth2/userInfo", get(oauth2::userinfo))
+        .route("/logout", get(oauth2::logout))
         // Rust-based Hosted UI (fallback/simple mode)
         .route(
             "/login",
