@@ -272,6 +272,28 @@ async fn test_authorization_code_flow_returns_json_redirect_for_xhr_login() {
 }
 
 #[tokio::test]
+async fn test_authorization_code_flow_accepts_email_alias_login() {
+    let client = TestClient::new();
+    let (_, client_id, _, password) = setup_user_and_client(&client).await;
+
+    let auth_url = format!(
+        "/oauth2/authorize?response_type=code&client_id={}&redirect_uri={}&scope={}&username={}&password={}",
+        client_id, "https://example.com/callback", "openid%20email", "test@example.com", password
+    );
+
+    let response = client.get(&auth_url).await;
+
+    assert_eq!(response.status(), StatusCode::TEMPORARY_REDIRECT);
+    let location = response
+        .headers()
+        .get("location")
+        .unwrap()
+        .to_str()
+        .unwrap();
+    assert!(location.contains("code="));
+}
+
+#[tokio::test]
 async fn test_authorization_redirect_encodes_state() {
     let client = TestClient::new();
     let (_, client_id, username, password) = setup_user_and_client(&client).await;
@@ -692,6 +714,82 @@ async fn test_invalid_client() {
 
     let body: serde_json::Value = response.json().await.unwrap();
     assert_eq!(body["error"], "invalid_client");
+}
+
+#[tokio::test]
+async fn test_logout_redirects_to_allowed_logout_uri() {
+    let client = TestClient::new();
+    let (_, pool_body) = client
+        .request("CreateUserPool", json!({ "PoolName": "LogoutPool" }))
+        .await;
+    let pool_id = pool_body["UserPool"]["Id"].as_str().unwrap().to_string();
+
+    let (_, client_body) = client
+        .request(
+            "CreateUserPoolClient",
+            json!({
+                "UserPoolId": pool_id,
+                "ClientName": "LogoutClient",
+                "AllowedOAuthFlowsUserPoolClient": true,
+                "LogoutURLs": ["http://localhost:3000/"]
+            }),
+        )
+        .await;
+    let client_id = client_body["UserPoolClient"]["ClientId"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let response = client
+        .get(&format!(
+            "/logout?client_id={}&logout_uri={}",
+            client_id,
+            urlencoding::encode("http://localhost:3000/")
+        ))
+        .await;
+
+    assert_eq!(response.status(), StatusCode::SEE_OTHER);
+    assert_eq!(
+        response.headers().get("location").unwrap(),
+        "http://localhost:3000/"
+    );
+}
+
+#[tokio::test]
+async fn test_logout_rejects_disallowed_logout_uri() {
+    let client = TestClient::new();
+    let (_, pool_body) = client
+        .request("CreateUserPool", json!({ "PoolName": "LogoutPool" }))
+        .await;
+    let pool_id = pool_body["UserPool"]["Id"].as_str().unwrap().to_string();
+
+    let (_, client_body) = client
+        .request(
+            "CreateUserPoolClient",
+            json!({
+                "UserPoolId": pool_id,
+                "ClientName": "LogoutClient",
+                "AllowedOAuthFlowsUserPoolClient": true,
+                "LogoutURLs": ["http://localhost:3000/"]
+            }),
+        )
+        .await;
+    let client_id = client_body["UserPoolClient"]["ClientId"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let response = client
+        .get(&format!(
+            "/logout?client_id={}&logout_uri={}",
+            client_id,
+            urlencoding::encode("http://evil.example/")
+        ))
+        .await;
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let body: serde_json::Value = response.json().await.unwrap();
+    assert_eq!(body["error"], "invalid_request");
 }
 
 #[tokio::test]

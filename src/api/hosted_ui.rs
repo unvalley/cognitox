@@ -23,7 +23,8 @@ use crate::{
     },
     storage::Storage,
     types::{
-        AuthorizationCode, ClientId, ConfirmationCode, ManagedLoginBranding, User, UserStatus,
+        AuthorizationCode, ClientId, ConfirmationCode, ManagedLoginBranding, User, UserPoolId,
+        UserStatus,
     },
 };
 
@@ -588,6 +589,25 @@ fn create_tera() -> Tera {
     tera
 }
 
+async fn get_user_by_username_or_email(
+    storage: &Storage,
+    user_pool_id: &UserPoolId,
+    username_or_email: &str,
+) -> Option<User> {
+    if let Some(user) = storage
+        .get_user_by_username(user_pool_id, username_or_email)
+        .await
+    {
+        return Some(user);
+    }
+
+    storage
+        .list_users(user_pool_id)
+        .await
+        .into_iter()
+        .find(|user| user.email.as_deref() == Some(username_or_email))
+}
+
 /// Build OAuth query string for links
 fn build_oauth_query(oauth: &OAuthParams) -> String {
     let mut params = vec![
@@ -681,18 +701,16 @@ pub async fn login_submit(State(storage): State<Storage>, Form(form): Form<Login
     };
 
     // Find user
-    let user = match storage
-        .get_user_by_username(&client.user_pool_id, &form.username)
-        .await
-    {
-        Some(u) => u,
-        None => {
-            let mut ctx = create_template_context(&branding, &form.oauth);
-            ctx.insert("oauth_query", &build_oauth_query(&form.oauth));
-            ctx.insert("error", &Some("Invalid username or password".to_string()));
-            return render_template(&tera, "login", &ctx);
-        }
-    };
+    let user =
+        match get_user_by_username_or_email(&storage, &client.user_pool_id, &form.username).await {
+            Some(u) => u,
+            None => {
+                let mut ctx = create_template_context(&branding, &form.oauth);
+                ctx.insert("oauth_query", &build_oauth_query(&form.oauth));
+                ctx.insert("error", &Some("Invalid username or password".to_string()));
+                return render_template(&tera, "login", &ctx);
+            }
+        };
 
     // Check if user is enabled
     if !user.enabled {

@@ -6,6 +6,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 use crate::{
+    action::user::helpers::build_user_attributes,
     error::{AppError, Result},
     storage::Storage,
     types::UserPoolId,
@@ -40,12 +41,7 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
                 "UserStatus": u.user_status,
                 "UserCreateDate": u.creation_date.timestamp(),
                 "UserLastModifiedDate": u.last_modified_date.timestamp(),
-                "Attributes": u.attributes.iter().map(|a| {
-                    json!({
-                        "Name": a.name,
-                        "Value": a.value
-                    })
-                }).collect::<Vec<_>>()
+                "Attributes": build_user_attributes(&u)
             })
         })
         .collect();
@@ -117,6 +113,13 @@ mod tests {
         let body = result.unwrap();
         let users = body["Users"].as_array().unwrap();
         assert_eq!(users.len(), 3);
+        assert!(
+            users[0]["Attributes"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|attribute| attribute["Name"] == "sub")
+        );
     }
 
     #[tokio::test]
