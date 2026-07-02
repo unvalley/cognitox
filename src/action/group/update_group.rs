@@ -49,7 +49,10 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
 
     group.last_modified_date = Utc::now();
 
-    let updated = storage.update_group(group).await.unwrap();
+    let updated = storage
+        .update_group(group)
+        .await
+        .ok_or(AppError::GroupNotFound)?;
 
     Ok(json!({
         "Group": {
