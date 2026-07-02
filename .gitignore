@@ -30,7 +30,11 @@ target
 node_modules/
 ui/dist/
 
-# Cognitox data
+# Python virtualenvs (demos)
+.venv/
+
+# Cognitox data snapshots
 data.json
+cognitox-data.json
 
 .claude

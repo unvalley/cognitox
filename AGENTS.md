@@ -18,8 +18,8 @@ cargo run
 # Run all tests
 cargo test
 
-# Run specific test file
-cargo test --test user_pool_test
+# Run specific test file (see tests/ for available files)
+cargo test --test hosted_ui_test
 
 # Run single test
 cargo test test_create_user_pool
@@ -67,7 +67,7 @@ Tests use `tower::ServiceExt::oneshot` to test handlers directly without startin
 
 ## Implementation Coverage
 
-See `COVERAGE.md` for the list of implemented/unimplemented Cognito operations (currently 17/119 = 14%).
+See `COVERAGE.md` for the list of implemented/unimplemented Cognito operations. All 119 cognito-idp operations are routed; currently 101/119 (85%) are spec-aligned.
 
 ## Git Workflow
 

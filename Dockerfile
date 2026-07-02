@@ -39,7 +39,14 @@ WORKDIR /app
 
 COPY --from=builder /app/target/release/cognitox /app/cognitox
 
-ENV COGNITOX_PORT=9229
+# Writable data directory for the persistent storage snapshot. WORKDIR /app is
+# root-owned, so without this the non-root process cannot write its snapshot and
+# logs a persist error every autosave cycle.
+RUN mkdir -p /data && chown nobody:nobody /data
+VOLUME ["/data"]
+
+ENV COGNITOX_PORT=9229 \
+    COGNITOX_DATA_FILE=/data/cognitox-data.json
 EXPOSE 9229
 
 USER nobody
