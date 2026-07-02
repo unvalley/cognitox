@@ -586,6 +586,18 @@ fn create_tera() -> Tera {
         .expect("invalid forgot_password template");
     tera.add_raw_template("reset_password", RESET_PASSWORD_TEMPLATE)
         .expect("invalid reset_password template");
+    // Tera only autoescapes templates whose name ends in .html/.htm/.xml by
+    // default. These templates are registered under bare names, so enable
+    // escaping explicitly to prevent reflected XSS from user-supplied OAuth
+    // params (state, redirect_uri, username, ...) interpolated into markup.
+    tera.autoescape_on(vec![
+        "base",
+        "login",
+        "signup",
+        "confirm",
+        "forgot_password",
+        "reset_password",
+    ]);
     tera
 }
 
@@ -606,6 +618,15 @@ async fn get_user_by_username_or_email(
         .await
         .into_iter()
         .find(|user| user.email.as_deref() == Some(username_or_email))
+}
+
+/// Check that `redirect_uri` is registered for the client before issuing an
+/// authorization code. Mirrors the OAuth `authorize` endpoint: an empty
+/// callback list allows any URI (kept consistent so the two login paths agree).
+/// Without this, a crafted `/login?...&redirect_uri=https://attacker/cb` link
+/// would exfiltrate a usable authorization code after the victim signs in.
+fn is_redirect_uri_allowed(callback_urls: &[String], redirect_uri: &str) -> bool {
+    callback_urls.is_empty() || callback_urls.iter().any(|u| u == redirect_uri)
 }
 
 /// Build OAuth query string for links
@@ -699,6 +720,15 @@ pub async fn login_submit(State(storage): State<Storage>, Form(form): Form<Login
             return render_template(&tera, "login", &ctx);
         }
     };
+
+    // Validate redirect_uri against the client's registered callback URLs
+    // before we authenticate or mint a code, to prevent code exfiltration.
+    if !is_redirect_uri_allowed(&client.callback_urls, &form.oauth.redirect_uri) {
+        let mut ctx = create_template_context(&branding, &form.oauth);
+        ctx.insert("oauth_query", &build_oauth_query(&form.oauth));
+        ctx.insert("error", &Some("Invalid redirect_uri".to_string()));
+        return render_template(&tera, "login", &ctx);
+    }
 
     // Find user
     let user =

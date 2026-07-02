@@ -1,4 +1,8 @@
 //! Common test utilities
+//!
+//! Each integration test file includes this module separately, so helpers used
+//! by only some files look dead to the others. Allow it module-wide.
+#![allow(dead_code)]
 
 use axum::{
     body::Body,
