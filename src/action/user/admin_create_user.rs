@@ -100,7 +100,10 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
     };
     sync_user_profile_attributes(&mut user);
 
-    let created = storage.create_user(user).await;
+    let created = storage
+        .try_create_user(user)
+        .await
+        .ok_or(AppError::UserAlreadyExists)?;
 
     Ok(json!({
         "User": {

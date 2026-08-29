@@ -1,7 +1,7 @@
 # UI build stage
 FROM node:24-alpine AS ui-builder
 
-RUN corepack enable && corepack prepare pnpm@latest --activate
+RUN corepack enable && corepack prepare pnpm@9.15.9 --activate
 
 WORKDIR /app/ui
 

@@ -117,7 +117,10 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
     let email = user.email.clone();
     let phone_number = user.phone_number.clone();
 
-    storage.create_user(user).await;
+    storage
+        .try_create_user(user)
+        .await
+        .ok_or(AppError::UserAlreadyExists)?;
 
     let code = generate_confirmation_code();
     let confirmation = ConfirmationCode {
@@ -128,7 +131,7 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
     };
     storage.save_confirmation_code(confirmation).await;
 
-    tracing::info!("SignUp confirmation code for {}: {}", req.username, code);
+    tracing::debug!("SignUp confirmation code for {}: {}", req.username, code);
 
     let code_delivery_details =
         build_code_delivery_details(email.as_deref(), phone_number.as_deref()).unwrap_or_else(
@@ -216,6 +219,31 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(user.email.as_deref(), Some("test@example.com"));
+    }
+
+    #[tokio::test]
+    async fn test_concurrent_sign_up_allows_only_one_user() {
+        let storage = Storage::new();
+        let (pool_id, client_id) = setup_pool_and_client(&storage).await;
+        let request = |client_id: String| {
+            handler(
+                &storage,
+                json!({
+                    "ClientId": client_id,
+                    "Username": "concurrent-user",
+                    "Password": "Password123!",
+                    "UserAttributes": [
+                        {"Name": "email", "Value": "concurrent@example.com"}
+                    ]
+                }),
+            )
+        };
+
+        let (first, second) = tokio::join!(request(client_id.clone()), request(client_id));
+        assert_eq!(first.is_ok() as u8 + second.is_ok() as u8, 1);
+
+        let pool_id = UserPoolId::new(pool_id).unwrap();
+        assert_eq!(storage.count_users(&pool_id).await, 1);
     }
 
     #[tokio::test]

@@ -7,6 +7,7 @@
 use std::{
     collections::{HashMap, HashSet},
     fs,
+    io::Write,
     path::{Path, PathBuf},
     sync::Arc,
     time::Duration,
@@ -261,8 +262,27 @@ fn write_snapshot_file(path: &Path, data: &[u8]) -> Result<(), String> {
     }
 
     let tmp_path = path.with_extension("tmp");
-    fs::write(&tmp_path, data)
+    let mut file = fs::OpenOptions::new()
+        .create(true)
+        .truncate(true)
+        .write(true)
+        .open(&tmp_path)
+        .map_err(|e| format!("Failed to open temp snapshot {:?}: {}", tmp_path, e))?;
+
+    // Snapshots contain password hashes, client secrets, refresh tokens, and
+    // MFA material. Ensure the replacement file is private on Unix even when
+    // the process umask is permissive or an older temp file already exists.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        file.set_permissions(fs::Permissions::from_mode(0o600))
+            .map_err(|e| format!("Failed to restrict temp snapshot permissions: {}", e))?;
+    }
+
+    file.write_all(data)
         .map_err(|e| format!("Failed to write temp snapshot {:?}: {}", tmp_path, e))?;
+    file.sync_all()
+        .map_err(|e| format!("Failed to sync temp snapshot {:?}: {}", tmp_path, e))?;
     fs::rename(&tmp_path, path)
         .map_err(|e| format!("Failed to atomically move snapshot to {:?}: {}", path, e))
 }
@@ -918,6 +938,20 @@ impl Storage {
             .insert((user.user_pool_id.clone(), user.username.clone()), user.id);
         store.users.insert(user.id, user.clone());
         user
+    }
+
+    /// Create a user only when the username is not already registered in the
+    /// user pool. The uniqueness check and index updates are atomic.
+    pub async fn try_create_user(&self, user: User) -> Option<User> {
+        let mut store = self.principal_store.write().await;
+        let key = (user.user_pool_id.clone(), user.username.clone());
+        if store.username_index.contains_key(&key) {
+            return None;
+        }
+
+        store.username_index.insert(key, user.id);
+        store.users.insert(user.id, user.clone());
+        Some(user)
     }
 
     pub async fn get_user(&self, id: &UserId) -> Option<User> {

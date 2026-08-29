@@ -21,7 +21,7 @@ watch:
 
 # Run the UI dev server (hot reload)
 ui-dev:
-    cd ui && npm run dev
+    cd ui && pnpm run dev
 
 # Run both servers in parallel (requires tmux or run in separate terminals)
 dev-all:
@@ -43,7 +43,7 @@ build-release:
 
 # Build the UI
 ui-build:
-    cd ui && npm run build
+    cd ui && pnpm run build
 
 # Build everything (Rust + UI)
 build-all: ui-build build
@@ -69,7 +69,7 @@ test-one NAME:
 
 # Run TypeScript type checking for UI
 ui-check:
-    cd ui && npm run check
+    cd ui && pnpm run check
 
 # Run all checks (spec drift + Rust tests + UI type check)
 check-all: spec-check test ui-check
@@ -104,7 +104,7 @@ fmt-check:
 
 # Install UI dependencies
 ui-install:
-    cd ui && npm install
+    cd ui && pnpm install --frozen-lockfile
 
 # Clean UI build artifacts
 ui-clean:
@@ -112,7 +112,7 @@ ui-clean:
 
 # Preview production UI build
 ui-preview:
-    cd ui && npm run preview
+    cd ui && pnpm run preview
 
 # =============================================================================
 # Clean
@@ -168,7 +168,7 @@ setup: ui-install
     @echo ""
     @echo "To start development:"
     @echo "  just dev        # Start Rust server"
-    @echo "  just ui-dev     # Start Svelte dev server (in another terminal)"
+    @echo "  just ui-dev     # Start Preact dev server (in another terminal)"
     @echo ""
     @echo "To build for production:"
     @echo "  just build-all-release"
@@ -204,5 +204,5 @@ demo-setup:
     echo "Demo setup complete!"
     echo ""
     echo "Hosted UI (Rust):   http://localhost:9229/login?response_type=code&client_id=$CLIENT_ID&redirect_uri=http://localhost:3000/callback&scope=openid"
-    echo "Hosted UI (Svelte): http://localhost:9229/ui/?response_type=code&client_id=$CLIENT_ID&redirect_uri=http://localhost:3000/callback&scope=openid"
+    echo "Hosted UI (Preact): http://localhost:9229/ui/?response_type=code&client_id=$CLIENT_ID&redirect_uri=http://localhost:3000/callback&scope=openid"
     echo "Admin Console:      http://localhost:9229/admin/"

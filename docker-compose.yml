@@ -3,6 +3,11 @@ services:
     build: .
     ports:
       - "9229:9229"
+    volumes:
+      - cognitox-data:/data
     environment:
       - COGNITOX_PORT=9229
       - RUST_LOG=cognitox=info
+
+volumes:
+  cognitox-data:

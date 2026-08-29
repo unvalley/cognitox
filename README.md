@@ -18,14 +18,14 @@ Amazon Cognito User Pools emulator for local development.
 ```bash
 # Pull pre-built image from GitHub Container Registry
 docker pull ghcr.io/unvalley/cognitox:latest
-docker run -p 9229:9229 ghcr.io/unvalley/cognitox:latest
+docker run --rm -p 9229:9229 -v cognitox-data:/data ghcr.io/unvalley/cognitox:latest
 ```
 
 ### With Docker (local build)
 
 ```bash
 docker build -t cognitox .
-docker run -p 9229:9229 cognitox
+docker run --rm -p 9229:9229 -v cognitox-data:/data cognitox
 ```
 
 ### With Cargo
@@ -101,7 +101,7 @@ http://localhost:9229/admin/
 
 ### Persistence
 
-By default, state is persisted to `cognitox-data.json` in the working directory and survives restarts. The emulator auto-saves every 500ms when changes are detected, and flushes on graceful shutdown (Ctrl+C).
+By default, state is persisted to `cognitox-data.json` in the working directory and survives restarts. The emulator auto-saves every 500ms when changes are detected, and flushes on graceful shutdown (Ctrl+C or SIGTERM). For Docker, mount `/data` as shown above so the snapshot survives container replacement.
 
 To use a different file:
 
@@ -128,7 +128,7 @@ See [spec/README.md](spec/README.md).
 
 - **Auth flows** -- `USER_PASSWORD_AUTH`, `REFRESH_TOKEN_AUTH`, `ADMIN_USER_PASSWORD_AUTH`, and `ADMIN_NO_SRP_AUTH` are supported. `USER_SRP_AUTH` and `USER_AUTH` return `NotImplementedException`.
 - **Lambda triggers** -- not supported (no pre/post auth hooks)
-- **Email/SMS delivery** -- nothing is sent. SignUp / ForgotPassword / ResendConfirmationCode return `CodeDeliveryDetails` only; the actual confirmation code is logged to the server (`tracing::info!`) and persisted in the data file.
+- **Email/SMS delivery** -- nothing is sent. SignUp / ForgotPassword / ResendConfirmationCode return `CodeDeliveryDetails` only; the actual confirmation code is persisted in the data file and emitted only at debug log level for local troubleshooting.
 - **Password policy per pool** -- the per-pool `PasswordPolicy` is stored and returned but not enforced. A fixed global rule (length 6–256) is applied to all passwords.
 - **MFA enforcement** -- MFA operations are implemented but not enforced during auth
 - **Advanced security features** -- risk configuration is stored but not evaluated

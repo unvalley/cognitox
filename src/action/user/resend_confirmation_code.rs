@@ -72,7 +72,7 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
     };
     storage.save_confirmation_code(confirmation).await;
 
-    tracing::info!("Resend confirmation code for {}: {}", req.username, code);
+    tracing::debug!("Resend confirmation code for {}: {}", req.username, code);
 
     Ok(json!({
         "CodeDeliveryDetails": code_delivery_details

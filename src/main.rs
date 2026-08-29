@@ -2,6 +2,7 @@ use std::{net::SocketAddr, path::PathBuf, sync::Arc};
 
 use bpaf::Bpaf;
 use cognitox::{api, config::StorageConfig, jwt::set_issuer_base_url, storage::Storage};
+use tokio::signal;
 use tower_http::{
     cors::{Any, CorsLayer},
     trace::TraceLayer,
@@ -143,9 +144,7 @@ async fn main() {
     let shutdown_storage = storage.clone();
     axum::serve(listener, app)
         .with_graceful_shutdown(async move {
-            tokio::signal::ctrl_c()
-                .await
-                .expect("failed to listen for ctrl+c");
+            wait_for_shutdown_signal().await;
             tracing::info!("Shutdown signal received, flushing persistence...");
             if let Err(e) = shutdown_storage.flush_persistence().await {
                 tracing::error!("Failed to flush persistence on shutdown: {e}");
@@ -154,6 +153,39 @@ async fn main() {
         })
         .await
         .expect("server exited with error");
+}
+
+/// Wait for a signal used by both local terminals and container supervisors.
+/// Docker and Kubernetes send SIGTERM, while Ctrl+C sends SIGINT.
+async fn wait_for_shutdown_signal() {
+    #[cfg(unix)]
+    {
+        let mut terminate = match signal::unix::signal(signal::unix::SignalKind::terminate()) {
+            Ok(signal) => Some(signal),
+            Err(error) => {
+                tracing::error!("failed to install SIGTERM handler: {error}");
+                None
+            }
+        };
+
+        if let Some(ref mut terminate) = terminate {
+            tokio::select! {
+                result = signal::ctrl_c() => {
+                    if let Err(error) = result {
+                        tracing::error!("failed to listen for ctrl+c: {error}");
+                    }
+                }
+                _ = terminate.recv() => {}
+            }
+        } else if let Err(error) = signal::ctrl_c().await {
+            tracing::error!("failed to listen for ctrl+c: {error}");
+        }
+    }
+
+    #[cfg(not(unix))]
+    if let Err(error) = signal::ctrl_c().await {
+        tracing::error!("failed to listen for ctrl+c: {error}");
+    }
 }
 
 #[cfg(test)]

@@ -899,7 +899,12 @@ pub async fn signup_submit(
         last_modified_date: now,
     };
 
-    storage.create_user(user).await;
+    if storage.try_create_user(user).await.is_none() {
+        let mut ctx = create_template_context(&branding, &form.oauth);
+        ctx.insert("oauth_query", &build_oauth_query(&form.oauth));
+        ctx.insert("error", &Some("Username already exists".to_string()));
+        return render_template(&tera, "signup", &ctx);
+    }
 
     // Save confirmation code separately
     let confirmation = ConfirmationCode {
@@ -911,7 +916,7 @@ pub async fn signup_submit(
     storage.save_confirmation_code(confirmation).await;
 
     // Log confirmation code for development
-    tracing::info!(
+    tracing::debug!(
         "User {} created. Confirmation code: {}",
         form.username,
         code
@@ -1086,7 +1091,7 @@ pub async fn forgot_password_submit(
         storage.save_confirmation_code(confirmation).await;
 
         // Log reset code for development
-        tracing::info!(
+        tracing::debug!(
             "Password reset requested for {}. Code: {}",
             form.username,
             reset_code
