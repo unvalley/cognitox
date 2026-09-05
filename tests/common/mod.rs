@@ -196,6 +196,16 @@ impl TestClient {
 
     /// Make a POST request with form data
     pub async fn post_form(&self, uri: &str, params: &[(&str, &str)]) -> TestResponse {
+        self.post_form_with_headers(uri, params, &[]).await
+    }
+
+    /// Make a POST request with form data and additional headers
+    pub async fn post_form_with_headers(
+        &self,
+        uri: &str,
+        params: &[(&str, &str)],
+        headers: &[(&str, &str)],
+    ) -> TestResponse {
         let app = api::create_router(self.storage.clone());
 
         let form_body = params
@@ -204,13 +214,15 @@ impl TestClient {
             .collect::<Vec<_>>()
             .join("&");
 
-        let request = Request::builder()
+        let mut request = Request::builder()
             .method("POST")
             .uri(uri)
             .header("host", "localhost:9229")
-            .header("content-type", "application/x-www-form-urlencoded")
-            .body(Body::from(form_body))
-            .unwrap();
+            .header("content-type", "application/x-www-form-urlencoded");
+        for (name, value) in headers {
+            request = request.header(*name, *value);
+        }
+        let request = request.body(Body::from(form_body)).unwrap();
 
         let response = app.oneshot(request).await.unwrap();
         let status = response.status();

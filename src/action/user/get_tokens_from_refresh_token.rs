@@ -99,6 +99,7 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
         req.client_id.as_str(),
         &client.user_pool_id,
         &groups,
+        None,
         id_expiry,
     )
     .map_err(AppError::Internal)?;

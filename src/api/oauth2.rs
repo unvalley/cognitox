@@ -6,10 +6,13 @@
 use axum::{
     Form, Json,
     extract::{Query, State},
-    http::{HeaderMap, StatusCode, header},
-    response::{IntoResponse, Redirect},
+    http::{HeaderMap, HeaderValue, StatusCode, header},
+    response::{IntoResponse, Redirect, Response},
 };
-use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
+use base64::{
+    Engine,
+    engine::general_purpose::{STANDARD as BASE64_STANDARD, URL_SAFE_NO_PAD},
+};
 use chrono::{Duration, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -21,13 +24,16 @@ use crate::{
     jwt::{
         generate_access_token, generate_client_credentials_access_token, generate_id_token,
         issuer_base_url, resolve_access_token_expiry, resolve_id_token_expiry,
-        resolve_refresh_token_expiry, verify_access_token,
+        resolve_refresh_token_expiry,
     },
     storage::Storage,
-    types::{AuthorizationCode, ClientId, OAuthFlow, RefreshToken, User, UserPoolId, UserStatus},
+    types::{
+        AuthorizationCode, ClientId, OAuthFlow, RefreshToken, User, UserPoolClient, UserPoolId,
+        UserStatus,
+    },
 };
 
-use super::super::action::user::helpers::verify_password;
+use super::super::action::user::helpers::{verify_and_extract_active_user_id, verify_password};
 
 /// Authorization endpoint query parameters
 #[derive(Debug, Deserialize)]
@@ -116,6 +122,103 @@ fn parse_scopes(raw: Option<&str>, default: &str) -> Vec<String> {
         .collect()
 }
 
+/// A registered callback list restricts `redirect_uri`; an empty list keeps
+/// the emulator lenient (any URI). Without this check a crafted link could
+/// exfiltrate a usable authorization code after the victim signs in.
+fn is_redirect_uri_allowed(callback_urls: &[String], redirect_uri: &str) -> bool {
+    callback_urls.is_empty() || callback_urls.iter().any(|u| u == redirect_uri)
+}
+
+/// Resolve the scopes for an authorization request. Like Cognito, an omitted
+/// `scope` means every scope configured on the client; a client with no
+/// configured scopes falls back to `openid` and accepts any request.
+fn resolve_requested_scopes(
+    client: &UserPoolClient,
+    raw: Option<&str>,
+) -> Result<Vec<String>, OAuthError> {
+    let scopes = match raw.map(str::trim) {
+        Some(raw) if !raw.is_empty() => parse_scopes(Some(raw), ""),
+        _ if client.allowed_oauth_scopes.is_empty() => vec!["openid".to_string()],
+        _ => client.allowed_oauth_scopes.clone(),
+    };
+    if !client.allowed_oauth_scopes.is_empty() {
+        validate_requested_scopes(&client.allowed_oauth_scopes, &scopes)?;
+    }
+    Ok(scopes)
+}
+
+/// Client-policy checks shared by `/oauth2/authorize` and the Hosted UI login
+/// form, so both entry points issue grants under the same rules. Returns the
+/// effective scopes.
+pub(crate) fn validate_authorize_request(
+    client: &UserPoolClient,
+    response_type: &str,
+    redirect_uri: &str,
+    requested_scope: Option<&str>,
+) -> Result<Vec<String>, OAuthError> {
+    if !is_redirect_uri_allowed(&client.callback_urls, redirect_uri) {
+        return Err(OAuthError {
+            error: "invalid_request".to_string(),
+            error_description: Some("Invalid redirect_uri".to_string()),
+        });
+    }
+
+    if !client.allowed_oauth_flows_user_pool_client {
+        return Err(OAuthError {
+            error: "unauthorized_client".to_string(),
+            error_description: Some("OAuth flows are not enabled for this client".to_string()),
+        });
+    }
+
+    let (required_flow, flow_label) = match response_type {
+        "code" => (OAuthFlow::Code, "Code"),
+        "token" => (OAuthFlow::Implicit, "Implicit"),
+        other => {
+            return Err(OAuthError {
+                error: "unsupported_response_type".to_string(),
+                error_description: Some(format!("Response type '{other}' is not supported")),
+            });
+        }
+    };
+    if !client.allowed_oauth_flows.contains(&required_flow) {
+        return Err(OAuthError {
+            error: "unauthorized_client".to_string(),
+            error_description: Some(format!("{flow_label} flow not allowed for this client")),
+        });
+    }
+
+    resolve_requested_scopes(client, requested_scope)
+}
+
+/// Client credentials passed via HTTP Basic auth (RFC 6749 §2.3.1), the
+/// method most OAuth libraries use by default for the token endpoint.
+fn parse_basic_client_auth(headers: &HeaderMap) -> Result<Option<(String, String)>, OAuthError> {
+    let Some(encoded) = headers
+        .get(header::AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.strip_prefix("Basic "))
+    else {
+        return Ok(None);
+    };
+
+    let invalid = || OAuthError {
+        error: "invalid_client".to_string(),
+        error_description: Some("Malformed Basic authorization header".to_string()),
+    };
+    let decoded = BASE64_STANDARD
+        .decode(encoded.trim())
+        .map_err(|_| invalid())?;
+    let credentials = String::from_utf8(decoded).map_err(|_| invalid())?;
+    let (client_id, client_secret) = credentials.split_once(':').ok_or_else(invalid)?;
+
+    let decode = |value: &str| {
+        urlencoding::decode(value)
+            .map(|v| v.into_owned())
+            .unwrap_or_else(|_| value.to_string())
+    };
+    Ok(Some((decode(client_id), decode(client_secret))))
+}
+
 fn validate_requested_scopes(
     allowed_scopes: &[String],
     requested_scopes: &[String],
@@ -155,7 +258,7 @@ fn html_escape(value: &str) -> String {
         .replace('\'', "&#39;")
 }
 
-async fn get_user_by_username_or_email(
+pub(crate) async fn get_user_by_username_or_email(
     storage: &Storage,
     user_pool_id: &UserPoolId,
     username_or_email: &str,
@@ -199,36 +302,16 @@ pub async fn authorize(
             error_description: Some("Client not found".to_string()),
         })?;
 
-    // Validate redirect_uri
-    if !client.callback_urls.is_empty() && !client.callback_urls.contains(&params.redirect_uri) {
-        return Err(OAuthError {
-            error: "invalid_request".to_string(),
-            error_description: Some("Invalid redirect_uri".to_string()),
-        });
-    }
+    // Redirect URI, enabled flows, response type and scopes.
+    let scopes = validate_authorize_request(
+        &client,
+        &params.response_type,
+        &params.redirect_uri,
+        params.scope.as_deref(),
+    )?;
 
-    if !client.allowed_oauth_flows_user_pool_client {
-        return Err(OAuthError {
-            error: "unauthorized_client".to_string(),
-            error_description: Some("OAuth flows are not enabled for this client".to_string()),
-        });
-    }
-
-    // Parse scopes
-    let scopes = parse_scopes(params.scope.as_deref(), "openid");
-    validate_requested_scopes(&client.allowed_oauth_scopes, &scopes)?;
-
-    // Validate response_type
     match params.response_type.as_str() {
         "code" => {
-            // Authorization Code Flow
-            if !client.allowed_oauth_flows.contains(&OAuthFlow::Code) {
-                return Err(OAuthError {
-                    error: "unauthorized_client".to_string(),
-                    error_description: Some("Code flow not allowed for this client".to_string()),
-                });
-            }
-
             // For testing: direct authentication if credentials provided
             if let (Some(username), Some(password)) = (&params.username, &params.password) {
                 let user = get_user_by_username_or_email(&storage, &client.user_pool_id, username)
@@ -299,15 +382,6 @@ pub async fn authorize(
         }
         "token" => {
             // Implicit Flow (legacy, not recommended)
-            if !client.allowed_oauth_flows.contains(&OAuthFlow::Implicit) {
-                return Err(OAuthError {
-                    error: "unauthorized_client".to_string(),
-                    error_description: Some(
-                        "Implicit flow not allowed for this client".to_string(),
-                    ),
-                });
-            }
-
             // For implicit flow with direct auth
             if let (Some(username), Some(password)) = (&params.username, &params.password) {
                 let user = get_user_by_username_or_email(&storage, &client.user_pool_id, username)
@@ -329,6 +403,13 @@ pub async fn authorize(
                     return Err(OAuthError {
                         error: "access_denied".to_string(),
                         error_description: Some("Invalid credentials".to_string()),
+                    });
+                }
+
+                if user.user_status != UserStatus::Confirmed {
+                    return Err(OAuthError {
+                        error: "access_denied".to_string(),
+                        error_description: Some("User not confirmed".to_string()),
                     });
                 }
 
@@ -365,6 +446,7 @@ pub async fn authorize(
                         &params.client_id,
                         &client.user_pool_id,
                         &groups,
+                        params.nonce.as_deref(),
                         id_expiry,
                     )
                     .map_err(|e| OAuthError {
@@ -402,8 +484,14 @@ pub async fn authorize(
 /// POST /oauth2/token - Token endpoint
 pub async fn token(
     State(storage): State<Storage>,
-    Form(req): Form<TokenRequest>,
+    headers: HeaderMap,
+    Form(mut req): Form<TokenRequest>,
 ) -> Result<Json<TokenResponse>, OAuthError> {
+    if let Some((client_id, client_secret)) = parse_basic_client_auth(&headers)? {
+        req.client_id.get_or_insert(client_id);
+        req.client_secret.get_or_insert(client_secret);
+    }
+
     match req.grant_type.as_str() {
         "authorization_code" => {
             let code = req.code.as_ref().ok_or_else(|| OAuthError {
@@ -523,6 +611,14 @@ pub async fn token(
                     error_description: Some("User not found".to_string()),
                 })?;
 
+            // The user may have been disabled during the code's lifetime.
+            if !user.enabled {
+                return Err(OAuthError {
+                    error: "invalid_grant".to_string(),
+                    error_description: Some("User is disabled".to_string()),
+                });
+            }
+
             let groups = storage.get_groups_for_user(&user.id).await;
 
             let access_expiry = resolve_access_token_expiry(&client);
@@ -550,6 +646,7 @@ pub async fn token(
                         client_id.as_str(),
                         &client.user_pool_id,
                         &groups,
+                        auth_code.nonce.as_deref(),
                         id_expiry,
                     )
                     .map_err(|e| OAuthError {
@@ -680,6 +777,7 @@ pub async fn token(
                         stored_token.client_id.as_str(),
                         &client.user_pool_id,
                         &groups,
+                        None,
                         id_expiry,
                     )
                     .map_err(|e| OAuthError {
@@ -753,7 +851,11 @@ pub async fn token(
                 });
             }
 
-            let scopes = parse_scopes(req.scope.as_deref(), "");
+            // Omitted scope means every scope configured on the client.
+            let scopes = match req.scope.as_deref().map(str::trim) {
+                Some(raw) if !raw.is_empty() => parse_scopes(Some(raw), ""),
+                _ => client.allowed_oauth_scopes.clone(),
+            };
             validate_requested_scopes(&client.allowed_oauth_scopes, &scopes)?;
 
             let access_expiry = resolve_access_token_expiry(&client);
@@ -802,42 +904,53 @@ pub struct UserInfoResponse {
     pub groups: Vec<String>,
 }
 
+/// Bearer-token failure per RFC 6750 §3: `401` plus a `WWW-Authenticate`
+/// challenge, which is what SDKs key their token-refresh logic on.
+fn invalid_token_response(description: impl Into<String>) -> Response {
+    let description = description.into();
+    let mut response = OAuthError {
+        error: "invalid_token".to_string(),
+        error_description: Some(description.clone()),
+    }
+    .into_response();
+    *response.status_mut() = StatusCode::UNAUTHORIZED;
+    let challenge = format!(
+        "Bearer error=\"invalid_token\", error_description=\"{}\"",
+        description.replace('"', "'")
+    );
+    if let Ok(value) = HeaderValue::from_str(&challenge) {
+        response
+            .headers_mut()
+            .insert(header::WWW_AUTHENTICATE, value);
+    }
+    response
+}
+
 /// GET /oauth2/userInfo - UserInfo endpoint
 pub async fn userinfo(
     State(storage): State<Storage>,
-    headers: axum::http::HeaderMap,
-) -> Result<Json<UserInfoResponse>, OAuthError> {
+    headers: HeaderMap,
+) -> Result<Json<UserInfoResponse>, Response> {
     // Extract Bearer token from Authorization header
     let auth_header = headers
         .get(header::AUTHORIZATION)
         .and_then(|v| v.to_str().ok())
-        .ok_or_else(|| OAuthError {
-            error: "invalid_token".to_string(),
-            error_description: Some("Missing Authorization header".to_string()),
-        })?;
+        .ok_or_else(|| invalid_token_response("Missing Authorization header"))?;
 
     let token = auth_header
         .strip_prefix("Bearer ")
-        .ok_or_else(|| OAuthError {
-            error: "invalid_token".to_string(),
-            error_description: Some("Invalid Authorization header format".to_string()),
-        })?;
+        .ok_or_else(|| invalid_token_response("Invalid Authorization header format"))?;
 
-    // Verify token
-    let token_data = verify_access_token(token).map_err(|e| OAuthError {
-        error: "invalid_token".to_string(),
-        error_description: Some(e),
-    })?;
+    // Same checks as the cognito-idp handlers: signature, expiry and
+    // revocation via GlobalSignOut / AdminUserGlobalSignOut.
+    let user_id = verify_and_extract_active_user_id(&storage, token)
+        .await
+        .map_err(invalid_token_response)?;
 
-    let user_id = uuid::Uuid::parse_str(&token_data.claims.sub).map_err(|_| OAuthError {
-        error: "invalid_token".to_string(),
-        error_description: Some("Invalid user ID in token".to_string()),
-    })?;
-
-    let user = storage.get_user(&user_id).await.ok_or_else(|| OAuthError {
-        error: "invalid_token".to_string(),
-        error_description: Some("User not found".to_string()),
-    })?;
+    let user = storage
+        .get_user(&user_id)
+        .await
+        .ok_or_else(|| invalid_token_response("User not found"))?;
 
     let groups = storage.get_groups_for_user(&user_id).await;
 
@@ -892,7 +1005,7 @@ pub async fn logout(
 }
 
 /// GET /.well-known/openid-configuration - OpenID Connect Discovery
-pub async fn openid_configuration(_headers: axum::http::HeaderMap) -> Json<Value> {
+pub async fn openid_configuration() -> Json<Value> {
     let base_url = issuer_base_url();
 
     Json(json!({
@@ -901,7 +1014,7 @@ pub async fn openid_configuration(_headers: axum::http::HeaderMap) -> Json<Value
         "token_endpoint": format!("{}/oauth2/token", base_url),
         "userinfo_endpoint": format!("{}/oauth2/userInfo", base_url),
         "jwks_uri": format!("{}/.well-known/jwks.json", base_url),
-        "response_types_supported": ["code", "token", "code token"],
+        "response_types_supported": ["code", "token"],
         "subject_types_supported": ["public"],
         "id_token_signing_alg_values_supported": ["RS256"],
         "scopes_supported": ["openid", "email", "phone", "profile", "aws.cognito.signin.user.admin"],

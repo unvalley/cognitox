@@ -307,3 +307,166 @@ async fn test_login_page_escapes_reflected_params() {
     );
     assert!(body.contains("&lt;script&gt;"));
 }
+
+#[tokio::test]
+async fn test_login_submit_enforces_client_oauth_policy() {
+    let client = TestClient::new();
+    let (_, pool_body) = client
+        .request("CreateUserPool", json!({ "PoolName": "test-pool" }))
+        .await;
+    let user_pool_id = pool_body["UserPool"]["Id"].as_str().unwrap().to_string();
+
+    // Client with OAuth flows disabled entirely.
+    let (_, client_body) = client
+        .request(
+            "CreateUserPoolClient",
+            json!({
+                "UserPoolId": user_pool_id,
+                "ClientName": "no-oauth"
+            }),
+        )
+        .await;
+    let client_id = client_body["UserPoolClient"]["ClientId"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    client
+        .request(
+            "AdminCreateUser",
+            json!({ "UserPoolId": user_pool_id, "Username": "bob", "MessageAction": "SUPPRESS" }),
+        )
+        .await;
+    client
+        .request(
+            "AdminSetUserPassword",
+            json!({
+                "UserPoolId": user_pool_id,
+                "Username": "bob",
+                "Password": "Passw0rd!",
+                "Permanent": true
+            }),
+        )
+        .await;
+
+    let response = client
+        .post_form(
+            "/login",
+            &[
+                ("response_type", "code"),
+                ("client_id", &client_id),
+                ("redirect_uri", "https://example.com/callback"),
+                ("scope", "openid"),
+                ("username", "bob"),
+                ("password", "Passw0rd!"),
+            ],
+        )
+        .await;
+    // /oauth2/authorize would refuse this client, so the Hosted UI must too.
+    assert_eq!(response.status(), StatusCode::OK);
+    assert!(response.headers().get("location").is_none());
+    assert!(
+        response
+            .body_string()
+            .contains("OAuth flows are not enabled for this client")
+    );
+
+    // Enable the code flow; a scope outside AllowedOAuthScopes is still refused.
+    client
+        .request(
+            "UpdateUserPoolClient",
+            json!({
+                "UserPoolId": user_pool_id,
+                "ClientId": client_id,
+                "AllowedOAuthFlowsUserPoolClient": true,
+                "AllowedOAuthFlows": ["code"],
+                "AllowedOAuthScopes": ["email"],
+                "CallbackURLs": ["https://example.com/callback"]
+            }),
+        )
+        .await;
+    let response = client
+        .post_form(
+            "/login",
+            &[
+                ("response_type", "code"),
+                ("client_id", &client_id),
+                ("redirect_uri", "https://example.com/callback"),
+                ("scope", "openid profile"),
+                ("username", "bob"),
+                ("password", "Passw0rd!"),
+            ],
+        )
+        .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert!(response.headers().get("location").is_none());
+    assert!(
+        response
+            .body_string()
+            .contains("is not allowed for this client")
+    );
+}
+
+#[tokio::test]
+async fn test_login_submit_checks_password_before_confirmation_status() {
+    let client = TestClient::new();
+    let (client_id, _, _) = setup_login_fixture(&client).await;
+
+    // Unconfirmed user via SignUp.
+    client
+        .request(
+            "SignUp",
+            json!({
+                "ClientId": client_id,
+                "Username": "carol",
+                "Password": "Passw0rd!",
+                "UserAttributes": [{ "Name": "email", "Value": "carol@example.com" }]
+            }),
+        )
+        .await;
+
+    // Wrong password must not reveal the unconfirmed state via a /confirm redirect.
+    let response = client
+        .post_form(
+            "/login",
+            &[
+                ("response_type", "code"),
+                ("client_id", &client_id),
+                ("redirect_uri", "https://example.com/callback"),
+                ("scope", "openid"),
+                ("username", "carol"),
+                ("password", "wrong-password"),
+            ],
+        )
+        .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert!(response.headers().get("location").is_none());
+    assert!(
+        response
+            .body_string()
+            .contains("Invalid username or password")
+    );
+
+    // Correct password for an unconfirmed user goes to the confirmation page.
+    let response = client
+        .post_form(
+            "/login",
+            &[
+                ("response_type", "code"),
+                ("client_id", &client_id),
+                ("redirect_uri", "https://example.com/callback"),
+                ("scope", "openid"),
+                ("username", "carol"),
+                ("password", "Passw0rd!"),
+            ],
+        )
+        .await;
+    assert_eq!(response.status(), StatusCode::SEE_OTHER);
+    let location = response
+        .headers()
+        .get("location")
+        .unwrap()
+        .to_str()
+        .unwrap();
+    assert!(location.starts_with("/confirm?"));
+}

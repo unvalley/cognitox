@@ -522,8 +522,15 @@ pub(crate) async fn issue_authentication_result(
         access_expiry,
     )
     .map_err(AppError::Internal)?;
-    let id_token = generate_id_token(user, client_id.as_str(), user_pool_id, &groups, id_expiry)
-        .map_err(AppError::Internal)?;
+    let id_token = generate_id_token(
+        user,
+        client_id.as_str(),
+        user_pool_id,
+        &groups,
+        None,
+        id_expiry,
+    )
+    .map_err(AppError::Internal)?;
 
     let mut result = json!({
         "AccessToken": access_token,

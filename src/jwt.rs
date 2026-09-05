@@ -163,6 +163,9 @@ pub struct IdTokenClaims {
     pub exp: i64,
     pub auth_time: i64,
     pub token_use: String,
+    /// OIDC nonce echoed from the authorization request, when one was sent.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub nonce: Option<String>,
 
     // Cognito-specific claims
     #[serde(skip_serializing_if = "Option::is_none", default)]
@@ -214,6 +217,7 @@ pub fn generate_id_token(
     client_id: &str,
     _user_pool_id: &UserPoolId,
     groups: &[String],
+    nonce: Option<&str>,
     expiry: Duration,
 ) -> Result<String, String> {
     let keys = get_jwt_keys();
@@ -228,6 +232,7 @@ pub fn generate_id_token(
         exp: (now + expiry).timestamp(),
         auth_time,
         token_use: "id".to_string(),
+        nonce: nonce.map(str::to_string),
         email: user.email.clone(),
         email_verified: user.email_verified(),
         phone_number: user.phone_number.clone(),
@@ -446,9 +451,15 @@ mod tests {
             Duration::hours(1),
         )
         .expect("Failed to generate access token");
-        let id_token =
-            generate_id_token(&user, client_id, &user_pool_id, &groups, Duration::hours(1))
-                .expect("Failed to generate ID token");
+        let id_token = generate_id_token(
+            &user,
+            client_id,
+            &user_pool_id,
+            &groups,
+            Some("n-0S6_WzA2Mj"),
+            Duration::hours(1),
+        )
+        .expect("Failed to generate ID token");
 
         // Verify tokens
         let access_result = verify_access_token(&access_token);
@@ -463,6 +474,7 @@ mod tests {
         assert_eq!(id_claims.sub, user.id.to_string());
         assert_eq!(id_claims.token_use, "id");
         assert_eq!(id_claims.email, Some("test@example.com".to_string()));
+        assert_eq!(id_claims.nonce.as_deref(), Some("n-0S6_WzA2Mj"));
     }
 
     #[test]

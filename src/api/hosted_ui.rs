@@ -14,6 +14,7 @@ use axum::{
 };
 use chrono::{Duration, Utc};
 use serde::Deserialize;
+use std::sync::OnceLock;
 use tera::{Context, Tera};
 use uuid::Uuid;
 
@@ -21,10 +22,10 @@ use crate::{
     action::user::helpers::{
         generate_confirmation_code, hash_password, normalize_confirmation_code, verify_password,
     },
+    api::oauth2::{get_user_by_username_or_email, validate_authorize_request},
     storage::Storage,
     types::{
-        AuthorizationCode, ClientId, ConfirmationCode, ManagedLoginBranding, User, UserPoolId,
-        UserStatus,
+        AuthorizationCode, ClientId, ConfirmationCode, ManagedLoginBranding, User, UserStatus,
     },
 };
 
@@ -571,6 +572,13 @@ const RESET_PASSWORD_TEMPLATE: &str = r#"{% extends "base" %}
 </div>
 {% endblock %}"#;
 
+/// Templates are static, so parse them once per process instead of on every
+/// request.
+fn tera() -> &'static Tera {
+    static TERA: OnceLock<Tera> = OnceLock::new();
+    TERA.get_or_init(create_tera)
+}
+
 /// Initialize Tera templates
 fn create_tera() -> Tera {
     let mut tera = Tera::default();
@@ -599,34 +607,6 @@ fn create_tera() -> Tera {
         "reset_password",
     ]);
     tera
-}
-
-async fn get_user_by_username_or_email(
-    storage: &Storage,
-    user_pool_id: &UserPoolId,
-    username_or_email: &str,
-) -> Option<User> {
-    if let Some(user) = storage
-        .get_user_by_username(user_pool_id, username_or_email)
-        .await
-    {
-        return Some(user);
-    }
-
-    storage
-        .list_users(user_pool_id)
-        .await
-        .into_iter()
-        .find(|user| user.email.as_deref() == Some(username_or_email))
-}
-
-/// Check that `redirect_uri` is registered for the client before issuing an
-/// authorization code. Mirrors the OAuth `authorize` endpoint: an empty
-/// callback list allows any URI (kept consistent so the two login paths agree).
-/// Without this, a crafted `/login?...&redirect_uri=https://attacker/cb` link
-/// would exfiltrate a usable authorization code after the victim signs in.
-fn is_redirect_uri_allowed(callback_urls: &[String], redirect_uri: &str) -> bool {
-    callback_urls.is_empty() || callback_urls.iter().any(|u| u == redirect_uri)
 }
 
 /// Build OAuth query string for links
@@ -686,18 +666,18 @@ pub async fn login_page(
     Query(oauth): Query<OAuthParams>,
 ) -> Response {
     let branding = get_branding(&storage, &oauth.client_id).await;
-    let tera = create_tera();
+    let tera = tera();
     let mut ctx = create_template_context(&branding, &oauth);
     ctx.insert("oauth_query", &build_oauth_query(&oauth));
     ctx.insert("error", &None::<String>);
 
-    render_template(&tera, "login", &ctx)
+    render_template(tera, "login", &ctx)
 }
 
 /// POST /login - Process login
 pub async fn login_submit(State(storage): State<Storage>, Form(form): Form<LoginForm>) -> Response {
     let branding = get_branding(&storage, &form.oauth.client_id).await;
-    let tera = create_tera();
+    let tera = tera();
 
     // Parse client_id
     let parsed_client_id = match ClientId::new(&form.oauth.client_id) {
@@ -706,7 +686,7 @@ pub async fn login_submit(State(storage): State<Storage>, Form(form): Form<Login
             let mut ctx = create_template_context(&branding, &form.oauth);
             ctx.insert("oauth_query", &build_oauth_query(&form.oauth));
             ctx.insert("error", &Some("Invalid client".to_string()));
-            return render_template(&tera, "login", &ctx);
+            return render_template(tera, "login", &ctx);
         }
     };
 
@@ -717,18 +697,36 @@ pub async fn login_submit(State(storage): State<Storage>, Form(form): Form<Login
             let mut ctx = create_template_context(&branding, &form.oauth);
             ctx.insert("oauth_query", &build_oauth_query(&form.oauth));
             ctx.insert("error", &Some("Invalid client".to_string()));
-            return render_template(&tera, "login", &ctx);
+            return render_template(tera, "login", &ctx);
         }
     };
 
-    // Validate redirect_uri against the client's registered callback URLs
-    // before we authenticate or mint a code, to prevent code exfiltration.
-    if !is_redirect_uri_allowed(&client.callback_urls, &form.oauth.redirect_uri) {
-        let mut ctx = create_template_context(&branding, &form.oauth);
-        ctx.insert("oauth_query", &build_oauth_query(&form.oauth));
-        ctx.insert("error", &Some("Invalid redirect_uri".to_string()));
-        return render_template(&tera, "login", &ctx);
-    }
+    // Apply the same client policy as /oauth2/authorize (registered
+    // redirect_uri, OAuth enabled, code flow allowed, scopes) before we
+    // authenticate or mint a code. The Hosted UI only issues codes.
+    let scopes = match validate_authorize_request(
+        &client,
+        &form.oauth.response_type,
+        &form.oauth.redirect_uri,
+        form.oauth.scope.as_deref(),
+    ) {
+        Ok(scopes) if form.oauth.response_type == "code" => scopes,
+        Ok(_) => {
+            let mut ctx = create_template_context(&branding, &form.oauth);
+            ctx.insert("oauth_query", &build_oauth_query(&form.oauth));
+            ctx.insert(
+                "error",
+                &Some("Only response_type=code is supported by this login page".to_string()),
+            );
+            return render_template(tera, "login", &ctx);
+        }
+        Err(e) => {
+            let mut ctx = create_template_context(&branding, &form.oauth);
+            ctx.insert("oauth_query", &build_oauth_query(&form.oauth));
+            ctx.insert("error", &Some(e.error_description.unwrap_or(e.error)));
+            return render_template(tera, "login", &ctx);
+        }
+    };
 
     // Find user
     let user =
@@ -738,7 +736,7 @@ pub async fn login_submit(State(storage): State<Storage>, Form(form): Form<Login
                 let mut ctx = create_template_context(&branding, &form.oauth);
                 ctx.insert("oauth_query", &build_oauth_query(&form.oauth));
                 ctx.insert("error", &Some("Invalid username or password".to_string()));
-                return render_template(&tera, "login", &ctx);
+                return render_template(tera, "login", &ctx);
             }
         };
 
@@ -747,7 +745,16 @@ pub async fn login_submit(State(storage): State<Storage>, Form(form): Form<Login
         let mut ctx = create_template_context(&branding, &form.oauth);
         ctx.insert("oauth_query", &build_oauth_query(&form.oauth));
         ctx.insert("error", &Some("This account has been disabled".to_string()));
-        return render_template(&tera, "login", &ctx);
+        return render_template(tera, "login", &ctx);
+    }
+
+    // Verify the password before revealing anything about account state, so
+    // the confirmation redirect below cannot be used to probe usernames.
+    if !verify_password(&form.password, &user.password_hash) {
+        let mut ctx = create_template_context(&branding, &form.oauth);
+        ctx.insert("oauth_query", &build_oauth_query(&form.oauth));
+        ctx.insert("error", &Some("Invalid username or password".to_string()));
+        return render_template(tera, "login", &ctx);
     }
 
     // Check user status
@@ -762,24 +769,7 @@ pub async fn login_submit(State(storage): State<Storage>, Form(form): Form<Login
         return Redirect::to(&redirect_url).into_response();
     }
 
-    // Verify password
-    if !verify_password(&form.password, &user.password_hash) {
-        let mut ctx = create_template_context(&branding, &form.oauth);
-        ctx.insert("oauth_query", &build_oauth_query(&form.oauth));
-        ctx.insert("error", &Some("Invalid username or password".to_string()));
-        return render_template(&tera, "login", &ctx);
-    }
-
     // Generate authorization code and redirect
-    let scopes: Vec<String> = form
-        .oauth
-        .scope
-        .as_deref()
-        .unwrap_or("openid")
-        .split_whitespace()
-        .map(String::from)
-        .collect();
-
     let code = Uuid::new_v4().to_string();
     let auth_code = AuthorizationCode {
         code: code.clone(),
@@ -811,12 +801,12 @@ pub async fn signup_page(
     Query(oauth): Query<OAuthParams>,
 ) -> Response {
     let branding = get_branding(&storage, &oauth.client_id).await;
-    let tera = create_tera();
+    let tera = tera();
     let mut ctx = create_template_context(&branding, &oauth);
     ctx.insert("oauth_query", &build_oauth_query(&oauth));
     ctx.insert("error", &None::<String>);
 
-    render_template(&tera, "signup", &ctx)
+    render_template(tera, "signup", &ctx)
 }
 
 /// POST /signup - Process signup
@@ -825,7 +815,7 @@ pub async fn signup_submit(
     Form(form): Form<SignupForm>,
 ) -> Response {
     let branding = get_branding(&storage, &form.oauth.client_id).await;
-    let tera = create_tera();
+    let tera = tera();
 
     // Parse client_id
     let parsed_client_id = match ClientId::new(&form.oauth.client_id) {
@@ -834,7 +824,7 @@ pub async fn signup_submit(
             let mut ctx = create_template_context(&branding, &form.oauth);
             ctx.insert("oauth_query", &build_oauth_query(&form.oauth));
             ctx.insert("error", &Some("Invalid client".to_string()));
-            return render_template(&tera, "signup", &ctx);
+            return render_template(tera, "signup", &ctx);
         }
     };
 
@@ -843,7 +833,7 @@ pub async fn signup_submit(
         let mut ctx = create_template_context(&branding, &form.oauth);
         ctx.insert("oauth_query", &build_oauth_query(&form.oauth));
         ctx.insert("error", &Some("Passwords do not match".to_string()));
-        return render_template(&tera, "signup", &ctx);
+        return render_template(tera, "signup", &ctx);
     }
 
     // Validate client
@@ -853,7 +843,7 @@ pub async fn signup_submit(
             let mut ctx = create_template_context(&branding, &form.oauth);
             ctx.insert("oauth_query", &build_oauth_query(&form.oauth));
             ctx.insert("error", &Some("Invalid client".to_string()));
-            return render_template(&tera, "signup", &ctx);
+            return render_template(tera, "signup", &ctx);
         }
     };
 
@@ -866,7 +856,7 @@ pub async fn signup_submit(
         let mut ctx = create_template_context(&branding, &form.oauth);
         ctx.insert("oauth_query", &build_oauth_query(&form.oauth));
         ctx.insert("error", &Some("Username already exists".to_string()));
-        return render_template(&tera, "signup", &ctx);
+        return render_template(tera, "signup", &ctx);
     }
 
     // Create user
@@ -881,7 +871,7 @@ pub async fn signup_submit(
             let mut ctx = create_template_context(&branding, &form.oauth);
             ctx.insert("oauth_query", &build_oauth_query(&form.oauth));
             ctx.insert("error", &Some("Internal error".to_string()));
-            return render_template(&tera, "signup", &ctx);
+            return render_template(tera, "signup", &ctx);
         }
     };
 
@@ -903,7 +893,7 @@ pub async fn signup_submit(
         let mut ctx = create_template_context(&branding, &form.oauth);
         ctx.insert("oauth_query", &build_oauth_query(&form.oauth));
         ctx.insert("error", &Some("Username already exists".to_string()));
-        return render_template(&tera, "signup", &ctx);
+        return render_template(tera, "signup", &ctx);
     }
 
     // Save confirmation code separately
@@ -946,14 +936,14 @@ pub async fn confirm_page(
     Query(query): Query<ConfirmPageQuery>,
 ) -> Response {
     let branding = get_branding(&storage, &query.oauth.client_id).await;
-    let tera = create_tera();
+    let tera = tera();
     let mut ctx = create_template_context(&branding, &query.oauth);
     ctx.insert("oauth_query", &build_oauth_query(&query.oauth));
     ctx.insert("username", &query.username);
     ctx.insert("error", &None::<String>);
     ctx.insert("success", &None::<String>);
 
-    render_template(&tera, "confirm", &ctx)
+    render_template(tera, "confirm", &ctx)
 }
 
 /// POST /confirm - Process confirmation
@@ -962,7 +952,7 @@ pub async fn confirm_submit(
     Form(form): Form<ConfirmForm>,
 ) -> Response {
     let branding = get_branding(&storage, &form.oauth.client_id).await;
-    let tera = create_tera();
+    let tera = tera();
 
     // Parse client_id
     let parsed_client_id = match ClientId::new(&form.oauth.client_id) {
@@ -973,7 +963,7 @@ pub async fn confirm_submit(
             ctx.insert("username", &form.username);
             ctx.insert("error", &Some("Invalid client".to_string()));
             ctx.insert("success", &None::<String>);
-            return render_template(&tera, "confirm", &ctx);
+            return render_template(tera, "confirm", &ctx);
         }
     };
 
@@ -986,7 +976,7 @@ pub async fn confirm_submit(
             ctx.insert("username", &form.username);
             ctx.insert("error", &Some("Invalid client".to_string()));
             ctx.insert("success", &None::<String>);
-            return render_template(&tera, "confirm", &ctx);
+            return render_template(tera, "confirm", &ctx);
         }
     };
 
@@ -1002,7 +992,7 @@ pub async fn confirm_submit(
             ctx.insert("username", &form.username);
             ctx.insert("error", &Some("User not found".to_string()));
             ctx.insert("success", &None::<String>);
-            return render_template(&tera, "confirm", &ctx);
+            return render_template(tera, "confirm", &ctx);
         }
     };
 
@@ -1019,7 +1009,7 @@ pub async fn confirm_submit(
         ctx.insert("username", &form.username);
         ctx.insert("error", &Some("Invalid confirmation code".to_string()));
         ctx.insert("success", &None::<String>);
-        return render_template(&tera, "confirm", &ctx);
+        return render_template(tera, "confirm", &ctx);
     }
 
     // Confirm user (this also removes the confirmation code)
@@ -1037,12 +1027,12 @@ pub async fn forgot_password_page(
     Query(oauth): Query<OAuthParams>,
 ) -> Response {
     let branding = get_branding(&storage, &oauth.client_id).await;
-    let tera = create_tera();
+    let tera = tera();
     let mut ctx = create_template_context(&branding, &oauth);
     ctx.insert("oauth_query", &build_oauth_query(&oauth));
     ctx.insert("error", &None::<String>);
 
-    render_template(&tera, "forgot_password", &ctx)
+    render_template(tera, "forgot_password", &ctx)
 }
 
 /// POST /forgot-password - Process forgot password
@@ -1051,7 +1041,7 @@ pub async fn forgot_password_submit(
     Form(form): Form<ForgotPasswordForm>,
 ) -> Response {
     let branding = get_branding(&storage, &form.oauth.client_id).await;
-    let tera = create_tera();
+    let tera = tera();
 
     // Parse client_id
     let parsed_client_id = match ClientId::new(&form.oauth.client_id) {
@@ -1060,7 +1050,7 @@ pub async fn forgot_password_submit(
             let mut ctx = create_template_context(&branding, &form.oauth);
             ctx.insert("oauth_query", &build_oauth_query(&form.oauth));
             ctx.insert("error", &Some("Invalid client".to_string()));
-            return render_template(&tera, "forgot_password", &ctx);
+            return render_template(tera, "forgot_password", &ctx);
         }
     };
 
@@ -1071,7 +1061,7 @@ pub async fn forgot_password_submit(
             let mut ctx = create_template_context(&branding, &form.oauth);
             ctx.insert("oauth_query", &build_oauth_query(&form.oauth));
             ctx.insert("error", &Some("Invalid client".to_string()));
-            return render_template(&tera, "forgot_password", &ctx);
+            return render_template(tera, "forgot_password", &ctx);
         }
     };
 
@@ -1122,13 +1112,13 @@ pub async fn reset_password_page(
     Query(query): Query<ResetPasswordPageQuery>,
 ) -> Response {
     let branding = get_branding(&storage, &query.oauth.client_id).await;
-    let tera = create_tera();
+    let tera = tera();
     let mut ctx = create_template_context(&branding, &query.oauth);
     ctx.insert("oauth_query", &build_oauth_query(&query.oauth));
     ctx.insert("username", &query.username);
     ctx.insert("error", &None::<String>);
 
-    render_template(&tera, "reset_password", &ctx)
+    render_template(tera, "reset_password", &ctx)
 }
 
 /// POST /reset-password - Process password reset
@@ -1137,7 +1127,7 @@ pub async fn reset_password_submit(
     Form(form): Form<ResetPasswordForm>,
 ) -> Response {
     let branding = get_branding(&storage, &form.oauth.client_id).await;
-    let tera = create_tera();
+    let tera = tera();
 
     // Parse client_id
     let parsed_client_id = match ClientId::new(&form.oauth.client_id) {
@@ -1147,7 +1137,7 @@ pub async fn reset_password_submit(
             ctx.insert("oauth_query", &build_oauth_query(&form.oauth));
             ctx.insert("username", &form.username);
             ctx.insert("error", &Some("Invalid client".to_string()));
-            return render_template(&tera, "reset_password", &ctx);
+            return render_template(tera, "reset_password", &ctx);
         }
     };
 
@@ -1157,7 +1147,7 @@ pub async fn reset_password_submit(
         ctx.insert("oauth_query", &build_oauth_query(&form.oauth));
         ctx.insert("username", &form.username);
         ctx.insert("error", &Some("Passwords do not match".to_string()));
-        return render_template(&tera, "reset_password", &ctx);
+        return render_template(tera, "reset_password", &ctx);
     }
 
     // Validate client
@@ -1168,7 +1158,7 @@ pub async fn reset_password_submit(
             ctx.insert("oauth_query", &build_oauth_query(&form.oauth));
             ctx.insert("username", &form.username);
             ctx.insert("error", &Some("Invalid client".to_string()));
-            return render_template(&tera, "reset_password", &ctx);
+            return render_template(tera, "reset_password", &ctx);
         }
     };
 
@@ -1183,7 +1173,7 @@ pub async fn reset_password_submit(
             ctx.insert("oauth_query", &build_oauth_query(&form.oauth));
             ctx.insert("username", &form.username);
             ctx.insert("error", &Some("Invalid reset code".to_string()));
-            return render_template(&tera, "reset_password", &ctx);
+            return render_template(tera, "reset_password", &ctx);
         }
     };
 
@@ -1199,7 +1189,7 @@ pub async fn reset_password_submit(
         ctx.insert("oauth_query", &build_oauth_query(&form.oauth));
         ctx.insert("username", &form.username);
         ctx.insert("error", &Some("Invalid reset code".to_string()));
-        return render_template(&tera, "reset_password", &ctx);
+        return render_template(tera, "reset_password", &ctx);
     }
 
     // Update password
@@ -1211,7 +1201,7 @@ pub async fn reset_password_submit(
             ctx.insert("oauth_query", &build_oauth_query(&form.oauth));
             ctx.insert("username", &form.username);
             ctx.insert("error", &Some("Internal error".to_string()));
-            return render_template(&tera, "reset_password", &ctx);
+            return render_template(tera, "reset_password", &ctx);
         }
     };
     storage.set_user_password(&user.id, &password_hash).await;

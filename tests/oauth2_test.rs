@@ -957,3 +957,205 @@ async fn test_invalid_authorization_code() {
     let body: serde_json::Value = token_response.json().await.unwrap();
     assert_eq!(body["error"], "invalid_grant");
 }
+
+fn extract_code_from_location(response: &common::TestResponse) -> String {
+    let location = response
+        .headers()
+        .get("location")
+        .expect("redirect location")
+        .to_str()
+        .unwrap();
+    location
+        .split("code=")
+        .nth(1)
+        .expect("code in redirect")
+        .split('&')
+        .next()
+        .unwrap()
+        .to_string()
+}
+
+#[tokio::test]
+async fn test_id_token_echoes_nonce_from_authorization_request() {
+    let client = TestClient::new();
+    let (_, client_id, username, password) = setup_user_and_client(&client).await;
+
+    let auth_url = format!(
+        "/oauth2/authorize?response_type=code&client_id={}&redirect_uri={}&scope=openid&nonce=n-0S6_WzA2Mj&username={}&password={}",
+        client_id, "https://example.com/callback", username, password
+    );
+    let code = extract_code_from_location(&client.get(&auth_url).await);
+
+    let token_response = client
+        .post_form(
+            "/oauth2/token",
+            &[
+                ("grant_type", "authorization_code"),
+                ("code", &code),
+                ("client_id", &client_id),
+                ("redirect_uri", "https://example.com/callback"),
+            ],
+        )
+        .await;
+    assert_eq!(token_response.status(), StatusCode::OK);
+    let body: serde_json::Value = token_response.json().await.unwrap();
+
+    let claims = verify_id_token(body["id_token"].as_str().unwrap(), &client_id)
+        .unwrap()
+        .claims;
+    assert_eq!(claims.nonce.as_deref(), Some("n-0S6_WzA2Mj"));
+    // Cognito reports verification state from the attribute; SignUp does not
+    // verify the address, so this must be false rather than a hardcoded true.
+    assert_eq!(claims.email_verified, Some(false));
+}
+
+#[tokio::test]
+async fn test_userinfo_rejects_revoked_token_with_401() {
+    let client = TestClient::new();
+    let (_, client_id, username, password) = setup_user_and_client(&client).await;
+
+    let auth_url = format!(
+        "/oauth2/authorize?response_type=code&client_id={}&redirect_uri={}&scope=openid&username={}&password={}",
+        client_id, "https://example.com/callback", username, password
+    );
+    let code = extract_code_from_location(&client.get(&auth_url).await);
+    let token_body: serde_json::Value = client
+        .post_form(
+            "/oauth2/token",
+            &[
+                ("grant_type", "authorization_code"),
+                ("code", &code),
+                ("client_id", &client_id),
+                ("redirect_uri", "https://example.com/callback"),
+            ],
+        )
+        .await
+        .json()
+        .await
+        .unwrap();
+    let access_token = token_body["access_token"].as_str().unwrap();
+
+    assert_eq!(
+        client
+            .get_with_auth("/oauth2/userInfo", access_token)
+            .await
+            .status(),
+        StatusCode::OK
+    );
+
+    client
+        .cognito_request("GlobalSignOut", json!({ "AccessToken": access_token }))
+        .await;
+
+    let response = client.get_with_auth("/oauth2/userInfo", access_token).await;
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    let challenge = response
+        .headers()
+        .get("www-authenticate")
+        .unwrap()
+        .to_str()
+        .unwrap();
+    assert!(challenge.starts_with("Bearer error=\"invalid_token\""));
+    let body: serde_json::Value = response.json().await.unwrap();
+    assert_eq!(body["error"], "invalid_token");
+
+    // A missing header is also a 401, not a generic 400.
+    let response = client.get("/oauth2/userInfo").await;
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn test_token_endpoint_accepts_basic_client_authentication() {
+    let client = TestClient::new();
+    let (_, pool_body) = client
+        .request("CreateUserPool", json!({ "PoolName": "BasicAuthPool" }))
+        .await;
+    let pool_id = pool_body["UserPool"]["Id"].as_str().unwrap().to_string();
+
+    let (_, client_body) = client
+        .request(
+            "CreateUserPoolClient",
+            json!({
+                "UserPoolId": pool_id,
+                "ClientName": "MachineClient",
+                "GenerateSecret": true,
+                "AllowedOAuthFlows": ["client_credentials"],
+                "AllowedOAuthScopes": ["api/read", "api/write"],
+                "AllowedOAuthFlowsUserPoolClient": true
+            }),
+        )
+        .await;
+    let client_id = client_body["UserPoolClient"]["ClientId"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let client_secret = client_body["UserPoolClient"]["ClientSecret"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let basic = format!(
+        "Basic {}",
+        BASE64_STANDARD.encode(format!("{client_id}:{client_secret}"))
+    );
+    let token_response = client
+        .post_form_with_headers(
+            "/oauth2/token",
+            &[("grant_type", "client_credentials")],
+            &[("authorization", &basic)],
+        )
+        .await;
+    assert_eq!(token_response.status(), StatusCode::OK);
+    let body: serde_json::Value = token_response.json().await.unwrap();
+    let claims = verify_access_token(body["access_token"].as_str().unwrap())
+        .unwrap()
+        .claims;
+    assert_eq!(claims.client_id, client_id);
+    // Omitted scope means every scope configured on the client.
+    assert_eq!(claims.scope, "api/read api/write");
+
+    // A wrong secret in the header is still rejected.
+    let bad = format!(
+        "Basic {}",
+        BASE64_STANDARD.encode(format!("{client_id}:nope"))
+    );
+    let response = client
+        .post_form_with_headers(
+            "/oauth2/token",
+            &[("grant_type", "client_credentials")],
+            &[("authorization", &bad)],
+        )
+        .await;
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let body: serde_json::Value = response.json().await.unwrap();
+    assert_eq!(body["error"], "invalid_client");
+}
+
+#[tokio::test]
+async fn test_implicit_flow_rejects_unconfirmed_user() {
+    let client = TestClient::new();
+    let (pool_id, client_id, _, _) = setup_user_and_client(&client).await;
+
+    client
+        .cognito_request(
+            "SignUp",
+            json!({
+                "ClientId": client_id,
+                "Username": "pending",
+                "Password": "Test123!",
+                "UserAttributes": [{ "Name": "email", "Value": "pending@example.com" }]
+            }),
+        )
+        .await;
+    let _ = pool_id;
+
+    let auth_url = format!(
+        "/oauth2/authorize?response_type=token&client_id={}&redirect_uri={}&scope=openid&username=pending&password=Test123!",
+        client_id, "https://example.com/callback"
+    );
+    let response = client.get(&auth_url).await;
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let body: serde_json::Value = response.json().await.unwrap();
+    assert_eq!(body["error"], "access_denied");
+    assert_eq!(body["error_description"], "User not confirmed");
+}
