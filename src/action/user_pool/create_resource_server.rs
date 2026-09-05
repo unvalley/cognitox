@@ -47,14 +47,6 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
             "Name must not be empty".to_string(),
         ));
     }
-    if storage
-        .get_resource_server(&req.user_pool_id, &req.identifier)
-        .await
-        .is_some()
-    {
-        return Err(AppError::ResourceServerAlreadyExists);
-    }
-
     let resource_server = ResourceServer {
         user_pool_id: req.user_pool_id,
         identifier: req.identifier,
@@ -68,7 +60,10 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
             })
             .collect(),
     };
-    let created = storage.create_resource_server(resource_server).await;
+    let created = storage
+        .try_create_resource_server(resource_server)
+        .await
+        .ok_or(AppError::ResourceServerAlreadyExists)?;
 
     Ok(json!({
         "ResourceServer": build_resource_server_response(&created)

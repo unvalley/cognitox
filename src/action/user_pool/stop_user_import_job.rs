@@ -55,6 +55,17 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
         return Err(AppError::UserImportJobNotFound);
     }
 
+    // Only a running job can be stopped.
+    if !matches!(
+        job.status,
+        UserImportJobStatus::Pending | UserImportJobStatus::InProgress
+    ) {
+        return Err(AppError::PreconditionNotMet(format!(
+            "Job cannot be stopped from status {:?}",
+            job.status
+        )));
+    }
+
     job.status = UserImportJobStatus::Stopped;
     job.completion_date = Some(Utc::now());
     job.completion_message = Some("Job stopped".to_string());

@@ -46,10 +46,13 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
         .ok_or(AppError::UserPoolNotFound)?;
 
     if let Some(client_id) = req.client_id.as_ref() {
-        storage
+        let client = storage
             .get_user_pool_client(client_id)
             .await
             .ok_or(AppError::UserPoolClientNotFound)?;
+        if client.user_pool_id != req.user_pool_id {
+            return Err(AppError::UserPoolClientNotFound);
+        }
     }
 
     let now = Utc::now();

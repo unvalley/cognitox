@@ -121,6 +121,15 @@ fn build_backend(config: &StorageConfig) -> Arc<dyn PersistenceBackend> {
     }
 }
 
+/// Why `Storage::try_create_user_pool_domain` refused a domain.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DomainConflict {
+    /// The domain prefix is already registered (by any pool).
+    DomainTaken,
+    /// The pool already has a domain.
+    PoolHasDomain,
+}
+
 #[derive(Clone)]
 pub struct Storage {
     pool_store: Arc<RwLock<PoolStore>>,
@@ -714,6 +723,33 @@ impl Storage {
 
     // ==================== User Pool Domain Operations ====================
 
+    /// Register a domain only if neither the prefix nor the pool is already
+    /// taken. Check and insert happen under one write lock so two concurrent
+    /// CreateUserPoolDomain calls cannot both succeed and leave an orphaned
+    /// index entry.
+    pub async fn try_create_user_pool_domain(
+        &self,
+        domain: UserPoolDomain,
+    ) -> Result<UserPoolDomain, DomainConflict> {
+        let mut store = self.pool_store.write().await;
+        if store.user_pool_domains.contains_key(&domain.domain) {
+            return Err(DomainConflict::DomainTaken);
+        }
+        if store
+            .user_pool_id_to_domain
+            .contains_key(&domain.user_pool_id)
+        {
+            return Err(DomainConflict::PoolHasDomain);
+        }
+        store
+            .user_pool_id_to_domain
+            .insert(domain.user_pool_id.clone(), domain.domain.clone());
+        store
+            .user_pool_domains
+            .insert(domain.domain.clone(), domain.clone());
+        Ok(domain)
+    }
+
     pub async fn create_user_pool_domain(&self, domain: UserPoolDomain) -> UserPoolDomain {
         let mut store = self.pool_store.write().await;
         store
@@ -762,6 +798,24 @@ impl Storage {
     }
 
     // ==================== Identity Provider Operations ====================
+
+    /// Insert an identity provider unless one with the same name exists in the
+    /// pool; check and insert are atomic.
+    pub async fn try_create_identity_provider(
+        &self,
+        provider: IdentityProvider,
+    ) -> Option<IdentityProvider> {
+        let mut store = self.pool_store.write().await;
+        let key = (
+            provider.user_pool_id.clone(),
+            provider.provider_name.clone(),
+        );
+        if store.identity_providers.contains_key(&key) {
+            return None;
+        }
+        store.identity_providers.insert(key, provider.clone());
+        Some(provider)
+    }
 
     pub async fn create_identity_provider(&self, provider: IdentityProvider) -> IdentityProvider {
         let mut store = self.pool_store.write().await;
@@ -896,6 +950,24 @@ impl Storage {
     }
 
     // ==================== Resource Server Operations ====================
+
+    /// Insert a resource server unless the identifier is already used in the
+    /// pool; check and insert are atomic.
+    pub async fn try_create_resource_server(
+        &self,
+        resource_server: ResourceServer,
+    ) -> Option<ResourceServer> {
+        let mut store = self.pool_store.write().await;
+        let key = (
+            resource_server.user_pool_id.clone(),
+            resource_server.identifier.clone(),
+        );
+        if store.resource_servers.contains_key(&key) {
+            return None;
+        }
+        store.resource_servers.insert(key, resource_server.clone());
+        Some(resource_server)
+    }
 
     pub async fn create_resource_server(&self, resource_server: ResourceServer) -> ResourceServer {
         let mut store = self.pool_store.write().await;
@@ -1360,6 +1432,18 @@ impl Storage {
     }
 
     // ==================== Group Operations ====================
+
+    /// Insert a group unless the name is already used in the pool; check and
+    /// insert are atomic.
+    pub async fn try_create_group(&self, group: Group) -> Option<Group> {
+        let mut store = self.group_store.write().await;
+        let key = (group.user_pool_id.clone(), group.group_name.clone());
+        if store.groups.contains_key(&key) {
+            return None;
+        }
+        store.groups.insert(key, group.clone());
+        Some(group)
+    }
 
     pub async fn create_group(&self, group: Group) -> Group {
         let mut store = self.group_store.write().await;

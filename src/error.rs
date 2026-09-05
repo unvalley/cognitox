@@ -137,6 +137,9 @@ pub enum AppError {
     #[error("{0}")]
     Serialization(String),
 
+    #[error("{0}")]
+    PreconditionNotMet(String),
+
     #[error("Internal server error: {0}")]
     Internal(String),
 
@@ -214,6 +217,9 @@ impl IntoResponse for AppError {
             AppError::LimitExceeded => (StatusCode::BAD_REQUEST, "LimitExceededException"),
             AppError::InvalidParameter(_) => (StatusCode::BAD_REQUEST, "InvalidParameterException"),
             AppError::Serialization(_) => (StatusCode::BAD_REQUEST, "SerializationException"),
+            AppError::PreconditionNotMet(_) => {
+                (StatusCode::BAD_REQUEST, "PreconditionNotMetException")
+            }
             AppError::Internal(_) => (StatusCode::INTERNAL_SERVER_ERROR, "InternalErrorException"),
             AppError::Storage(_) => (StatusCode::INTERNAL_SERVER_ERROR, "InternalErrorException"),
             AppError::NotAuthorized(_) => (StatusCode::BAD_REQUEST, "NotAuthorizedException"),

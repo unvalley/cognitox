@@ -34,6 +34,16 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
         .await
         .ok_or(AppError::UserPoolNotFound)?;
 
+    if let Some(client_id) = req.client_id.as_ref() {
+        let client = storage
+            .get_user_pool_client(client_id)
+            .await
+            .ok_or(AppError::UserPoolClientNotFound)?;
+        if client.user_pool_id != req.user_pool_id {
+            return Err(AppError::UserPoolClientNotFound);
+        }
+    }
+
     let mut cfg = body
         .as_object()
         .cloned()

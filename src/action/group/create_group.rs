@@ -35,14 +35,6 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
         .await
         .ok_or(AppError::UserPoolNotFound)?;
 
-    if storage
-        .get_group(&req.user_pool_id, &req.group_name)
-        .await
-        .is_some()
-    {
-        return Err(AppError::GroupAlreadyExists);
-    }
-
     let now = Utc::now();
     let group = Group {
         group_name: req.group_name,
@@ -54,7 +46,10 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
         last_modified_date: now,
     };
 
-    let created = storage.create_group(group).await;
+    let created = storage
+        .try_create_group(group)
+        .await
+        .ok_or(AppError::GroupAlreadyExists)?;
 
     Ok(json!({
         "Group": {
@@ -147,5 +142,25 @@ mod tests {
         .await;
 
         assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_concurrent_create_group_allows_only_one() {
+        let storage = Storage::new();
+        let pool = create_user_pool::handler(&storage, json!({"PoolName": "test-pool"}))
+            .await
+            .unwrap();
+        let pool_id = pool["UserPool"]["Id"].as_str().unwrap().to_string();
+        let request = || {
+            handler(
+                &storage,
+                json!({ "UserPoolId": pool_id, "GroupName": "racers" }),
+            )
+        };
+
+        let (first, second) = tokio::join!(request(), request());
+        assert_eq!(first.is_ok() as u8 + second.is_ok() as u8, 1);
+        let err = if first.is_err() { first } else { second };
+        assert!(matches!(err, Err(AppError::GroupAlreadyExists)));
     }
 }

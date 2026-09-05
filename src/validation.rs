@@ -9,8 +9,8 @@ use crate::types::{
     EmailConfiguration, EmailMfaConfiguration, ExplicitAuthFlow, InviteMessageTemplate,
     MfaConfiguration, OAuthFlow, RefreshTokenRotationType, SchemaAttributeType, SmsConfiguration,
     SmsMfaConfiguration, SoftwareTokenMfaConfiguration, TokenValidityUnit,
-    UserAttributeUpdateSettingsType, UserPoolAddOns, UserPoolId, UserPoolPolicies,
-    VerificationMessageTemplate, WebAuthnConfiguration,
+    UserAttributeUpdateSettingsType, UserPoolAddOns, UserPoolPolicies, VerificationMessageTemplate,
+    WebAuthnConfiguration,
 };
 
 /// Minimum password length (AWS default is 6)
@@ -607,8 +607,9 @@ pub fn validate_oauth_client_configuration(
 
     if let Some(default_redirect_uri) = default_redirect_uri {
         validate_callback_url(default_redirect_uri)?;
-        if !callback_urls.is_empty() && !callback_urls.iter().any(|url| url == default_redirect_uri)
-        {
+        // Cognito requires the default redirect to be one of the registered
+        // callbacks, so an empty CallbackURLs list cannot satisfy it either.
+        if !callback_urls.iter().any(|url| url == default_redirect_uri) {
             return Err(AppError::InvalidParameter(
                 "DefaultRedirectURI must match one of the CallbackURLs".to_string(),
             ));
@@ -746,13 +747,6 @@ pub fn validate_group_name(name: &str) -> Result<()> {
     }
 
     Ok(())
-}
-
-/// Parse and validate a UserPoolId from a string
-///
-/// Returns InvalidParameter error if the format is invalid
-pub fn parse_user_pool_id(value: &str) -> Result<UserPoolId> {
-    UserPoolId::new(value).map_err(|e| AppError::InvalidParameter(e.to_string()))
 }
 
 pub fn validate_client_attribute_names(field: &str, attributes: &[String]) -> Result<()> {

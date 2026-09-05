@@ -43,14 +43,6 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
         .await
         .ok_or(AppError::UserPoolNotFound)?;
 
-    if storage
-        .get_identity_provider(&req.user_pool_id, &req.provider_name)
-        .await
-        .is_some()
-    {
-        return Err(AppError::IdentityProviderAlreadyExists);
-    }
-
     let now = Utc::now();
     let provider = IdentityProvider {
         user_pool_id: req.user_pool_id,
@@ -62,7 +54,10 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
         creation_date: now,
         last_modified_date: now,
     };
-    let created = storage.create_identity_provider(provider).await;
+    let created = storage
+        .try_create_identity_provider(provider)
+        .await
+        .ok_or(AppError::IdentityProviderAlreadyExists)?;
 
     Ok(json!({
         "IdentityProvider": build_identity_provider_response(&created)

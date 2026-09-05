@@ -50,10 +50,13 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
         .await
         .ok_or(AppError::UserPoolNotFound)?;
 
-    storage
+    let client = storage
         .get_user_pool_client(&req.client_id)
         .await
         .ok_or(AppError::UserPoolClientNotFound)?;
+    if client.user_pool_id != req.user_pool_id {
+        return Err(AppError::UserPoolClientNotFound);
+    }
 
     if storage
         .get_terms_by_name(&req.user_pool_id, &req.client_id, &req.terms_name)

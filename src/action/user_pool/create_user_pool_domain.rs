@@ -7,7 +7,7 @@ use serde_json::{Value, json};
 
 use crate::{
     error::{AppError, Result},
-    storage::Storage,
+    storage::{DomainConflict, Storage},
     types::{CustomDomainConfig, DomainStatus, UserPoolDomain, UserPoolId},
 };
 
@@ -52,22 +52,6 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
         return Err(AppError::UserPoolNotFound);
     }
 
-    // Check if domain already exists
-    if storage.get_user_pool_domain(&req.domain).await.is_some() {
-        return Err(AppError::UserPoolDomainAlreadyExists);
-    }
-
-    // Check if user pool already has a domain
-    if storage
-        .get_user_pool_domain_by_user_pool_id(&req.user_pool_id)
-        .await
-        .is_some()
-    {
-        return Err(AppError::InvalidParameter(
-            "User pool already has a domain configured".to_string(),
-        ));
-    }
-
     let custom_domain_config = req.custom_domain_config.map(|c| CustomDomainConfig {
         certificate_arn: c.certificate_arn,
     });
@@ -91,7 +75,17 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
         managed_login_version: req.managed_login_version,
     };
 
-    let created = storage.create_user_pool_domain(domain).await;
+    // Uniqueness of the prefix and "one domain per pool" are checked
+    // atomically with the insert.
+    let created = storage
+        .try_create_user_pool_domain(domain)
+        .await
+        .map_err(|conflict| match conflict {
+            DomainConflict::DomainTaken => AppError::UserPoolDomainAlreadyExists,
+            DomainConflict::PoolHasDomain => {
+                AppError::InvalidParameter("User pool already has a domain configured".to_string())
+            }
+        })?;
 
     // Response only includes CloudFrontDomain for custom domains
     let mut response = json!({});
@@ -214,5 +208,47 @@ mod tests {
         .await;
 
         assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_concurrent_create_domain_allows_only_one() {
+        let storage = Storage::new();
+        let pool_a = create_user_pool::handler(&storage, json!({"PoolName": "a"}))
+            .await
+            .unwrap();
+        let pool_b = create_user_pool::handler(&storage, json!({"PoolName": "b"}))
+            .await
+            .unwrap();
+        let pool_a = pool_a["UserPool"]["Id"].as_str().unwrap().to_string();
+        let pool_b = pool_b["UserPool"]["Id"].as_str().unwrap().to_string();
+
+        let request = |pool_id: &String| {
+            handler(
+                &storage,
+                json!({ "Domain": "shared-prefix", "UserPoolId": pool_id }),
+            )
+        };
+        let (first, second) = tokio::join!(request(&pool_a), request(&pool_b));
+        assert_eq!(first.is_ok() as u8 + second.is_ok() as u8, 1);
+        let err = if first.is_err() { first } else { second };
+        assert!(matches!(err, Err(AppError::UserPoolDomainAlreadyExists)));
+
+        // Exactly one pool owns the prefix and the loser has no dangling index.
+        let owner = storage
+            .get_user_pool_domain(&"shared-prefix".to_string())
+            .await
+            .unwrap()
+            .user_pool_id;
+        let loser = if owner.as_str() == pool_a {
+            &pool_b
+        } else {
+            &pool_a
+        };
+        assert!(
+            storage
+                .get_user_pool_domain_by_user_pool_id(&loser.parse().unwrap())
+                .await
+                .is_none()
+        );
     }
 }
