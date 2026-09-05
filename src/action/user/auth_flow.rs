@@ -17,8 +17,8 @@ use crate::{
 };
 
 use super::helpers::{
-    SOFTWARE_TOKEN_MFA_FACTOR, hash_password, preferred_mfa_setting, verify_password,
-    verify_secret_hash,
+    SOFTWARE_TOKEN_MFA_FACTOR, build_user_attributes, hash_password, preferred_mfa_setting,
+    verify_password, verify_secret_hash,
 };
 use super::verify_software_token::generate_totp_code;
 
@@ -200,18 +200,31 @@ pub(crate) fn build_auth_response(authentication_result: Value) -> Value {
     })
 }
 
+/// Challenge parameters in the shape Cognito emits: `USER_ID_FOR_SRP` is the
+/// username, and `userAttributes` / `requiredAttributes` are JSON documents
+/// that SDKs such as amazon-cognito-identity-js `JSON.parse` unconditionally.
 pub(crate) fn build_challenge_response(
     session: &str,
     challenge_name: ChallengeType,
-    user_id: &Uuid,
+    user: &User,
 ) -> Value {
+    let user_attributes: serde_json::Map<String, Value> = build_user_attributes(user)
+        .into_iter()
+        .filter_map(|attribute| {
+            let name = attribute["Name"].as_str()?;
+            let value = attribute["Value"].as_str()?;
+            Some((format!("userAttributes.{name}"), Value::from(value)))
+        })
+        .collect();
+
     json!({
         "AuthenticationResult": null,
         "AvailableChallenges": [challenge_type_name(challenge_name)],
         "ChallengeName": challenge_type_name(challenge_name),
         "ChallengeParameters": {
-            "USER_ID_FOR_SRP": user_id.to_string(),
-            "userAttributes": "{}"
+            "USER_ID_FOR_SRP": user.username,
+            "requiredAttributes": "[]",
+            "userAttributes": Value::Object(user_attributes).to_string()
         },
         "Session": session
     })
@@ -221,7 +234,7 @@ pub(crate) async fn create_auth_challenge(
     storage: &Storage,
     client_id: ClientId,
     user_pool_id: UserPoolId,
-    user_id: Uuid,
+    user: &User,
     challenge_name: ChallengeType,
 ) -> Value {
     let session = Uuid::new_v4().to_string();
@@ -229,27 +242,27 @@ pub(crate) async fn create_auth_challenge(
         .save_auth_challenge_session(PendingAuthChallenge {
             session: session.clone(),
             challenge_name,
-            user_id,
+            user_id: user.id,
             client_id,
             user_pool_id,
             expires_at: Utc::now() + Duration::minutes(5),
         })
         .await;
 
-    build_challenge_response(&session, challenge_name, &user_id)
+    build_challenge_response(&session, challenge_name, user)
 }
 
 pub(crate) async fn create_new_password_required_challenge(
     storage: &Storage,
     client_id: ClientId,
     user_pool_id: UserPoolId,
-    user_id: Uuid,
+    user: &User,
 ) -> Value {
     create_auth_challenge(
         storage,
         client_id,
         user_pool_id,
-        user_id,
+        user,
         ChallengeType::NewPasswordRequired,
     )
     .await
@@ -294,10 +307,14 @@ pub(crate) async fn authenticate_with_password(
                 storage,
                 client_id.clone(),
                 user_pool_id.clone(),
-                user.id,
+                &user,
             )
             .await,
         ));
+    }
+
+    if user.user_status == UserStatus::ResetRequired {
+        return Err(AppError::PasswordResetRequired);
     }
 
     if user.user_status != UserStatus::Confirmed {
@@ -309,7 +326,7 @@ pub(crate) async fn authenticate_with_password(
             storage,
             client_id.clone(),
             user_pool_id.clone(),
-            user.id,
+            &user,
             challenge_name,
         )
         .await;
@@ -365,21 +382,23 @@ pub(crate) async fn resolve_challenge_session(
     user_pool_id: &UserPoolId,
     expected_challenge: ChallengeType,
 ) -> Result<PendingAuthChallenge> {
+    let invalid_session =
+        || AppError::NotAuthorized("Invalid session for the user, session is expired.".to_string());
     let challenge = storage
         .get_auth_challenge_session(session)
         .await
-        .ok_or_else(|| AppError::InvalidParameter("Invalid session".to_string()))?;
+        .ok_or_else(invalid_session)?;
 
     if challenge.challenge_name != expected_challenge
         || challenge.client_id != *client_id
         || challenge.user_pool_id != *user_pool_id
     {
-        return Err(AppError::InvalidParameter("Invalid session".to_string()));
+        return Err(invalid_session());
     }
 
     if challenge.expires_at < Utc::now() {
         storage.delete_auth_challenge_session(session).await;
-        return Err(AppError::InvalidParameter("Session expired".to_string()));
+        return Err(invalid_session());
     }
 
     Ok(challenge)
@@ -489,9 +508,7 @@ pub(crate) async fn complete_software_token_mfa_challenge(
         }
     }
     if !valid {
-        return Err(AppError::InvalidParameter(
-            "Invalid software token code".to_string(),
-        ));
+        return Err(AppError::InvalidConfirmationCode);
     }
 
     storage.delete_auth_challenge_session(session).await;

@@ -37,6 +37,12 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
         .await
         .ok_or(AppError::UserNotFound)?;
 
+    if user.user_status == UserStatus::Confirmed {
+        return Err(AppError::NotAuthorized(
+            "User cannot be confirmed. Current status is CONFIRMED".to_string(),
+        ));
+    }
+
     let user_id = user.id;
     user.user_status = UserStatus::Confirmed;
     user.last_modified_date = Utc::now();
@@ -133,5 +139,35 @@ mod tests {
 
         assert!(result.is_err());
         assert!(matches!(result.unwrap_err(), AppError::UserPoolNotFound));
+    }
+
+    #[tokio::test]
+    async fn test_admin_confirm_sign_up_rejects_already_confirmed_user() {
+        let storage = Storage::new();
+
+        let pool = create_user_pool::handler(&storage, json!({"PoolName": "test"}))
+            .await
+            .unwrap();
+        let pool_id = pool["UserPool"]["Id"].as_str().unwrap();
+        admin_create_user::handler(
+            &storage,
+            json!({ "UserPoolId": pool_id, "Username": "testuser" }),
+        )
+        .await
+        .unwrap();
+
+        handler(
+            &storage,
+            json!({ "UserPoolId": pool_id, "Username": "testuser" }),
+        )
+        .await
+        .unwrap();
+
+        let second = handler(
+            &storage,
+            json!({ "UserPoolId": pool_id, "Username": "testuser" }),
+        )
+        .await;
+        assert!(matches!(second, Err(AppError::NotAuthorized(_))));
     }
 }

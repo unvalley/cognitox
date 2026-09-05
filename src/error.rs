@@ -110,8 +110,14 @@ pub enum AppError {
     #[error("User not confirmed")]
     UserNotConfirmed,
 
-    #[error("User is disabled")]
+    #[error("User is disabled.")]
     UserDisabled,
+
+    #[error("Password reset required for the user")]
+    PasswordResetRequired,
+
+    #[error("{0}")]
+    EnableSoftwareTokenMfa(String),
 
     #[error("Group not found")]
     GroupNotFound,
@@ -175,7 +181,7 @@ impl IntoResponse for AppError {
                 (StatusCode::BAD_REQUEST, "ResourceNotFoundException")
             }
             AppError::IdentityProviderAlreadyExists => {
-                (StatusCode::BAD_REQUEST, "InvalidParameterException")
+                (StatusCode::BAD_REQUEST, "DuplicateProviderException")
             }
             AppError::ResourceServerNotFound => {
                 (StatusCode::BAD_REQUEST, "ResourceNotFoundException")
@@ -188,10 +194,20 @@ impl IntoResponse for AppError {
             AppError::UserAlreadyExists => (StatusCode::BAD_REQUEST, "UsernameExistsException"),
             AppError::InvalidPassword => (StatusCode::BAD_REQUEST, "InvalidPasswordException"),
             AppError::InvalidConfirmationCode => (StatusCode::BAD_REQUEST, "CodeMismatchException"),
-            AppError::InvalidAccessToken => (StatusCode::UNAUTHORIZED, "NotAuthorizedException"),
-            AppError::InvalidRefreshToken => (StatusCode::UNAUTHORIZED, "NotAuthorizedException"),
+            // Cognito answers every NotAuthorizedException with HTTP 400; SDKs
+            // dispatch on `__type`, browsers/tests on the status code.
+            AppError::InvalidAccessToken => (StatusCode::BAD_REQUEST, "NotAuthorizedException"),
+            AppError::InvalidRefreshToken => (StatusCode::BAD_REQUEST, "NotAuthorizedException"),
             AppError::UserNotConfirmed => (StatusCode::BAD_REQUEST, "UserNotConfirmedException"),
-            AppError::UserDisabled => (StatusCode::BAD_REQUEST, "UserDisabledException"),
+            // There is no UserDisabledException in Cognito; a disabled user
+            // gets NotAuthorizedException "User is disabled.".
+            AppError::UserDisabled => (StatusCode::BAD_REQUEST, "NotAuthorizedException"),
+            AppError::PasswordResetRequired => {
+                (StatusCode::BAD_REQUEST, "PasswordResetRequiredException")
+            }
+            AppError::EnableSoftwareTokenMfa(_) => {
+                (StatusCode::BAD_REQUEST, "EnableSoftwareTokenMFAException")
+            }
             AppError::GroupNotFound => (StatusCode::BAD_REQUEST, "ResourceNotFoundException"),
             AppError::GroupAlreadyExists => (StatusCode::BAD_REQUEST, "GroupExistsException"),
             AppError::ExpiredCode => (StatusCode::BAD_REQUEST, "ExpiredCodeException"),
@@ -200,7 +216,7 @@ impl IntoResponse for AppError {
             AppError::Serialization(_) => (StatusCode::BAD_REQUEST, "SerializationException"),
             AppError::Internal(_) => (StatusCode::INTERNAL_SERVER_ERROR, "InternalErrorException"),
             AppError::Storage(_) => (StatusCode::INTERNAL_SERVER_ERROR, "InternalErrorException"),
-            AppError::NotAuthorized(_) => (StatusCode::UNAUTHORIZED, "NotAuthorizedException"),
+            AppError::NotAuthorized(_) => (StatusCode::BAD_REQUEST, "NotAuthorizedException"),
             AppError::NotImplemented(_) => (StatusCode::NOT_IMPLEMENTED, "NotImplementedException"),
         };
 

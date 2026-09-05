@@ -152,4 +152,63 @@ mod tests {
         assert!(result.is_err());
         assert!(matches!(result.unwrap_err(), AppError::UserPoolNotFound));
     }
+
+    #[tokio::test]
+    async fn test_sign_in_after_reset_returns_password_reset_required() {
+        use crate::action::user::{admin_initiate_auth, admin_set_user_password};
+        use crate::action::user_pool::create_user_pool_client;
+
+        let storage = Storage::new();
+        let pool = create_user_pool::handler(&storage, json!({"PoolName": "test"}))
+            .await
+            .unwrap();
+        let pool_id = pool["UserPool"]["Id"].as_str().unwrap();
+        let client = create_user_pool_client::handler(
+            &storage,
+            json!({ "UserPoolId": pool_id, "ClientName": "c" }),
+        )
+        .await
+        .unwrap();
+        let client_id = client["UserPoolClient"]["ClientId"].as_str().unwrap();
+
+        admin_create_user::handler(
+            &storage,
+            json!({
+                "UserPoolId": pool_id,
+                "Username": "testuser",
+                "UserAttributes": [{"Name": "email", "Value": "test@example.com"}]
+            }),
+        )
+        .await
+        .unwrap();
+        admin_set_user_password::handler(
+            &storage,
+            json!({
+                "UserPoolId": pool_id,
+                "Username": "testuser",
+                "Password": "Password123!",
+                "Permanent": true
+            }),
+        )
+        .await
+        .unwrap();
+        handler(
+            &storage,
+            json!({ "UserPoolId": pool_id, "Username": "testuser" }),
+        )
+        .await
+        .unwrap();
+
+        let result = admin_initiate_auth::handler(
+            &storage,
+            json!({
+                "UserPoolId": pool_id,
+                "ClientId": client_id,
+                "AuthFlow": "ADMIN_USER_PASSWORD_AUTH",
+                "AuthParameters": { "USERNAME": "testuser", "PASSWORD": "Password123!" }
+            }),
+        )
+        .await;
+        assert!(matches!(result, Err(AppError::PasswordResetRequired)));
+    }
 }

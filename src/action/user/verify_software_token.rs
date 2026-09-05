@@ -44,25 +44,35 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
         ));
     }
 
-    let (user_id, secret) = if let Some(session) = req.session.as_deref() {
+    // `pending_session` is the AssociateSoftwareToken session whose secret is
+    // being confirmed; it is consumed and promoted on success.
+    let (user_id, secret, pending_session) = if let Some(session) = req.session.as_deref() {
         let (user_id, secret) = storage
             .get_software_token_session(session)
             .await
             .ok_or_else(|| AppError::InvalidParameter("Invalid session".to_string()))?;
-        (user_id, secret)
+        (user_id, secret, Some(session.to_string()))
     } else if let Some(access_token) = req.access_token.as_deref() {
         let user_id = verify_and_extract_active_user_id(storage, access_token)
             .await
             .map_err(|_| AppError::InvalidAccessToken)?;
-        let secret = storage
-            .get_software_token_secret(&user_id)
-            .await
-            .ok_or_else(|| {
-                AppError::InvalidParameter(
-                    "User does not have SOFTWARE_TOKEN_MFA configured".to_string(),
-                )
-            })?;
-        (user_id, secret)
+        // The standard setup flow (Amplify `setUpTOTP` → `verifyTOTPSetup`)
+        // calls Associate and Verify with the access token only and never
+        // passes the Session back, so look for the pending secret first.
+        match storage.find_software_token_session_for_user(&user_id).await {
+            Some((session, secret)) => (user_id, secret, Some(session)),
+            None => {
+                let secret = storage
+                    .get_software_token_secret(&user_id)
+                    .await
+                    .ok_or_else(|| {
+                        AppError::InvalidParameter(
+                            "User does not have SOFTWARE_TOKEN_MFA configured".to_string(),
+                        )
+                    })?;
+                (user_id, secret, None)
+            }
+        }
     } else {
         return Err(AppError::InvalidParameter(
             "AccessToken or Session is required".to_string(),
@@ -75,12 +85,12 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
         .ok_or(AppError::UserNotFound)?;
 
     if !is_valid_totp_code(&secret, &req.user_code, Utc::now().timestamp())? {
-        return Err(AppError::InvalidParameter(
-            "Invalid software token code".to_string(),
+        return Err(AppError::EnableSoftwareTokenMfa(
+            "Code mismatch".to_string(),
         ));
     }
 
-    if let Some(session) = req.session.as_deref() {
+    if let Some(session) = pending_session.as_deref() {
         storage.delete_software_token_session(session).await;
         storage.save_software_token_secret(&user_id, secret).await;
     }
@@ -310,5 +320,73 @@ mod tests {
 
         assert!(result.is_ok());
         assert_eq!(result.unwrap()["Status"], "SUCCESS");
+    }
+
+    #[tokio::test]
+    async fn test_verify_software_token_with_access_token_only() {
+        // Amplify's setUpTOTP → verifyTOTPSetup never sends the Session back.
+        let storage = Storage::new();
+        let access_token = setup_and_get_token(&storage).await;
+
+        let associated = crate::action::user::associate_software_token::handler(
+            &storage,
+            json!({ "AccessToken": access_token }),
+        )
+        .await
+        .unwrap();
+        let secret = associated["SecretCode"].as_str().unwrap();
+        let user_code = generate_totp_code(secret, Utc::now().timestamp()).unwrap();
+
+        let result = handler(
+            &storage,
+            json!({
+                "AccessToken": access_token,
+                "UserCode": user_code
+            }),
+        )
+        .await
+        .unwrap();
+        assert_eq!(result["Status"], "SUCCESS");
+
+        // The secret is promoted so it can be used for sign-in challenges.
+        let user_id = crate::jwt::verify_access_token(&access_token)
+            .unwrap()
+            .claims
+            .sub
+            .parse::<uuid::Uuid>()
+            .unwrap();
+        assert_eq!(
+            storage.get_software_token_secret(&user_id).await.as_deref(),
+            Some(secret)
+        );
+        assert!(
+            storage
+                .find_software_token_session_for_user(&user_id)
+                .await
+                .is_none()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_verify_software_token_wrong_code_is_enable_software_token_mfa_exception() {
+        let storage = Storage::new();
+        let access_token = setup_and_get_token(&storage).await;
+
+        crate::action::user::associate_software_token::handler(
+            &storage,
+            json!({ "AccessToken": access_token }),
+        )
+        .await
+        .unwrap();
+
+        let result = handler(
+            &storage,
+            json!({
+                "AccessToken": access_token,
+                "UserCode": "000000"
+            }),
+        )
+        .await;
+        assert!(matches!(result, Err(AppError::EnableSoftwareTokenMfa(_))));
     }
 }

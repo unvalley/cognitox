@@ -199,6 +199,11 @@ pub async fn verify_and_extract_active_user_id(
     {
         return Err("Access token has been revoked".to_string());
     }
+    // AdminDisableUser revokes the user's tokens; a token for a user that is
+    // (still) disabled must not authorize anything.
+    if storage.with_user(&user_id, |user| user.enabled).await == Some(false) {
+        return Err("User is disabled".to_string());
+    }
     Ok(user_id)
 }
 
@@ -351,14 +356,15 @@ pub fn apply_user_attribute_deletions(
     }
 }
 
+/// The user's preferred MFA factor. A stale preference pointing at a factor
+/// that is no longer enabled is ignored, otherwise sign-in would issue a
+/// challenge the user can never answer.
 pub fn preferred_mfa_setting(user: &User, factors: &[String]) -> Option<String> {
-    if let Some(email) = user
-        .attributes
-        .iter()
-        .find(|attr| attr.name == "preferred_mfa_setting")
-        .and_then(|attr| attr.value.clone())
+    if let Some(preferred) = user
+        .attribute_value("preferred_mfa_setting")
+        .filter(|preferred| factors.iter().any(|factor| factor == preferred))
     {
-        return Some(email);
+        return Some(preferred.to_string());
     }
 
     factors.first().cloned()

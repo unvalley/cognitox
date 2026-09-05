@@ -45,15 +45,17 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
     user.password_hash = hash_password(&req.password).map_err(AppError::Internal)?;
     user.last_modified_date = Utc::now();
 
+    // A permanent password confirms the user whatever their prior status
+    // (UNCONFIRMED, RESET_REQUIRED, FORCE_CHANGE_PASSWORD), as in Cognito.
     if req.permanent {
-        if user.user_status == UserStatus::ForceChangePassword {
-            user.user_status = UserStatus::Confirmed;
-        }
+        user.user_status = UserStatus::Confirmed;
     } else {
         user.user_status = UserStatus::ForceChangePassword;
     }
+    let user_id = user.id;
 
     storage.update_user(user).await;
+    storage.delete_password_reset_code(&user_id).await;
 
     Ok(json!({}))
 }
@@ -172,5 +174,78 @@ mod tests {
 
         assert!(result.is_err());
         assert!(matches!(result.unwrap_err(), AppError::UserNotFound));
+    }
+
+    #[tokio::test]
+    async fn test_admin_set_user_password_permanent_confirms_any_status() {
+        use crate::action::user::{admin_reset_user_password, sign_up};
+        use crate::action::user_pool::create_user_pool_client;
+
+        let storage = Storage::new();
+        let pool = create_user_pool::handler(&storage, json!({"PoolName": "test"}))
+            .await
+            .unwrap();
+        let pool_id = pool["UserPool"]["Id"].as_str().unwrap();
+        let client = create_user_pool_client::handler(
+            &storage,
+            json!({ "UserPoolId": pool_id, "ClientName": "c" }),
+        )
+        .await
+        .unwrap();
+        let client_id = client["UserPoolClient"]["ClientId"].as_str().unwrap();
+
+        // UNCONFIRMED via SignUp.
+        sign_up::handler(
+            &storage,
+            json!({
+                "ClientId": client_id,
+                "Username": "pending",
+                "Password": "Password123!",
+                "UserAttributes": [{"Name": "email", "Value": "p@example.com"}]
+            }),
+        )
+        .await
+        .unwrap();
+        handler(
+            &storage,
+            json!({
+                "UserPoolId": pool_id,
+                "Username": "pending",
+                "Password": "Another123!",
+                "Permanent": true
+            }),
+        )
+        .await
+        .unwrap();
+        let pool_id_typed: UserPoolId = pool_id.parse().unwrap();
+        let user = storage
+            .get_user_by_username(&pool_id_typed, "pending")
+            .await
+            .unwrap();
+        assert_eq!(user.user_status, UserStatus::Confirmed);
+
+        // RESET_REQUIRED via AdminResetUserPassword; the pending reset code
+        // is dropped along with the status.
+        admin_reset_user_password::handler(
+            &storage,
+            json!({ "UserPoolId": pool_id, "Username": "pending" }),
+        )
+        .await
+        .unwrap();
+        assert!(storage.get_password_reset_code(&user.id).await.is_some());
+        handler(
+            &storage,
+            json!({
+                "UserPoolId": pool_id,
+                "Username": "pending",
+                "Password": "Third1234!",
+                "Permanent": true
+            }),
+        )
+        .await
+        .unwrap();
+        let user = storage.get_user(&user.id).await.unwrap();
+        assert_eq!(user.user_status, UserStatus::Confirmed);
+        assert!(storage.get_password_reset_code(&user.id).await.is_none());
     }
 }

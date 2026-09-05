@@ -78,6 +78,7 @@ pub(crate) async fn apply_user_mfa_preferences(
         ));
     }
 
+    let mut disabled_factors: Vec<&str> = Vec::new();
     for (settings, factor) in [
         (sms_mfa_settings, SMS_MFA_FACTOR),
         (software_token_mfa_settings, SOFTWARE_TOKEN_MFA_FACTOR),
@@ -85,9 +86,21 @@ pub(crate) async fn apply_user_mfa_preferences(
     ] {
         match settings.and_then(|value| value.enabled) {
             Some(true) => storage.add_user_auth_factor(&user.id, factor).await,
-            Some(false) => storage.remove_user_auth_factor(&user.id, factor).await,
+            Some(false) => {
+                storage.remove_user_auth_factor(&user.id, factor).await;
+                disabled_factors.push(factor);
+            }
             None => {}
         }
+    }
+
+    // Disabling the currently preferred factor drops the preference, so the
+    // user is not left with an unanswerable challenge at sign-in.
+    if user
+        .attribute_value("preferred_mfa_setting")
+        .is_some_and(|preferred| disabled_factors.contains(&preferred))
+    {
+        remove_user_attribute(&mut user.attributes, "preferred_mfa_setting");
     }
 
     if let Some(factor) = preferred_factor {
@@ -287,5 +300,63 @@ mod tests {
         .await;
 
         assert!(matches!(result, Err(AppError::InvalidParameter(_))));
+    }
+
+    #[tokio::test]
+    async fn test_disabling_preferred_factor_clears_preference() {
+        let storage = Storage::new();
+        let access_token = setup_and_get_token(&storage).await;
+
+        handler(
+            &storage,
+            json!({
+                "AccessToken": access_token,
+                "SoftwareTokenMfaSettings": { "Enabled": true, "PreferredMfa": true }
+            }),
+        )
+        .await
+        .unwrap();
+
+        // Disable the factor without touching PreferredMfa, as clients do.
+        handler(
+            &storage,
+            json!({
+                "AccessToken": access_token,
+                "SoftwareTokenMfaSettings": { "Enabled": false }
+            }),
+        )
+        .await
+        .unwrap();
+
+        let user_id = crate::jwt::verify_access_token(&access_token)
+            .unwrap()
+            .claims
+            .sub
+            .parse::<uuid::Uuid>()
+            .unwrap();
+        let user = storage.get_user(&user_id).await.unwrap();
+        assert!(user.attribute_value("preferred_mfa_setting").is_none());
+        assert!(storage.list_user_auth_factors(&user_id).await.is_empty());
+
+        // Sign-in must not issue a SOFTWARE_TOKEN_MFA challenge the user
+        // could never answer.
+        let pool_id = user.user_pool_id.clone();
+        let client_id = crate::jwt::verify_access_token(&access_token)
+            .unwrap()
+            .claims
+            .client_id;
+        let _ = pool_id;
+        let auth = initiate_auth::handler(
+            &storage,
+            json!({
+                "ClientId": client_id,
+                "AuthFlow": "USER_PASSWORD_AUTH",
+                "AuthParameters": { "USERNAME": "testuser", "PASSWORD": "Password123!" }
+            }),
+        )
+        .await
+        .unwrap();
+        assert!(auth["ChallengeName"].is_null(), "{auth}");
+        assert!(auth["AuthenticationResult"]["AccessToken"].is_string());
     }
 }

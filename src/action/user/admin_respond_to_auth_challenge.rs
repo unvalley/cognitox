@@ -6,7 +6,6 @@ use std::collections::HashMap;
 
 use serde::Deserialize;
 use serde_json::Value;
-use uuid::Uuid;
 
 use crate::{
     action::io::parse_request,
@@ -115,58 +114,34 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
             let new_password = responses.require("NEW_PASSWORD")?;
             validate_password(new_password)?;
 
-            let user = if let Some(session) = req.session.as_deref() {
-                let challenge = resolve_new_password_challenge(
-                    storage,
-                    session,
-                    &req.client_id,
-                    &req.user_pool_id,
-                )
-                .await?;
+            // Like Cognito, the challenge can only be answered with the
+            // Session issued by AdminInitiateAuth; a username alone is not
+            // proof that the temporary password was known.
+            let session = req.session.as_deref().ok_or_else(|| {
+                AppError::NotAuthorized("Invalid session for the user.".to_string())
+            })?;
+            let challenge =
+                resolve_new_password_challenge(storage, session, &req.client_id, &req.user_pool_id)
+                    .await?;
 
-                let user = storage
-                    .get_user(&challenge.user_id)
-                    .await
-                    .ok_or(AppError::UserNotFound)?;
-                if let Some(username) = responses.get("USERNAME")
-                    && username != user.username
-                {
-                    return Err(AppError::InvalidParameter("USERNAME mismatch".to_string()));
-                }
-                if let Some(user_id_for_srp) = responses.get("USER_ID_FOR_SRP") {
-                    let expected = Uuid::parse_str(user_id_for_srp).map_err(|_| {
-                        AppError::InvalidParameter("Invalid USER_ID_FOR_SRP".to_string())
-                    })?;
-                    if expected != user.id {
-                        return Err(AppError::InvalidParameter(
-                            "USER_ID_FOR_SRP mismatch".to_string(),
-                        ));
-                    }
-                }
-                user
-            } else if let Some(username) = responses.get("USERNAME") {
-                storage
-                    .get_user_by_username(&req.user_pool_id, username)
-                    .await
-                    .ok_or(AppError::UserNotFound)?
-            } else if let Some(user_id_for_srp) = responses.get("USER_ID_FOR_SRP") {
-                let user_id = Uuid::parse_str(user_id_for_srp).map_err(|_| {
-                    AppError::InvalidParameter("Invalid USER_ID_FOR_SRP".to_string())
-                })?;
-
-                let user = storage
-                    .get_user(&user_id)
-                    .await
-                    .ok_or(AppError::UserNotFound)?;
-                if user.user_pool_id != req.user_pool_id {
-                    return Err(AppError::UserNotFound);
-                }
-                user
-            } else {
+            let user = storage
+                .get_user(&challenge.user_id)
+                .await
+                .ok_or(AppError::UserNotFound)?;
+            if let Some(username) = responses.get("USERNAME")
+                && username != user.username
+            {
+                return Err(AppError::InvalidParameter("USERNAME mismatch".to_string()));
+            }
+            // USER_ID_FOR_SRP carries the username in Cognito's challenge
+            // parameters; clients commonly echo it back.
+            if let Some(user_id_for_srp) = responses.get("USER_ID_FOR_SRP")
+                && user_id_for_srp != user.username
+            {
                 return Err(AppError::InvalidParameter(
-                    "USERNAME or USER_ID_FOR_SRP required".to_string(),
+                    "USER_ID_FOR_SRP mismatch".to_string(),
                 ));
-            };
+            }
 
             if !user.enabled {
                 return Err(AppError::UserDisabled);
@@ -339,6 +314,43 @@ mod tests {
         storage.update_user(user).await.unwrap();
     }
 
+    /// Run AdminInitiateAuth with the temporary password and return the
+    /// NEW_PASSWORD_REQUIRED session, as a real client would.
+    async fn start_new_password_challenge(
+        storage: &Storage,
+        pool_id: &str,
+        client_id: &str,
+        username: &str,
+        temporary_password: &str,
+        secret_hash: Option<String>,
+    ) -> String {
+        let mut auth_parameters = json!({
+            "USERNAME": username,
+            "PASSWORD": temporary_password
+        });
+        if let Some(secret_hash) = secret_hash {
+            auth_parameters["SECRET_HASH"] = json!(secret_hash);
+        }
+        let initiated = admin_initiate_auth::handler(
+            storage,
+            json!({
+                "UserPoolId": pool_id,
+                "ClientId": client_id,
+                "AuthFlow": "ADMIN_USER_PASSWORD_AUTH",
+                "AuthParameters": auth_parameters
+            }),
+        )
+        .await
+        .unwrap();
+        assert_eq!(initiated["ChallengeName"], "NEW_PASSWORD_REQUIRED");
+        assert_eq!(
+            initiated["ChallengeParameters"]["USER_ID_FOR_SRP"],
+            username
+        );
+        assert_eq!(initiated["ChallengeParameters"]["requiredAttributes"], "[]");
+        initiated["Session"].as_str().unwrap().to_string()
+    }
+
     #[tokio::test]
     async fn test_admin_respond_to_auth_challenge_new_password_required_success() {
         let storage = Storage::new();
@@ -355,12 +367,39 @@ mod tests {
         .await
         .unwrap();
 
+        // Without the Session the challenge cannot be answered.
+        let without_session = handler(
+            &storage,
+            json!({
+                "UserPoolId": pool_id,
+                "ClientId": client_id,
+                "ChallengeName": "NEW_PASSWORD_REQUIRED",
+                "ChallengeResponses": {
+                    "USERNAME": "testuser",
+                    "NEW_PASSWORD": "NewPassword123!"
+                }
+            }),
+        )
+        .await;
+        assert!(matches!(without_session, Err(AppError::NotAuthorized(_))));
+
+        let session = start_new_password_challenge(
+            &storage,
+            &pool_id,
+            &client_id,
+            "testuser",
+            "TempPass123!",
+            None,
+        )
+        .await;
+
         let result = handler(
             &storage,
             json!({
                 "UserPoolId": pool_id,
                 "ClientId": client_id,
                 "ChallengeName": "NEW_PASSWORD_REQUIRED",
+                "Session": session,
                 "ChallengeResponses": {
                     "USERNAME": "testuser",
                     "NEW_PASSWORD": "NewPassword123!"
@@ -452,6 +491,16 @@ mod tests {
         .await
         .unwrap();
 
+        let session = start_new_password_challenge(
+            &storage,
+            &pool_id,
+            &client_id,
+            "testuser",
+            "TempPass123!",
+            None,
+        )
+        .await;
+
         // First successful response moves user to CONFIRMED status.
         handler(
             &storage,
@@ -459,6 +508,7 @@ mod tests {
                 "UserPoolId": pool_id,
                 "ClientId": client_id,
                 "ChallengeName": "NEW_PASSWORD_REQUIRED",
+                "Session": session,
                 "ChallengeResponses": {
                     "USERNAME": "testuser",
                     "NEW_PASSWORD": "NewPassword123!"
@@ -468,13 +518,15 @@ mod tests {
         .await
         .unwrap();
 
-        // A second response should fail because the user is no longer in FORCE_CHANGE_PASSWORD.
+        // Replaying the consumed session must fail: the user is CONFIRMED and
+        // the challenge no longer exists.
         let second_result = handler(
             &storage,
             json!({
                 "UserPoolId": pool_id,
                 "ClientId": client_id,
                 "ChallengeName": "NEW_PASSWORD_REQUIRED",
+                "Session": session,
                 "ChallengeResponses": {
                     "USERNAME": "testuser",
                     "NEW_PASSWORD": "AnotherPass123!"
@@ -483,11 +535,24 @@ mod tests {
         )
         .await;
 
-        assert!(second_result.is_err());
-        assert!(matches!(
-            second_result.unwrap_err(),
-            AppError::InvalidParameter(_)
-        ));
+        assert!(matches!(second_result, Err(AppError::NotAuthorized(_))));
+
+        // And a fresh sign-in now succeeds outright instead of challenging.
+        let auth_result = admin_initiate_auth::handler(
+            &storage,
+            json!({
+                "UserPoolId": pool_id,
+                "ClientId": client_id,
+                "AuthFlow": "ADMIN_USER_PASSWORD_AUTH",
+                "AuthParameters": {
+                    "USERNAME": "testuser",
+                    "PASSWORD": "NewPassword123!"
+                }
+            }),
+        )
+        .await
+        .unwrap();
+        assert!(auth_result["ChallengeName"].is_null());
     }
 
     #[tokio::test]
@@ -543,12 +608,24 @@ mod tests {
         .await
         .unwrap();
 
+        let secret_hash = calculate_secret_hash(client_id, client_secret, "testuser").unwrap();
+        let session = start_new_password_challenge(
+            &storage,
+            &pool_id,
+            client_id,
+            "testuser",
+            "TempPass123!",
+            Some(secret_hash.clone()),
+        )
+        .await;
+
         let result = handler(
             &storage,
             json!({
                 "UserPoolId": pool_id,
                 "ClientId": client_id,
                 "ChallengeName": "NEW_PASSWORD_REQUIRED",
+                "Session": session,
                 "ChallengeResponses": {
                     "USERNAME": "testuser",
                     "NEW_PASSWORD": "NewPassword123!"
@@ -564,15 +641,16 @@ mod tests {
                 "UserPoolId": pool_id,
                 "ClientId": client_id,
                 "ChallengeName": "NEW_PASSWORD_REQUIRED",
+                "Session": session,
                 "ChallengeResponses": {
                     "USERNAME": "testuser",
                     "NEW_PASSWORD": "NewPassword123!",
-                    "SECRET_HASH": calculate_secret_hash(client_id, client_secret, "testuser").unwrap()
+                    "SECRET_HASH": secret_hash
                 }
             }),
         )
         .await;
-        assert!(result.is_ok());
+        assert!(result.is_ok(), "{result:?}");
     }
 
     #[tokio::test]

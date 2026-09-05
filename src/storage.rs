@@ -530,6 +530,9 @@ impl Storage {
         principal_store
             .software_token_sessions
             .retain(|_, (uid, _)| !user_id_set.contains(uid));
+        principal_store
+            .auth_challenge_sessions
+            .retain(|_, challenge| challenge.user_pool_id != *id);
         for uid in &user_ids {
             principal_store.software_token_secrets.remove(uid);
         }
@@ -1230,7 +1233,10 @@ impl Storage {
             .access_tokens_invalid_before
             .get(user_id)
             .is_some_and(|invalid_before| match issued_at_ms {
-                Some(issued_at_ms) => issued_at_ms <= invalid_before.timestamp_millis(),
+                // Strictly before: a token minted in the same millisecond as
+                // the sign-out (sign-out → sign-in → GetUser in one test) is a
+                // new grant, not a replay.
+                Some(issued_at_ms) => issued_at_ms < invalid_before.timestamp_millis(),
                 None => issued_at <= invalid_before.timestamp(),
             })
     }
@@ -1252,6 +1258,20 @@ impl Storage {
     pub async fn get_software_token_session(&self, session: &str) -> Option<(UserId, String)> {
         let store = self.principal_store.read().await;
         store.software_token_sessions.get(session).cloned()
+    }
+
+    /// Pending (not yet verified) software token secret for a user, keyed by
+    /// the AssociateSoftwareToken session that produced it.
+    pub async fn find_software_token_session_for_user(
+        &self,
+        user_id: &UserId,
+    ) -> Option<(String, String)> {
+        let store = self.principal_store.read().await;
+        store
+            .software_token_sessions
+            .iter()
+            .find(|(_, (uid, _))| uid == user_id)
+            .map(|(session, (_, secret))| (session.clone(), secret.clone()))
     }
 
     pub async fn delete_software_token_session(&self, session: &str) {
@@ -1378,14 +1398,24 @@ impl Storage {
         user_pool_id: &UserPoolId,
         group_name: &GroupName,
     ) -> Option<Group> {
-        let mut store = self.group_store.write().await;
-        let removed = store
+        // Lock order matches `delete_user` / `get_users_in_group`.
+        let principal_store = self.principal_store.read().await;
+        let mut group_store = self.group_store.write().await;
+        let removed = group_store
             .groups
             .remove(&(user_pool_id.clone(), group_name.clone()));
 
         if removed.is_some() {
-            store.user_groups.retain(|_, groups| {
-                groups.retain(|group| group != group_name);
+            // Membership is keyed by user only, so restrict the sweep to users
+            // of this pool: another pool may own a group with the same name.
+            group_store.user_groups.retain(|user_id, groups| {
+                let in_pool = principal_store
+                    .users
+                    .get(user_id)
+                    .is_some_and(|user| &user.user_pool_id == user_pool_id);
+                if in_pool {
+                    groups.retain(|group| group != group_name);
+                }
                 !groups.is_empty()
             });
         }
@@ -2085,6 +2115,54 @@ mod tests {
         let storage = Storage::try_with_data_file(Some(path.clone())).unwrap();
         assert_eq!(storage.backend_description(), "persistent (file)");
         let _ = fs::remove_file(path);
+    }
+
+    #[tokio::test]
+    async fn test_delete_group_only_touches_members_of_its_pool() {
+        let storage = Storage::new();
+        let pool_a = UserPoolId::new_local();
+        let pool_b = UserPoolId::new_local();
+        let now = Utc::now();
+        let make_user = |pool: &UserPoolId, name: &str| crate::types::User {
+            id: uuid::Uuid::new_v4(),
+            user_pool_id: pool.clone(),
+            username: name.to_string(),
+            email: None,
+            phone_number: None,
+            password_hash: String::new(),
+            enabled: true,
+            user_status: crate::types::UserStatus::Confirmed,
+            attributes: vec![],
+            creation_date: now,
+            last_modified_date: now,
+        };
+        let user_a = storage.create_user(make_user(&pool_a, "a")).await;
+        let user_b = storage.create_user(make_user(&pool_b, "b")).await;
+        let make_group = |pool: &UserPoolId| crate::types::Group {
+            user_pool_id: pool.clone(),
+            group_name: "admins".to_string(),
+            description: None,
+            role_arn: None,
+            precedence: None,
+            creation_date: now,
+            last_modified_date: now,
+        };
+        storage.create_group(make_group(&pool_a)).await;
+        storage.create_group(make_group(&pool_b)).await;
+        storage
+            .add_user_to_group(&user_a.id, &"admins".to_string())
+            .await;
+        storage
+            .add_user_to_group(&user_b.id, &"admins".to_string())
+            .await;
+
+        storage.delete_group(&pool_a, &"admins".to_string()).await;
+
+        assert!(storage.get_groups_for_user(&user_a.id).await.is_empty());
+        assert_eq!(
+            storage.get_groups_for_user(&user_b.id).await,
+            vec!["admins".to_string()]
+        );
     }
 
     #[test]

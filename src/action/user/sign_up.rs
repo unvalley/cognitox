@@ -88,6 +88,21 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
         .ok_or(AppError::UserPoolClientNotFound)?;
     verify_secret_hash(&client, &req.username, req.secret_hash.as_deref())?;
 
+    let admin_only = storage
+        .with_user_pool(&client.user_pool_id, |pool| {
+            pool.admin_create_user_config
+                .as_ref()
+                .and_then(|config| config.allow_admin_create_user_only)
+                .unwrap_or(false)
+        })
+        .await
+        .ok_or(AppError::UserPoolNotFound)?;
+    if admin_only {
+        return Err(AppError::NotAuthorized(
+            "SignUp is not permitted for this user pool".to_string(),
+        ));
+    }
+
     if storage
         .get_user_by_username(&client.user_pool_id, &req.username)
         .await
@@ -372,5 +387,38 @@ mod tests {
         .await;
 
         assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_sign_up_rejected_when_pool_is_admin_create_only() {
+        let storage = Storage::new();
+        let pool = create_user_pool::handler(
+            &storage,
+            json!({
+                "PoolName": "admin-only",
+                "AdminCreateUserConfig": { "AllowAdminCreateUserOnly": true }
+            }),
+        )
+        .await
+        .unwrap();
+        let pool_id = pool["UserPool"]["Id"].as_str().unwrap();
+        let client = create_user_pool_client::handler(
+            &storage,
+            json!({ "UserPoolId": pool_id, "ClientName": "c" }),
+        )
+        .await
+        .unwrap();
+        let client_id = client["UserPoolClient"]["ClientId"].as_str().unwrap();
+
+        let result = handler(
+            &storage,
+            json!({
+                "ClientId": client_id,
+                "Username": "testuser",
+                "Password": "Password123!"
+            }),
+        )
+        .await;
+        assert!(matches!(result, Err(AppError::NotAuthorized(_))));
     }
 }

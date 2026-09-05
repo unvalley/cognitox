@@ -35,8 +35,12 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
 
     user.enabled = false;
     user.last_modified_date = Utc::now();
+    let user_id = user.id;
 
     storage.update_user(user).await;
+    // "Deactivates a user profile and revokes all access tokens for the user."
+    storage.invalidate_access_tokens_for_user(&user_id).await;
+    storage.delete_refresh_tokens_for_user(&user_id).await;
 
     Ok(json!({}))
 }
@@ -127,5 +131,77 @@ mod tests {
 
         assert!(result.is_err());
         assert!(matches!(result.unwrap_err(), AppError::UserPoolNotFound));
+    }
+
+    #[tokio::test]
+    async fn test_admin_disable_user_revokes_tokens() {
+        use crate::action::user::{admin_initiate_auth, admin_set_user_password, get_user};
+        use crate::action::user_pool::create_user_pool_client;
+
+        let storage = Storage::new();
+        let pool = create_user_pool::handler(&storage, json!({"PoolName": "test"}))
+            .await
+            .unwrap();
+        let pool_id = pool["UserPool"]["Id"].as_str().unwrap();
+        let client = create_user_pool_client::handler(
+            &storage,
+            json!({ "UserPoolId": pool_id, "ClientName": "c" }),
+        )
+        .await
+        .unwrap();
+        let client_id = client["UserPoolClient"]["ClientId"].as_str().unwrap();
+
+        admin_create_user::handler(
+            &storage,
+            json!({ "UserPoolId": pool_id, "Username": "testuser" }),
+        )
+        .await
+        .unwrap();
+        admin_set_user_password::handler(
+            &storage,
+            json!({
+                "UserPoolId": pool_id,
+                "Username": "testuser",
+                "Password": "Password123!",
+                "Permanent": true
+            }),
+        )
+        .await
+        .unwrap();
+        let auth = admin_initiate_auth::handler(
+            &storage,
+            json!({
+                "UserPoolId": pool_id,
+                "ClientId": client_id,
+                "AuthFlow": "ADMIN_USER_PASSWORD_AUTH",
+                "AuthParameters": { "USERNAME": "testuser", "PASSWORD": "Password123!" }
+            }),
+        )
+        .await
+        .unwrap();
+        let access_token = auth["AuthenticationResult"]["AccessToken"]
+            .as_str()
+            .unwrap();
+        let refresh_token = auth["AuthenticationResult"]["RefreshToken"]
+            .as_str()
+            .unwrap();
+
+        assert!(
+            get_user::handler(&storage, json!({ "AccessToken": access_token }))
+                .await
+                .is_ok()
+        );
+
+        handler(
+            &storage,
+            json!({ "UserPoolId": pool_id, "Username": "testuser" }),
+        )
+        .await
+        .unwrap();
+
+        // "Deactivates a user profile and revokes all access tokens for the user."
+        let result = get_user::handler(&storage, json!({ "AccessToken": access_token })).await;
+        assert!(matches!(result, Err(AppError::InvalidAccessToken)));
+        assert!(storage.get_refresh_token(refresh_token).await.is_none());
     }
 }

@@ -26,11 +26,12 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
         .await
         .map_err(|_| AppError::InvalidAccessToken)?;
 
+    // Storage::delete_user cascades to refresh tokens and every other
+    // user-scoped record.
     storage
         .delete_user(&user_id)
         .await
         .ok_or(AppError::UserNotFound)?;
-    storage.delete_refresh_tokens_for_user(&user_id).await;
 
     Ok(json!({}))
 }
