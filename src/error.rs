@@ -128,6 +128,9 @@ pub enum AppError {
     #[error("Invalid parameter: {0}")]
     InvalidParameter(String),
 
+    #[error("{0}")]
+    Serialization(String),
+
     #[error("Internal server error: {0}")]
     Internal(String),
 
@@ -194,6 +197,7 @@ impl IntoResponse for AppError {
             AppError::ExpiredCode => (StatusCode::BAD_REQUEST, "ExpiredCodeException"),
             AppError::LimitExceeded => (StatusCode::BAD_REQUEST, "LimitExceededException"),
             AppError::InvalidParameter(_) => (StatusCode::BAD_REQUEST, "InvalidParameterException"),
+            AppError::Serialization(_) => (StatusCode::BAD_REQUEST, "SerializationException"),
             AppError::Internal(_) => (StatusCode::INTERNAL_SERVER_ERROR, "InternalErrorException"),
             AppError::Storage(_) => (StatusCode::INTERNAL_SERVER_ERROR, "InternalErrorException"),
             AppError::NotAuthorized(_) => (StatusCode::UNAUTHORIZED, "NotAuthorizedException"),

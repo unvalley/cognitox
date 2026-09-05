@@ -805,6 +805,41 @@ pub struct User {
     pub last_modified_date: DateTime<Utc>,
 }
 
+impl User {
+    /// Value of a stored attribute, if present.
+    pub fn attribute_value(&self, name: &str) -> Option<&str> {
+        self.attributes
+            .iter()
+            .find(|attribute| attribute.name == name)
+            .and_then(|attribute| attribute.value.as_deref())
+    }
+
+    /// Boolean attribute (`"true"` / `"false"`), `None` when absent or unparsable.
+    fn attribute_flag(&self, name: &str) -> Option<bool> {
+        match self.attribute_value(name)? {
+            v if v.eq_ignore_ascii_case("true") => Some(true),
+            v if v.eq_ignore_ascii_case("false") => Some(false),
+            _ => None,
+        }
+    }
+
+    /// `email_verified` as reported in tokens and UserInfo. Present only when
+    /// the user has an email; defaults to `false` like Cognito.
+    pub fn email_verified(&self) -> Option<bool> {
+        self.email
+            .as_ref()
+            .map(|_| self.attribute_flag("email_verified").unwrap_or(false))
+    }
+
+    /// `phone_number_verified` as reported in tokens and UserInfo.
+    pub fn phone_number_verified(&self) -> Option<bool> {
+        self.phone_number.as_ref().map(|_| {
+            self.attribute_flag("phone_number_verified")
+                .unwrap_or(false)
+        })
+    }
+}
+
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum UserStatus {
@@ -1150,4 +1185,50 @@ pub struct WebAuthnCredential {
     pub created_at: DateTime<Utc>,
     pub authenticator_attachment: Option<String>,
     pub authenticator_transports: Vec<String>,
+}
+
+#[cfg(test)]
+mod user_attribute_tests {
+    use super::*;
+
+    fn user_with(attributes: Vec<(&str, &str)>, email: Option<&str>) -> User {
+        User {
+            id: uuid::Uuid::new_v4(),
+            user_pool_id: UserPoolId::new_local(),
+            username: "u".to_string(),
+            email: email.map(str::to_string),
+            phone_number: None,
+            password_hash: String::new(),
+            enabled: true,
+            user_status: UserStatus::Confirmed,
+            attributes: attributes
+                .into_iter()
+                .map(|(name, value)| UserAttribute {
+                    name: name.to_string(),
+                    value: Some(value.to_string()),
+                })
+                .collect(),
+            creation_date: Utc::now(),
+            last_modified_date: Utc::now(),
+        }
+    }
+
+    #[test]
+    fn email_verified_reflects_attribute() {
+        let verified = user_with(vec![("email_verified", "true")], Some("a@b.c"));
+        assert_eq!(verified.email_verified(), Some(true));
+
+        let unverified = user_with(vec![("email_verified", "false")], Some("a@b.c"));
+        assert_eq!(unverified.email_verified(), Some(false));
+
+        let missing = user_with(vec![], Some("a@b.c"));
+        assert_eq!(missing.email_verified(), Some(false));
+    }
+
+    #[test]
+    fn email_verified_absent_without_email() {
+        let user = user_with(vec![("email_verified", "true")], None);
+        assert_eq!(user.email_verified(), None);
+        assert_eq!(user.phone_number_verified(), None);
+    }
 }

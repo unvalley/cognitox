@@ -843,10 +843,10 @@ pub async fn userinfo(
 
     Ok(Json(UserInfoResponse {
         sub: user.id.to_string(),
+        email_verified: user.email_verified(),
+        phone_number_verified: user.phone_number_verified(),
         email: user.email,
-        email_verified: Some(true),
         phone_number: user.phone_number,
-        phone_number_verified: Some(true),
         username: user.username,
         groups,
     }))

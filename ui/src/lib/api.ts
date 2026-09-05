@@ -1,9 +1,12 @@
 import type { OAuthParams, Branding, UserPool, User, UserPoolClient, ManagedLoginBranding } from './types'
 
-const API_BASE =
-  typeof window !== 'undefined' && window.location.port === '9229'
-    ? window.location.origin
-    : 'http://localhost:9229'
+// When served by the cognitox binary the UI shares its origin with the API,
+// whatever port the server was started on. Only the Vite dev server (a
+// different origin) needs the explicit default backend address.
+export const API_BASE: string =
+  import.meta.env.DEV || typeof window === 'undefined'
+    ? 'http://localhost:9229'
+    : window.location.origin
 
 export async function login(
   username: string,

@@ -640,9 +640,42 @@ impl Storage {
         store.user_pool_clients.get(client_id).map(f)
     }
 
+    /// Delete a client together with every piece of state scoped to it, so
+    /// tokens and codes issued for the client stop working and no index entry
+    /// dangles. Locks are taken in the same order as `delete_user_pool`.
     pub async fn delete_user_pool_client(&self, client_id: &ClientId) -> Option<UserPoolClient> {
-        let mut store = self.pool_store.write().await;
-        store.user_pool_clients.remove(client_id)
+        let mut pool_store = self.pool_store.write().await;
+        let mut principal_store = self.principal_store.write().await;
+        let mut branding_store = self.branding_store.write().await;
+
+        let client = pool_store.user_pool_clients.remove(client_id)?;
+
+        pool_store
+            .terms_documents
+            .retain(|_, doc| &doc.client_id != client_id);
+        pool_store
+            .terms_name_index
+            .retain(|(_, cid, _), _| cid != client_id);
+        pool_store
+            .ui_customizations
+            .retain(|(_, cid), _| cid.as_ref() != Some(client_id));
+        pool_store
+            .risk_configurations
+            .retain(|(_, cid), _| cid.as_ref() != Some(client_id));
+
+        principal_store
+            .refresh_tokens
+            .retain(|_, token| &token.client_id != client_id);
+        principal_store
+            .authorization_codes
+            .retain(|_, code| &code.client_id != client_id);
+        principal_store
+            .auth_challenge_sessions
+            .retain(|_, challenge| &challenge.client_id != client_id);
+
+        branding_store.client_brandings.remove(client_id);
+
+        Some(client)
     }
 
     pub async fn list_user_pool_clients(&self, user_pool_id: &UserPoolId) -> Vec<UserPoolClient> {
@@ -881,11 +914,7 @@ impl Storage {
         let store = self.pool_store.read().await;
         store
             .resource_servers
-            .iter()
-            .find(|((pool_id, stored_identifier), _)| {
-                pool_id == user_pool_id && stored_identifier == identifier
-            })
-            .map(|(_, resource_server)| resource_server)
+            .get(&(user_pool_id.clone(), identifier.to_string()))
             .cloned()
     }
 
@@ -1329,9 +1358,7 @@ impl Storage {
         let store = self.group_store.read().await;
         store
             .groups
-            .iter()
-            .find(|((pool_id, name), _)| pool_id == user_pool_id && name == group_name)
-            .map(|(_, group)| group)
+            .get(&(user_pool_id.clone(), group_name.clone()))
             .cloned()
     }
 
@@ -1604,15 +1631,11 @@ impl Storage {
         terms_name: &str,
     ) -> Option<TermsDocument> {
         let store = self.pool_store.read().await;
-        let id = store
-            .terms_name_index
-            .iter()
-            .find(|((pool_id, stored_client_id, stored_terms_name), _)| {
-                pool_id == user_pool_id
-                    && stored_client_id == client_id
-                    && stored_terms_name == terms_name
-            })
-            .map(|(_, terms_id)| terms_id)?;
+        let id = store.terms_name_index.get(&(
+            user_pool_id.clone(),
+            client_id.clone(),
+            terms_name.to_string(),
+        ))?;
         store.terms_documents.get(id).cloned()
     }
 

@@ -3,14 +3,18 @@
 use axum::{
     body::Bytes,
     extract::{FromRequest, Request},
-    http::{StatusCode, header},
+    http::header,
     response::{IntoResponse, Response},
 };
 use serde::de::DeserializeOwned;
 
+use crate::error::AppError;
+
 /// Custom JSON extractor that accepts both `application/json` and `application/x-amz-json-1.1`
 pub struct AmzJson<T>(pub T);
 
+/// Malformed request body. Rendered as a Cognito-style
+/// `SerializationException` so SDK clients parse it like any other API error.
 #[derive(Debug)]
 pub struct AmzJsonRejection {
     message: String,
@@ -18,7 +22,7 @@ pub struct AmzJsonRejection {
 
 impl IntoResponse for AmzJsonRejection {
     fn into_response(self) -> Response {
-        (StatusCode::BAD_REQUEST, self.message).into_response()
+        AppError::Serialization(self.message).into_response()
     }
 }
 

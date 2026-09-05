@@ -229,9 +229,9 @@ pub fn generate_id_token(
         auth_time,
         token_use: "id".to_string(),
         email: user.email.clone(),
-        email_verified: user.email.as_ref().map(|_| true),
+        email_verified: user.email_verified(),
         phone_number: user.phone_number.clone(),
-        phone_number_verified: user.phone_number.as_ref().map(|_| true),
+        phone_number_verified: user.phone_number_verified(),
         cognito_username: user.username.clone(),
         cognito_groups: groups.to_vec(),
     };
@@ -355,21 +355,6 @@ pub fn get_jwks() -> serde_json::Value {
             "e": keys.public_key_e,
         }]
     })
-}
-
-/// Extract user ID from access token without full validation
-/// (for backward compatibility, but prefer verify_access_token)
-pub fn extract_user_id_from_token(token: &str) -> Option<uuid::Uuid> {
-    // Try to decode without signature verification first (for quick extraction)
-    let parts: Vec<&str> = token.split('.').collect();
-    if parts.len() != 3 {
-        return None;
-    }
-
-    let payload = URL_SAFE_NO_PAD.decode(parts[1]).ok()?;
-    let claims: serde_json::Value = serde_json::from_slice(&payload).ok()?;
-    let sub = claims.get("sub")?.as_str()?;
-    uuid::Uuid::parse_str(sub).ok()
 }
 
 fn resolve_duration(

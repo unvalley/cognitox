@@ -82,10 +82,13 @@ pub fn verify_password(password: &str, hash: &str) -> bool {
 
 pub fn mask_email(email: &str) -> String {
     if let Some((local, domain)) = email.split_once('@') {
-        if local.len() > 2 {
-            format!("{}***@{}", &local[..2], domain)
+        // Count characters, not bytes: slicing a multi-byte local part by
+        // byte index would panic on a non-boundary.
+        if local.chars().count() > 2 {
+            let prefix: String = local.chars().take(2).collect();
+            format!("{prefix}***@{domain}")
         } else {
-            format!("***@{}", domain)
+            format!("***@{domain}")
         }
     } else {
         "***".to_string()
@@ -370,4 +373,29 @@ pub fn build_mfa_options(user: &User, factors: &[String]) -> Vec<Value> {
     }
 
     Vec::new()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn mask_email_keeps_two_leading_chars() {
+        assert_eq!(mask_email("alice@example.com"), "al***@example.com");
+        assert_eq!(mask_email("ab@example.com"), "***@example.com");
+        assert_eq!(mask_email("no-at-sign"), "***");
+    }
+
+    #[test]
+    fn mask_email_handles_multibyte_local_part() {
+        // Must not panic on non-ASCII local parts (byte slicing would).
+        assert_eq!(mask_email("太郎さん@example.jp"), "太郎***@example.jp");
+        assert_eq!(mask_email("太@example.jp"), "***@example.jp");
+    }
+
+    #[test]
+    fn mask_phone_number_keeps_last_four_digits() {
+        assert_eq!(mask_phone_number("+81 90-1234-5678"), "***5678");
+        assert_eq!(mask_phone_number("123"), "***");
+    }
 }
