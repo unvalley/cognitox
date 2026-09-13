@@ -81,6 +81,13 @@ cognitox includes a built-in Hosted UI for login and signup flows.
 http://localhost:9229/login?response_type=code&client_id=<client-id>&redirect_uri=http://localhost:3000/callback&scope=openid
 ```
 
+The `/oauth2/token` endpoint supports authorization code, refresh token, and
+client credentials grants. Confidential clients can authenticate with an
+`Authorization: Basic ...` header (`client_secret_basic`) or form fields
+(`client_secret_post`), as described in the [Cognito token endpoint documentation](https://docs.aws.amazon.com/cognito/latest/developerguide/token-endpoint.html).
+Public clients must send `client_id` in the form body and can use the
+authorization code and refresh token grants.
+
 ### Admin Console
 
 A management UI for browsing user pools, users, clients, and groups:

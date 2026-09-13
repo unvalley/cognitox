@@ -957,3 +957,378 @@ async fn test_invalid_authorization_code() {
     let body: serde_json::Value = token_response.json().await.unwrap();
     assert_eq!(body["error"], "invalid_grant");
 }
+
+async fn request_authorization_code(
+    client: &TestClient,
+    client_id: &str,
+    username: &str,
+    password: &str,
+) -> String {
+    let response = client
+        .get(&format!(
+            "/oauth2/authorize?response_type=code&client_id={client_id}&redirect_uri=https://example.com/callback&scope=openid&username={username}&password={}",
+            urlencoding::encode(password)
+        ))
+        .await;
+    assert_eq!(response.status(), StatusCode::TEMPORARY_REDIRECT);
+    let location = response.headers()["location"].to_str().unwrap();
+    reqwest::Url::parse(location)
+        .unwrap()
+        .query_pairs()
+        .find(|(name, _)| name == "code")
+        .unwrap()
+        .1
+        .into_owned()
+}
+
+fn basic_auth(client_id: &str, client_secret: &str) -> String {
+    format!(
+        "Basic {}",
+        BASE64_STANDARD.encode(format!("{client_id}:{client_secret}"))
+    )
+}
+
+#[tokio::test]
+async fn test_basic_auth_authorization_code_and_refresh_flow() {
+    let client = TestClient::new();
+    let (pool_id, client_id, client_secret, username, password) =
+        setup_user_and_confidential_client(&client).await;
+    let code = request_authorization_code(&client, &client_id, &username, &password).await;
+    let authorization = basic_auth(&client_id, &client_secret);
+    let params = [
+        ("grant_type", "authorization_code"),
+        ("code", code.as_str()),
+        ("redirect_uri", "https://example.com/callback"),
+    ];
+    let response = client
+        .post_form_with_headers(
+            "/oauth2/token",
+            &params,
+            &[("authorization", &authorization)],
+        )
+        .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body: serde_json::Value = response.json().await.unwrap();
+    let claims = verify_access_token(body["access_token"].as_str().unwrap())
+        .unwrap()
+        .claims;
+    assert_eq!(claims.client_id, client_id);
+    assert!(body["id_token"].as_str().is_some());
+
+    let replay = client
+        .post_form_with_headers(
+            "/oauth2/token",
+            &params,
+            &[("authorization", &authorization)],
+        )
+        .await;
+    assert_eq!(replay.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(
+        replay.json::<serde_json::Value>().await.unwrap()["error"],
+        "invalid_grant"
+    );
+
+    let other_client = client
+        .cognito_request(
+            "CreateUserPoolClient",
+            json!({
+                "UserPoolId": pool_id,
+                "ClientName": "OtherClient",
+                "GenerateSecret": true
+            }),
+        )
+        .await;
+    let other_authorization = basic_auth(
+        other_client["UserPoolClient"]["ClientId"].as_str().unwrap(),
+        other_client["UserPoolClient"]["ClientSecret"]
+            .as_str()
+            .unwrap(),
+    );
+    let response = client
+        .post_form_with_headers(
+            "/oauth2/token",
+            &[
+                ("grant_type", "refresh_token"),
+                ("refresh_token", body["refresh_token"].as_str().unwrap()),
+            ],
+            &[("authorization", &other_authorization)],
+        )
+        .await;
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(
+        response.json::<serde_json::Value>().await.unwrap()["error"],
+        "invalid_grant"
+    );
+
+    let response = client
+        .post_form_with_headers(
+            "/oauth2/token",
+            &[
+                ("grant_type", "refresh_token"),
+                ("refresh_token", body["refresh_token"].as_str().unwrap()),
+            ],
+            &[("authorization", &authorization)],
+        )
+        .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let refreshed: serde_json::Value = response.json().await.unwrap();
+    let claims = verify_access_token(refreshed["access_token"].as_str().unwrap())
+        .unwrap()
+        .claims;
+    assert_eq!(claims.client_id, client_id);
+    assert_eq!(
+        claims.sub,
+        verify_id_token(body["id_token"].as_str().unwrap(), &client_id)
+            .unwrap()
+            .claims
+            .sub
+    );
+    assert!(refreshed.get("refresh_token").is_none());
+}
+
+#[tokio::test]
+async fn test_basic_auth_client_credentials_flow() {
+    let client = TestClient::new();
+    let pool = client
+        .cognito_request("CreateUserPool", json!({"PoolName": "BasicAuthPool"}))
+        .await;
+    let app = client
+        .cognito_request(
+            "CreateUserPoolClient",
+            json!({
+                "UserPoolId": pool["UserPool"]["Id"],
+                "ClientName": "BasicAuthClient",
+                "GenerateSecret": true,
+                "AllowedOAuthFlows": ["client_credentials"],
+                "AllowedOAuthScopes": ["api/read"],
+                "AllowedOAuthFlowsUserPoolClient": true
+            }),
+        )
+        .await;
+    let client_id = app["UserPoolClient"]["ClientId"].as_str().unwrap();
+    let secret = app["UserPoolClient"]["ClientSecret"].as_str().unwrap();
+    // OAuth Basic credentials use form encoding before base64 encoding.
+    let encoded_id = client_id
+        .bytes()
+        .map(|b| format!("%{b:02X}"))
+        .collect::<String>();
+    let encoded_secret = secret
+        .bytes()
+        .map(|b| format!("%{b:02X}"))
+        .collect::<String>();
+    for (index, authorization) in [
+        basic_auth(client_id, secret),
+        basic_auth(&encoded_id, &encoded_secret).replacen("Basic ", "bAsIc   ", 1),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let mut params = vec![("grant_type", "client_credentials"), ("scope", "api/read")];
+        if index == 1 {
+            params.push(("client_id", client_id));
+        }
+        let response = client
+            .post_form_with_headers(
+                "/oauth2/token",
+                &params,
+                &[("authorization", &authorization)],
+            )
+            .await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let body: serde_json::Value = response.json().await.unwrap();
+        let claims = verify_access_token(body["access_token"].as_str().unwrap())
+            .unwrap()
+            .claims;
+        assert_eq!(claims.client_id, client_id);
+        assert_eq!(claims.scope, "api/read");
+        assert!(body.get("id_token").is_none());
+        assert!(body.get("refresh_token").is_none());
+    }
+}
+
+#[tokio::test]
+async fn test_invalid_client_authentication_preserves_authorization_code() {
+    let client = TestClient::new();
+    let (_, client_id, secret, username, password) =
+        setup_user_and_confidential_client(&client).await;
+    let code = request_authorization_code(&client, &client_id, &username, &password).await;
+    for provided_secret in [None, Some("wrong-secret")] {
+        let mut params = vec![
+            ("grant_type", "authorization_code"),
+            ("code", code.as_str()),
+            ("client_id", client_id.as_str()),
+            ("redirect_uri", "https://example.com/callback"),
+        ];
+        if let Some(provided_secret) = provided_secret {
+            params.push(("client_secret", provided_secret));
+        }
+        let response = client.post_form("/oauth2/token", &params).await;
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(
+            response.json::<serde_json::Value>().await.unwrap()["error"],
+            "invalid_client"
+        );
+    }
+    let response = client
+        .post_form(
+            "/oauth2/token",
+            &[
+                ("grant_type", "authorization_code"),
+                ("code", &code),
+                ("client_id", &client_id),
+                ("client_secret", &secret),
+                ("redirect_uri", "https://example.com/callback"),
+            ],
+        )
+        .await;
+    assert_eq!(response.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn test_basic_auth_rejects_invalid_or_ambiguous_credentials() {
+    let client = TestClient::new();
+    let (_, client_id, secret, username, password) =
+        setup_user_and_confidential_client(&client).await;
+    let code = request_authorization_code(&client, &client_id, &username, &password).await;
+    let authorization = basic_auth(&client_id, &secret);
+    let invalid_headers = [
+        "Bearer invalid".to_string(),
+        "Basic".to_string(),
+        "Basic !!!".to_string(),
+        format!("Basic {}", BASE64_STANDARD.encode("no-colon")),
+        format!("Basic {}", BASE64_STANDARD.encode([0xff, b':', 0xff])),
+        basic_auth(&client_id, "%FF"),
+        basic_auth(&client_id, "wrong-secret"),
+        basic_auth(&client_id, ""),
+        basic_auth("", &secret),
+    ];
+    let params = [
+        ("grant_type", "authorization_code"),
+        ("code", code.as_str()),
+        ("redirect_uri", "https://example.com/callback"),
+    ];
+    for invalid_header in &invalid_headers {
+        let response = client
+            .post_form_with_headers(
+                "/oauth2/token",
+                &params,
+                &[("authorization", invalid_header)],
+            )
+            .await;
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let body: serde_json::Value = response.json().await.unwrap();
+        assert_eq!(body["error"], "invalid_client");
+        assert!(!body.to_string().contains(&secret));
+    }
+    for (extra, headers) in [
+        (
+            vec![("client_secret", secret.as_str())],
+            vec![("authorization", authorization.as_str())],
+        ),
+        (
+            vec![("client_id", "another-client")],
+            vec![("authorization", authorization.as_str())],
+        ),
+        (
+            vec![],
+            vec![
+                ("authorization", authorization.as_str()),
+                ("authorization", authorization.as_str()),
+            ],
+        ),
+    ] {
+        let mut ambiguous_params = params.to_vec();
+        ambiguous_params.extend(extra);
+        let response = client
+            .post_form_with_headers("/oauth2/token", &ambiguous_params, &headers)
+            .await;
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(
+            response.json::<serde_json::Value>().await.unwrap()["error"],
+            "invalid_request"
+        );
+    }
+    // A malformed header must not silently fall back to valid form credentials.
+    let mut form_params = params.to_vec();
+    form_params.extend([
+        ("client_id", client_id.as_str()),
+        ("client_secret", secret.as_str()),
+    ]);
+    let response = client
+        .post_form_with_headers(
+            "/oauth2/token",
+            &form_params,
+            &[("authorization", "Basic !!!")],
+        )
+        .await;
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+
+    let response = client
+        .post_form_with_headers(
+            "/oauth2/token",
+            &params,
+            &[("authorization", &authorization)],
+        )
+        .await;
+    assert_eq!(response.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn test_public_client_requires_explicit_identity_without_secret() {
+    let client = TestClient::new();
+    let (_, client_id, username, password) = setup_user_and_client(&client).await;
+    let code = request_authorization_code(&client, &client_id, &username, &password).await;
+    let params = [
+        ("grant_type", "authorization_code"),
+        ("code", code.as_str()),
+        ("client_id", client_id.as_str()),
+        ("redirect_uri", "https://example.com/callback"),
+    ];
+    // Public clients cannot authenticate with a fabricated or empty secret.
+    for secret in ["", "fabricated-secret"] {
+        let authorization = basic_auth(&client_id, secret);
+        let response = client
+            .post_form_with_headers(
+                "/oauth2/token",
+                &params,
+                &[("authorization", &authorization)],
+            )
+            .await;
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(
+            response.json::<serde_json::Value>().await.unwrap()["error"],
+            "invalid_client"
+        );
+    }
+    let response = client.post_form("/oauth2/token", &params).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body: serde_json::Value = response.json().await.unwrap();
+    let mut refresh_params = vec![
+        ("grant_type", "refresh_token"),
+        ("refresh_token", body["refresh_token"].as_str().unwrap()),
+    ];
+    let response = client.post_form("/oauth2/token", &refresh_params).await;
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(
+        response.json::<serde_json::Value>().await.unwrap()["error"],
+        "invalid_request"
+    );
+    refresh_params.push(("client_id", &client_id));
+    let response = client.post_form("/oauth2/token", &refresh_params).await;
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let response = client
+        .post_form(
+            "/oauth2/token",
+            &[
+                ("grant_type", "client_credentials"),
+                ("client_id", &client_id),
+            ],
+        )
+        .await;
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(
+        response.json::<serde_json::Value>().await.unwrap()["error"],
+        "invalid_client"
+    );
+}

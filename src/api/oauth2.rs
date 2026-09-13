@@ -9,7 +9,10 @@ use axum::{
     http::{HeaderMap, StatusCode, header},
     response::{IntoResponse, Redirect},
 };
-use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
+use base64::{
+    Engine,
+    engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD},
+};
 use chrono::{Duration, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -24,7 +27,10 @@ use crate::{
         resolve_refresh_token_expiry, verify_access_token,
     },
     storage::Storage,
-    types::{AuthorizationCode, ClientId, OAuthFlow, RefreshToken, User, UserPoolId, UserStatus},
+    types::{
+        AuthorizationCode, ClientId, OAuthFlow, RefreshToken, User, UserPoolClient, UserPoolId,
+        UserStatus,
+    },
 };
 
 use super::super::action::user::helpers::verify_password;
@@ -399,9 +405,85 @@ pub async fn authorize(
     }
 }
 
+fn invalid_client() -> OAuthError {
+    OAuthError {
+        error: "invalid_client".to_string(),
+        error_description: Some("Invalid client credentials".to_string()),
+    }
+}
+
+fn decode_basic_credential(value: &str) -> Result<String, OAuthError> {
+    // RFC 6749 section 2.3.1 uses form encoding inside the Basic credentials.
+    urlencoding::decode(&value.replace('+', " "))
+        .map(|decoded| decoded.into_owned())
+        .map_err(|_| invalid_client())
+}
+
+async fn authenticate_token_client(
+    storage: &Storage,
+    headers: &HeaderMap,
+    req: &TokenRequest,
+) -> Result<UserPoolClient, OAuthError> {
+    let mut authorization_headers = headers.get_all(header::AUTHORIZATION).iter();
+    let authorization = authorization_headers.next();
+    if authorization_headers.next().is_some() {
+        return Err(OAuthError {
+            error: "invalid_request".to_string(),
+            error_description: Some("Multiple Authorization headers are not allowed".to_string()),
+        });
+    }
+
+    let (client_id, client_secret) = if let Some(authorization) = authorization {
+        let (scheme, encoded) = authorization
+            .to_str()
+            .ok()
+            .and_then(|value| value.split_once(' '))
+            .ok_or_else(invalid_client)?;
+        if !scheme.eq_ignore_ascii_case("Basic") {
+            return Err(invalid_client());
+        }
+        let decoded = STANDARD
+            .decode(encoded.trim_start_matches(' '))
+            .map_err(|_| invalid_client())?;
+        let decoded = String::from_utf8(decoded).map_err(|_| invalid_client())?;
+        let (client_id, secret) = decoded.split_once(':').ok_or_else(invalid_client)?;
+        let client_id = decode_basic_credential(client_id)?;
+        let secret = decode_basic_credential(secret)?;
+
+        // A redundant client_id is permitted, but it must identify the same client.
+        if req.client_secret.is_some() || req.client_id.as_deref().is_some_and(|id| id != client_id)
+        {
+            return Err(OAuthError {
+                error: "invalid_request".to_string(),
+                error_description: Some(
+                    "Conflicting or multiple client authentication methods".to_string(),
+                ),
+            });
+        }
+        (client_id, Some(secret))
+    } else {
+        let client_id = req.client_id.clone().ok_or_else(|| OAuthError {
+            error: "invalid_request".to_string(),
+            error_description: Some("Missing client_id parameter".to_string()),
+        })?;
+        (client_id, req.client_secret.clone())
+    };
+
+    let client_id = ClientId::new(&client_id).map_err(|_| invalid_client())?;
+    let client = storage
+        .get_user_pool_client(&client_id)
+        .await
+        .ok_or_else(invalid_client)?;
+    if client.client_secret != client_secret {
+        return Err(invalid_client());
+    }
+    Ok(client)
+}
+
 /// POST /oauth2/token - Token endpoint
 pub async fn token(
     State(storage): State<Storage>,
+    headers: HeaderMap,
     Form(req): Form<TokenRequest>,
 ) -> Result<Json<TokenResponse>, OAuthError> {
     match req.grant_type.as_str() {
@@ -411,16 +493,9 @@ pub async fn token(
                 error_description: Some("Missing code parameter".to_string()),
             })?;
 
-            let client_id_str = req.client_id.as_ref().ok_or_else(|| OAuthError {
-                error: "invalid_request".to_string(),
-                error_description: Some("Missing client_id parameter".to_string()),
-            })?;
-
-            // Parse client_id
-            let client_id = ClientId::new(client_id_str).map_err(|_| OAuthError {
-                error: "invalid_client".to_string(),
-                error_description: Some("Invalid client ID format".to_string()),
-            })?;
+            // Authenticate before consuming the one-time authorization code.
+            let client = authenticate_token_client(&storage, &headers, &req).await?;
+            let client_id = &client.client_id;
 
             // Get and validate authorization code
             let auth_code = storage
@@ -440,7 +515,7 @@ pub async fn token(
             }
 
             // Validate client_id
-            if auth_code.client_id != client_id {
+            if &auth_code.client_id != client_id {
                 return Err(OAuthError {
                     error: "invalid_grant".to_string(),
                     error_description: Some("Client ID mismatch".to_string()),
@@ -487,30 +562,6 @@ pub async fn token(
                     return Err(OAuthError {
                         error: "invalid_grant".to_string(),
                         error_description: Some("Code verifier mismatch".to_string()),
-                    });
-                }
-            }
-
-            // Get client and user
-            let client = storage
-                .get_user_pool_client(&client_id)
-                .await
-                .ok_or_else(|| OAuthError {
-                    error: "invalid_client".to_string(),
-                    error_description: Some("Client not found".to_string()),
-                })?;
-
-            // Validate client secret if required
-            if client.client_secret.is_some() {
-                let provided_secret = req.client_secret.as_ref().ok_or_else(|| OAuthError {
-                    error: "invalid_client".to_string(),
-                    error_description: Some("Client secret required".to_string()),
-                })?;
-
-                if client.client_secret.as_ref() != Some(provided_secret) {
-                    return Err(OAuthError {
-                        error: "invalid_client".to_string(),
-                        error_description: Some("Invalid client secret".to_string()),
                     });
                 }
             }
@@ -586,6 +637,8 @@ pub async fn token(
                 error_description: Some("Missing refresh_token parameter".to_string()),
             })?;
 
+            let client = authenticate_token_client(&storage, &headers, &req).await?;
+
             let stored_token = storage
                 .get_refresh_token(refresh_token)
                 .await
@@ -601,41 +654,11 @@ pub async fn token(
                 });
             }
 
-            if let Some(requested_client_id) = req.client_id.as_deref() {
-                let requested_client_id =
-                    ClientId::new(requested_client_id).map_err(|_| OAuthError {
-                        error: "invalid_client".to_string(),
-                        error_description: Some("Invalid client ID format".to_string()),
-                    })?;
-
-                if requested_client_id != stored_token.client_id {
-                    return Err(OAuthError {
-                        error: "invalid_grant".to_string(),
-                        error_description: Some("Client ID mismatch".to_string()),
-                    });
-                }
-            }
-
-            let client = storage
-                .get_user_pool_client(&stored_token.client_id)
-                .await
-                .ok_or_else(|| OAuthError {
-                    error: "invalid_client".to_string(),
-                    error_description: Some("Client not found".to_string()),
-                })?;
-
-            if client.client_secret.is_some() {
-                let provided_secret = req.client_secret.as_ref().ok_or_else(|| OAuthError {
-                    error: "invalid_client".to_string(),
-                    error_description: Some("Client secret required".to_string()),
-                })?;
-
-                if client.client_secret.as_ref() != Some(provided_secret) {
-                    return Err(OAuthError {
-                        error: "invalid_client".to_string(),
-                        error_description: Some("Invalid client secret".to_string()),
-                    });
-                }
+            if client.client_id != stored_token.client_id {
+                return Err(OAuthError {
+                    error: "invalid_grant".to_string(),
+                    error_description: Some("Client ID mismatch".to_string()),
+                });
             }
 
             let user = storage
@@ -701,35 +724,10 @@ pub async fn token(
             }))
         }
         "client_credentials" => {
-            let client_id_str = req.client_id.as_ref().ok_or_else(|| OAuthError {
-                error: "invalid_request".to_string(),
-                error_description: Some("Missing client_id".to_string()),
-            })?;
-
-            // Parse client_id
-            let client_id = ClientId::new(client_id_str).map_err(|_| OAuthError {
-                error: "invalid_client".to_string(),
-                error_description: Some("Invalid client ID format".to_string()),
-            })?;
-
-            let client_secret = req.client_secret.as_ref().ok_or_else(|| OAuthError {
-                error: "invalid_request".to_string(),
-                error_description: Some("Missing client_secret".to_string()),
-            })?;
-
-            let client = storage
-                .get_user_pool_client(&client_id)
-                .await
-                .ok_or_else(|| OAuthError {
-                    error: "invalid_client".to_string(),
-                    error_description: Some("Client not found".to_string()),
-                })?;
-
-            if client.client_secret.as_ref() != Some(client_secret) {
-                return Err(OAuthError {
-                    error: "invalid_client".to_string(),
-                    error_description: Some("Invalid client credentials".to_string()),
-                });
+            let client = authenticate_token_client(&storage, &headers, &req).await?;
+            let client_id = &client.client_id;
+            if client.client_secret.is_none() {
+                return Err(invalid_client());
             }
 
             if !client.allowed_oauth_flows_user_pool_client {
@@ -759,7 +757,7 @@ pub async fn token(
             let access_expiry = resolve_access_token_expiry(&client);
 
             let access_token =
-                generate_client_credentials_access_token(&client_id, &scopes, access_expiry)
+                generate_client_credentials_access_token(client_id, &scopes, access_expiry)
                     .map_err(|e| OAuthError {
                         error: "server_error".to_string(),
                         error_description: Some(e),
