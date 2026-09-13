@@ -1332,3 +1332,229 @@ async fn test_public_client_requires_explicit_identity_without_secret() {
         "invalid_client"
     );
 }
+
+async fn oauth_tokens(
+    client: &TestClient,
+    client_id: &str,
+    username: &str,
+    password: &str,
+) -> serde_json::Value {
+    let code = request_authorization_code(client, client_id, username, password).await;
+    let response = client
+        .post_form(
+            "/oauth2/token",
+            &[
+                ("grant_type", "authorization_code"),
+                ("code", &code),
+                ("client_id", client_id),
+                ("redirect_uri", "https://example.com/callback"),
+            ],
+        )
+        .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    response.json().await.unwrap()
+}
+
+async fn assert_userinfo_invalid_token(client: &TestClient, token: &str) {
+    let response = client.get_with_auth("/oauth2/userInfo", token).await;
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    assert_eq!(
+        response.headers()["www-authenticate"],
+        "Bearer error=\"invalid_token\""
+    );
+    let body: serde_json::Value = response.json().await.unwrap();
+    assert_eq!(body["error"], "invalid_token");
+    assert!(body.get("sub").is_none());
+    assert!(body.get("email").is_none());
+}
+
+#[tokio::test]
+async fn test_userinfo_rejects_ended_sessions() {
+    for operation in [
+        "GlobalSignOut",
+        "AdminUserGlobalSignOut",
+        "RevokeToken",
+        "AdminDeleteUser",
+    ] {
+        let client = TestClient::new();
+        let (pool_id, client_id, username, password) = setup_user_and_client(&client).await;
+        let tokens = oauth_tokens(&client, &client_id, &username, &password).await;
+        let access_token = tokens["access_token"].as_str().unwrap();
+        assert_eq!(
+            client
+                .get_with_auth("/oauth2/userInfo", access_token)
+                .await
+                .status(),
+            StatusCode::OK
+        );
+        let request = match operation {
+            "GlobalSignOut" => {
+                let auth = client
+                    .cognito_request(
+                        "InitiateAuth",
+                        json!({
+                            "ClientId": client_id,
+                            "AuthFlow": "USER_PASSWORD_AUTH",
+                            "AuthParameters": {"USERNAME": username, "PASSWORD": password}
+                        }),
+                    )
+                    .await;
+                json!({"AccessToken": auth["AuthenticationResult"]["AccessToken"]})
+            }
+            "RevokeToken" => json!({"ClientId": client_id, "Token": tokens["refresh_token"]}),
+            _ => json!({"UserPoolId": pool_id, "Username": username}),
+        };
+        client.cognito_request(operation, request).await;
+        assert_userinfo_invalid_token(&client, access_token).await;
+    }
+}
+
+#[tokio::test]
+async fn test_userinfo_requires_openid_scope() {
+    let client = TestClient::new();
+    let (_, client_id, username, password) = setup_user_and_client(&client).await;
+    let response = client
+        .cognito_request(
+            "InitiateAuth",
+            json!({
+                "ClientId": client_id,
+                "AuthFlow": "USER_PASSWORD_AUTH",
+                "AuthParameters": {"USERNAME": username, "PASSWORD": password}
+            }),
+        )
+        .await;
+    let api_token = response["AuthenticationResult"]["AccessToken"]
+        .as_str()
+        .unwrap();
+    assert_eq!(
+        verify_access_token(api_token).unwrap().claims.scope,
+        "aws.cognito.signin.user.admin"
+    );
+    assert_userinfo_invalid_token(&client, api_token).await;
+
+    for (operation, request) in [
+        (
+            "InitiateAuth",
+            json!({
+                "ClientId": client_id,
+                "AuthFlow": "REFRESH_TOKEN_AUTH",
+                "AuthParameters": {"REFRESH_TOKEN": response["AuthenticationResult"]["RefreshToken"]}
+            }),
+        ),
+        (
+            "GetTokensFromRefreshToken",
+            json!({
+                "ClientId": client_id,
+                "RefreshToken": response["AuthenticationResult"]["RefreshToken"]
+            }),
+        ),
+    ] {
+        let refreshed = client.cognito_request(operation, request).await;
+        let token = refreshed["AuthenticationResult"]["AccessToken"]
+            .as_str()
+            .unwrap();
+        assert_eq!(
+            verify_access_token(token).unwrap().claims.scope,
+            "aws.cognito.signin.user.admin"
+        );
+        assert_userinfo_invalid_token(&client, token).await;
+    }
+
+    let tokens = oauth_tokens(&client, &client_id, &username, &password).await;
+    assert_userinfo_invalid_token(&client, tokens["id_token"].as_str().unwrap()).await;
+    let authorization = format!("bEaReR   {}", tokens["access_token"].as_str().unwrap());
+    let response = client
+        .get_with_headers("/oauth2/userInfo", &[("authorization", &authorization)])
+        .await;
+    assert_eq!(response.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn test_userinfo_rejects_malformed_authorization() {
+    let client = TestClient::new();
+    for headers in [
+        vec![],
+        vec![("authorization", "Basic invalid")],
+        vec![("authorization", "Bearer")],
+        vec![
+            ("authorization", "Bearer first"),
+            ("authorization", "Bearer second"),
+        ],
+    ] {
+        let response = client.get_with_headers("/oauth2/userInfo", &headers).await;
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(
+            response.json::<serde_json::Value>().await.unwrap()["error"],
+            "invalid_request"
+        );
+    }
+    assert_userinfo_invalid_token(&client, "malformed-jwt").await;
+}
+
+#[tokio::test]
+async fn test_disabling_user_permanently_revokes_existing_sessions() {
+    let client = TestClient::new();
+    let (pool_id, client_id, username, password) = setup_user_and_client(&client).await;
+    let first = oauth_tokens(&client, &client_id, &username, &password).await;
+    let second = oauth_tokens(&client, &client_id, &username, &password).await;
+    client
+        .cognito_request(
+            "AdminDisableUser",
+            json!({"UserPoolId": pool_id, "Username": username}),
+        )
+        .await;
+
+    for enabled in [false, true] {
+        if enabled {
+            client
+                .cognito_request(
+                    "AdminEnableUser",
+                    json!({"UserPoolId": pool_id, "Username": username}),
+                )
+                .await;
+        }
+        for tokens in [&first, &second] {
+            let access_token = tokens["access_token"].as_str().unwrap();
+            assert_userinfo_invalid_token(&client, access_token).await;
+            let (status, body) = client
+                .request("GetUser", json!({"AccessToken": access_token}))
+                .await;
+            assert_eq!(status, StatusCode::UNAUTHORIZED);
+            assert_eq!(body["__type"], "NotAuthorizedException");
+            let (status, body) = client
+                .request(
+                    "InitiateAuth",
+                    json!({
+                        "ClientId": client_id,
+                        "AuthFlow": "REFRESH_TOKEN_AUTH",
+                        "AuthParameters": {"REFRESH_TOKEN": tokens["refresh_token"]}
+                    }),
+                )
+                .await;
+            assert_eq!(status, StatusCode::UNAUTHORIZED);
+            assert_eq!(body["__type"], "NotAuthorizedException");
+            let refresh = client
+                .post_form(
+                    "/oauth2/token",
+                    &[
+                        ("grant_type", "refresh_token"),
+                        ("client_id", &client_id),
+                        ("refresh_token", tokens["refresh_token"].as_str().unwrap()),
+                    ],
+                )
+                .await;
+            assert_eq!(refresh.status(), StatusCode::BAD_REQUEST);
+            assert_eq!(
+                refresh.json::<serde_json::Value>().await.unwrap()["error"],
+                "invalid_grant"
+            );
+        }
+    }
+    // The revocation boundary uses millisecond timestamps.
+    tokio::time::sleep(std::time::Duration::from_millis(2)).await;
+    let fresh = oauth_tokens(&client, &client_id, &username, &password).await;
+    let response = client
+        .get_with_auth("/oauth2/userInfo", fresh["access_token"].as_str().unwrap())
+        .await;
+    assert_eq!(response.status(), StatusCode::OK);
+}

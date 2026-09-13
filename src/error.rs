@@ -1,6 +1,6 @@
 use axum::{
     Json,
-    http::StatusCode,
+    http::{HeaderValue, StatusCode, header},
     response::{IntoResponse, Response},
 };
 use serde::Serialize;
@@ -211,12 +211,25 @@ impl IntoResponse for AppError {
 
 impl IntoResponse for OAuthError {
     fn into_response(self) -> Response {
-        build_error_response(
-            StatusCode::BAD_REQUEST,
+        let invalid_token = self.error == "invalid_token";
+        let status = if invalid_token {
+            StatusCode::UNAUTHORIZED
+        } else {
+            StatusCode::BAD_REQUEST
+        };
+        let mut response = build_error_response(
+            status,
             ErrorFormat::OAuth,
             self.error,
             self.error_description,
-        )
+        );
+        if invalid_token {
+            response.headers_mut().insert(
+                header::WWW_AUTHENTICATE,
+                HeaderValue::from_static("Bearer error=\"invalid_token\""),
+            );
+        }
+        response
     }
 }
 

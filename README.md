@@ -88,6 +88,12 @@ client credentials grants. Confidential clients can authenticate with an
 Public clients must send `client_id` in the form body and can use the
 authorization code and refresh token grants.
 
+The `/oauth2/userInfo` endpoint requires an access token with the `openid`
+scope and rejects revoked tokens with HTTP 401. Disabling a user revokes their
+access and refresh tokens, which remain invalid after the account is re-enabled.
+User Pools API authentication and refresh requests grant the
+`aws.cognito.signin.user.admin` scope; use the OAuth endpoints for `openid` access.
+
 ### Admin Console
 
 A management UI for browsing user pools, users, clients, and groups:

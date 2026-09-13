@@ -805,19 +805,27 @@ pub async fn userinfo(
     State(storage): State<Storage>,
     headers: axum::http::HeaderMap,
 ) -> Result<Json<UserInfoResponse>, OAuthError> {
-    // Extract Bearer token from Authorization header
+    // Multiple credentials must not be resolved by silently selecting one.
+    if headers.get_all(header::AUTHORIZATION).iter().count() > 1 {
+        return Err(OAuthError {
+            error: "invalid_request".to_string(),
+            error_description: Some("Multiple Authorization headers are not allowed".to_string()),
+        });
+    }
     let auth_header = headers
         .get(header::AUTHORIZATION)
         .and_then(|v| v.to_str().ok())
         .ok_or_else(|| OAuthError {
-            error: "invalid_token".to_string(),
+            error: "invalid_request".to_string(),
             error_description: Some("Missing Authorization header".to_string()),
         })?;
 
     let token = auth_header
-        .strip_prefix("Bearer ")
+        .split_once(' ')
+        .filter(|(scheme, _)| scheme.eq_ignore_ascii_case("Bearer"))
+        .map(|(_, token)| token.trim_start_matches(' '))
         .ok_or_else(|| OAuthError {
-            error: "invalid_token".to_string(),
+            error: "invalid_request".to_string(),
             error_description: Some("Invalid Authorization header format".to_string()),
         })?;
 
@@ -826,6 +834,19 @@ pub async fn userinfo(
         error: "invalid_token".to_string(),
         error_description: Some(e),
     })?;
+
+    if token_data.claims.token_use != "access"
+        || !token_data
+            .claims
+            .scope
+            .split_whitespace()
+            .any(|scope| scope == "openid")
+    {
+        return Err(OAuthError {
+            error: "invalid_token".to_string(),
+            error_description: Some("An access token with openid scope is required".to_string()),
+        });
+    }
 
     let user_id = uuid::Uuid::parse_str(&token_data.claims.sub).map_err(|_| OAuthError {
         error: "invalid_token".to_string(),
@@ -836,6 +857,23 @@ pub async fn userinfo(
         error: "invalid_token".to_string(),
         error_description: Some("User not found".to_string()),
     })?;
+
+    if !user.enabled
+        || storage
+            .is_access_token_revoked(
+                &user_id,
+                token_data.claims.iat,
+                token_data.claims.cognitox_iat_ms,
+            )
+            .await
+    {
+        return Err(OAuthError {
+            error: "invalid_token".to_string(),
+            error_description: Some(
+                "Access token has been revoked or the user is disabled".to_string(),
+            ),
+        });
+    }
 
     let groups = storage.get_groups_for_user(&user_id).await;
 

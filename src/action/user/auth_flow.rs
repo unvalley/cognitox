@@ -518,7 +518,8 @@ pub(crate) async fn issue_authentication_result(
         client_id.as_str(),
         user_pool_id,
         &groups,
-        &client.allowed_oauth_scopes,
+        // User Pools API authentication grants only the user-admin scope.
+        &[],
         access_expiry,
     )
     .map_err(AppError::Internal)?;

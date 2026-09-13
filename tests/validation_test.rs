@@ -427,9 +427,9 @@ async fn test_refresh_token_disabled_user() {
         )
         .await;
 
-    assert_eq!(response.status(), 400);
+    assert_eq!(response.status(), 401);
     let body: serde_json::Value = response.json().await.unwrap();
-    assert_eq!(body["__type"], "UserDisabledException");
+    assert_eq!(body["__type"], "NotAuthorizedException");
 }
 
 // =============================================================================

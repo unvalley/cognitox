@@ -2,7 +2,6 @@
 //!
 //! <https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_AdminDisableUser.html>
 
-use chrono::Utc;
 use serde::Deserialize;
 use serde_json::{Value, json};
 
@@ -28,15 +27,15 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
         .await
         .ok_or(AppError::UserPoolNotFound)?;
 
-    let mut user = storage
+    let user = storage
         .get_user_by_username(&req.user_pool_id, &req.username)
         .await
         .ok_or(AppError::UserNotFound)?;
 
-    user.enabled = false;
-    user.last_modified_date = Utc::now();
-
-    storage.update_user(user).await;
+    storage
+        .disable_user(&user.id)
+        .await
+        .ok_or(AppError::UserNotFound)?;
 
     Ok(json!({}))
 }

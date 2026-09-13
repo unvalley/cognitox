@@ -995,6 +995,18 @@ impl Storage {
         store.users.get_mut(id).map(f)
     }
 
+    /// Disable the current user record and revoke its sessions under one lock.
+    pub async fn disable_user(&self, id: &UserId) -> Option<()> {
+        let mut store = self.principal_store.write().await;
+        let now = chrono::Utc::now();
+        let user = store.users.get_mut(id)?;
+        user.enabled = false;
+        user.last_modified_date = now;
+        store.refresh_tokens.retain(|_, token| &token.user_id != id);
+        store.access_tokens_invalid_before.insert(*id, now);
+        Some(())
+    }
+
     pub async fn delete_user(&self, id: &UserId) -> Option<User> {
         let mut principal_store = self.principal_store.write().await;
         let mut group_store = self.group_store.write().await;

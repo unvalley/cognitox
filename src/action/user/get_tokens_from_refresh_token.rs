@@ -90,7 +90,8 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
         req.client_id.as_str(),
         &client.user_pool_id,
         &groups,
-        &client.allowed_oauth_scopes,
+        // OAuth scopes are granted through the OAuth endpoints, not this API.
+        &[],
         access_expiry,
     )
     .map_err(AppError::Internal)?;
