@@ -67,7 +67,7 @@ Tests use `tower::ServiceExt::oneshot` to test handlers directly without startin
 
 ## Implementation Coverage
 
-See `COVERAGE.md` for the list of implemented/unimplemented Cognito operations. All 119 cognito-idp operations are routed; currently 101/119 (85%) are spec-aligned.
+See `COVERAGE.md` for the list of implemented/unimplemented Cognito operations. All 119 cognito-idp operations are routed; currently 102/119 (86%) are spec-aligned.
 
 ## Git Workflow
 

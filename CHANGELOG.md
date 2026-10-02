@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - The generated JWT signing key is persisted in the data file, so tokens stay valid across restarts.
+- `ListUsers` supports `Filter`, `PaginationToken`, and `AttributesToGet`, and validates `Limit`.
 - Tokens include `jti`, `origin_jti`, and `event_id` claims, and access tokens include `version`.
 - `/oauth2/userInfo` no longer returns `phone_number_verified` for users without a phone number.
 

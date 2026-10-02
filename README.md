@@ -150,7 +150,7 @@ COGNITOX_STORAGE_MODE=memory cargo run
 
 ## API Coverage
 
-cognitox routes all 119 cognito-idp operations, with **101 (85%) currently spec-aligned**. The remaining 18 have known partial functionality or limitations (see below).
+cognitox routes all 119 cognito-idp operations, with **102 (86%) currently spec-aligned**. The remaining 17 have known partial functionality or limitations (see below).
 See [COVERAGE.md](COVERAGE.md) for the full list with links to each handler. If you find any missing or incorrectly implemented operations, please open an issue.
 
 ## Spec Drift Check

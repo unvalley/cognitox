@@ -6,7 +6,7 @@ Based on [Amazon Cognito User Pools API Reference](https://docs.aws.amazon.com/c
 
 All 119 Cognito IDP operations are routed to handlers.
 
-85% spec-aligned (101/119). In the operation lists below, `[x]` means the
+86% spec-aligned (102/119). In the operation lists below, `[x]` means the
 handler is intended to be spec-aligned enough for normal SDK use; `[ ]` means
 the operation is routed but still partial, simplified, or intentionally limited
 for emulator use.
@@ -63,7 +63,7 @@ for emulator use.
 - [x] DeleteUser ([spec](https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_DeleteUser.html), [cognitox](src/action/user/delete_user.rs))
 - [x] DeleteUserAttributes ([spec](https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_DeleteUserAttributes.html), [cognitox](src/action/user/delete_user_attributes.rs))
 - [x] GetUser ([spec](https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_GetUser.html), [cognitox](src/action/user/get_user.rs))
-- [ ] ListUsers ([spec](https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_ListUsers.html), [cognitox](src/action/user/list_users.rs))
+- [x] ListUsers ([spec](https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_ListUsers.html), [cognitox](src/action/user/list_users.rs))
 - [x] UpdateUserAttributes ([spec](https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_UpdateUserAttributes.html), [cognitox](src/action/user/update_user_attributes.rs))
 - [x] VerifyUserAttribute ([spec](https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_VerifyUserAttribute.html), [cognitox](src/action/user/verify_user_attribute.rs))
 

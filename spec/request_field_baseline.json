@@ -849,6 +849,17 @@
         "extra": []
       }
     },
+    "ListUsers": {
+      "path": "src/action/user/list_users.rs",
+      "request": {
+        "missing": [],
+        "extra": []
+      },
+      "response": {
+        "missing": [],
+        "extra": []
+      }
+    },
     "ListUsersInGroup": {
       "path": "src/action/group/list_users_in_group.rs",
       "request": {
