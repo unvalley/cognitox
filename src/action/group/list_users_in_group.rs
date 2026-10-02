@@ -6,6 +6,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 use crate::{
+    action::user::helpers::build_user_attributes,
     error::{AppError, Result},
     storage::Storage,
     types::UserPoolId,
@@ -75,12 +76,7 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
                 "UserStatus": u.user_status,
                 "UserCreateDate": u.creation_date.timestamp(),
                 "UserLastModifiedDate": u.last_modified_date.timestamp(),
-                "Attributes": u.attributes.iter().map(|a| {
-                    json!({
-                        "Name": a.name,
-                        "Value": a.value
-                    })
-                }).collect::<Vec<_>>()
+                "Attributes": build_user_attributes(u)
             })
         })
         .collect();
@@ -160,7 +156,8 @@ mod tests {
             json!({
                 "UserPoolId": pool_id,
                 "Username": "testuser",
-                "TemporaryPassword": "TempPass123!"
+                "TemporaryPassword": "TempPass123!",
+                "UserAttributes": [{"Name": "email", "Value": "test@example.com"}]
             }),
         )
         .await
@@ -190,6 +187,14 @@ mod tests {
         let body = result.unwrap();
         assert_eq!(body["Users"].as_array().unwrap().len(), 1);
         assert_eq!(body["Users"][0]["Username"], "testuser");
+        let attribute_names: Vec<&str> = body["Users"][0]["Attributes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|attribute| attribute["Name"].as_str().unwrap())
+            .collect();
+        assert!(attribute_names.contains(&"sub"));
+        assert!(attribute_names.contains(&"email"));
     }
 
     #[tokio::test]
