@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- **Breaking:** JWT `iss` is now `<COGNITOX_ISSUER_BASE_URL>/<user-pool-id>`, matching Cognito's per-pool issuer. Per-pool discovery and JWKS are served at `/<user-pool-id>/.well-known/openid-configuration` and `/<user-pool-id>/.well-known/jwks.json`. Access tokens whose `iss` does not match the user's pool are rejected.
+- The JWT `kid` defaults to the RFC 7638 JWK thumbprint instead of a random UUID.
+
+### Fixed
+
+- The generated JWT signing key is persisted in the data file, so tokens stay valid across restarts.
+- Tokens include `jti`, `origin_jti`, and `event_id` claims, and access tokens include `version`.
+- `/oauth2/userInfo` no longer returns `phone_number_verified` for users without a phone number.
+
 ## [0.1.0] - 2026-04-04
 
 ### Added

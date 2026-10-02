@@ -1,7 +1,12 @@
 use std::{net::SocketAddr, path::PathBuf, sync::Arc};
 
 use bpaf::Bpaf;
-use cognitox::{api, config::StorageConfig, jwt::set_issuer_base_url, storage::Storage};
+use cognitox::{
+    api,
+    config::StorageConfig,
+    jwt::{init_jwt_keys, set_issuer_base_url},
+    storage::Storage,
+};
 use tokio::signal;
 use tower_http::{
     cors::{Any, CorsLayer},
@@ -122,6 +127,16 @@ async fn main() {
     }));
 
     tracing::info!("Storage backend: {}", storage.backend_description());
+
+    // Reuse the persisted signing key so tokens stay valid across restarts.
+    match init_jwt_keys(storage.jwt_private_key_pem().as_deref()) {
+        Ok(Some(private_key_pem)) => storage.set_jwt_private_key_pem(private_key_pem),
+        Ok(None) => tracing::info!("Using JWT signing key from COGNITOX_JWT_* configuration"),
+        Err(e) => {
+            tracing::error!("Failed to initialize JWT signing key: {e}");
+            std::process::exit(1);
+        }
+    }
 
     // Build router
     let app = api::create_router((*storage).clone())

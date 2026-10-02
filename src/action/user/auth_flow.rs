@@ -6,7 +6,7 @@ use uuid::Uuid;
 use crate::{
     error::{AppError, Result},
     jwt::{
-        generate_access_token, generate_id_token, resolve_access_token_expiry,
+        TokenOrigin, generate_access_token, generate_id_token, resolve_access_token_expiry,
         resolve_id_token_expiry, resolve_refresh_token_expiry,
     },
     storage::Storage,
@@ -498,13 +498,21 @@ pub(crate) async fn complete_software_token_mfa_challenge(
     Ok(user.clone())
 }
 
+/// How an authentication result relates to refresh tokens.
+pub(crate) enum RefreshTokenMode<'a> {
+    /// Issue a new refresh token with the result.
+    IssueNew,
+    /// The result was obtained with this existing refresh token.
+    Existing(&'a str),
+}
+
 pub(crate) async fn issue_authentication_result(
     storage: &Storage,
     client: &UserPoolClient,
     client_id: &ClientId,
     user_pool_id: &UserPoolId,
     user: &User,
-    include_refresh_token: bool,
+    refresh_token_mode: RefreshTokenMode<'_>,
     record_sign_in_event: bool,
 ) -> Result<Value> {
     let groups = storage.get_groups_for_user(&user.id).await;
@@ -513,6 +521,14 @@ pub(crate) async fn issue_authentication_result(
     let id_expiry = resolve_id_token_expiry(client);
     let refresh_expiry = resolve_refresh_token_expiry(client);
 
+    let (origin, new_refresh_token) = match refresh_token_mode {
+        RefreshTokenMode::IssueNew => {
+            let token = Uuid::new_v4().to_string();
+            (TokenOrigin::for_refresh_token(&token), Some(token))
+        }
+        RefreshTokenMode::Existing(token) => (TokenOrigin::for_refresh_token(token), None),
+    };
+
     let access_token = generate_access_token(
         user,
         client_id.as_str(),
@@ -520,11 +536,19 @@ pub(crate) async fn issue_authentication_result(
         &groups,
         // User Pools API authentication grants only the user-admin scope.
         &[],
+        &origin,
         access_expiry,
     )
     .map_err(AppError::Internal)?;
-    let id_token = generate_id_token(user, client_id.as_str(), user_pool_id, &groups, id_expiry)
-        .map_err(AppError::Internal)?;
+    let id_token = generate_id_token(
+        user,
+        client_id.as_str(),
+        user_pool_id,
+        &groups,
+        &origin,
+        id_expiry,
+    )
+    .map_err(AppError::Internal)?;
 
     let mut result = json!({
         "AccessToken": access_token,
@@ -533,8 +557,7 @@ pub(crate) async fn issue_authentication_result(
         "TokenType": "Bearer"
     });
 
-    if include_refresh_token {
-        let refresh_token = Uuid::new_v4().to_string();
+    if let Some(refresh_token) = new_refresh_token {
         storage
             .save_refresh_token(RefreshToken {
                 token: refresh_token.clone(),

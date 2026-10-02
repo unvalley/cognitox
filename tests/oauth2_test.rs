@@ -178,9 +178,48 @@ async fn test_jwks_endpoint() {
 }
 
 #[tokio::test]
+async fn test_user_pool_discovery_and_jwks() {
+    let client = TestClient::new();
+    let (pool_id, _, _, _) = setup_user_and_client(&client).await;
+
+    let response = client
+        .get(&format!("/{pool_id}/.well-known/openid-configuration"))
+        .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let discovery: serde_json::Value = response.json().await.unwrap();
+    let issuer = discovery["issuer"].as_str().unwrap();
+    assert!(issuer.ends_with(&format!("/{pool_id}")));
+    assert_eq!(
+        discovery["jwks_uri"],
+        format!("{issuer}/.well-known/jwks.json")
+    );
+
+    let response = client
+        .get(&format!("/{pool_id}/.well-known/jwks.json"))
+        .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let jwks: serde_json::Value = response.json().await.unwrap();
+    let root_jwks: serde_json::Value = client
+        .get("/.well-known/jwks.json")
+        .await
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(jwks, root_jwks);
+
+    for path in [
+        "/us-east-1_missing/.well-known/openid-configuration",
+        "/us-east-1_missing/.well-known/jwks.json",
+        "/not-a-pool/.well-known/jwks.json",
+    ] {
+        assert_eq!(client.get(path).await.status(), StatusCode::NOT_FOUND);
+    }
+}
+
+#[tokio::test]
 async fn test_authorization_code_flow() {
     let client = TestClient::new();
-    let (_, client_id, username, password) = setup_user_and_client(&client).await;
+    let (pool_id, client_id, username, password) = setup_user_and_client(&client).await;
 
     // Request authorization code with direct auth (for testing)
     let auth_url = format!(
@@ -233,7 +272,7 @@ async fn test_authorization_code_flow() {
     assert_eq!(token_body["token_type"], "Bearer");
 
     let discovery: serde_json::Value = client
-        .get("/.well-known/openid-configuration")
+        .get(&format!("/{pool_id}/.well-known/openid-configuration"))
         .await
         .json()
         .await
@@ -241,6 +280,35 @@ async fn test_authorization_code_flow() {
     let id_token = token_body["id_token"].as_str().unwrap();
     let claims = verify_id_token(id_token, &client_id).unwrap().claims;
     assert_eq!(claims.iss, discovery["issuer"].as_str().unwrap());
+
+    let access_token = token_body["access_token"].as_str().unwrap();
+    let access_claims = verify_access_token(access_token).unwrap().claims;
+    assert_eq!(access_claims.iss, claims.iss);
+    assert_eq!(
+        access_claims.origin_jti.as_deref(),
+        Some(claims.origin_jti.as_str())
+    );
+
+    // Refreshed tokens keep the origin_jti of the refresh token's session.
+    let refresh_token = token_body["refresh_token"].as_str().unwrap();
+    let refreshed: serde_json::Value = client
+        .post_form(
+            "/oauth2/token",
+            &[
+                ("grant_type", "refresh_token"),
+                ("client_id", &client_id),
+                ("refresh_token", refresh_token),
+            ],
+        )
+        .await
+        .json()
+        .await
+        .unwrap();
+    let refreshed_claims = verify_access_token(refreshed["access_token"].as_str().unwrap())
+        .unwrap()
+        .claims;
+    assert_eq!(refreshed_claims.origin_jti, access_claims.origin_jti);
+    assert_ne!(refreshed_claims.jti, access_claims.jti);
 }
 
 #[tokio::test]
@@ -700,6 +768,9 @@ async fn test_userinfo_endpoint() {
     assert!(userinfo_body["sub"].as_str().is_some());
     assert_eq!(userinfo_body["username"], "testuser");
     assert_eq!(userinfo_body["email"], "test@example.com");
+    assert_eq!(userinfo_body["email_verified"], true);
+    assert!(userinfo_body.get("phone_number").is_none());
+    assert!(userinfo_body.get("phone_number_verified").is_none());
 }
 
 #[tokio::test]

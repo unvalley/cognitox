@@ -9,7 +9,7 @@ use std::{
     fs,
     io::Write,
     path::{Path, PathBuf},
-    sync::Arc,
+    sync::{Arc, Mutex},
     time::Duration,
 };
 
@@ -41,7 +41,7 @@ pub(crate) trait PersistenceBackend: Send + Sync + 'static {
     /// Save the given state snapshot.
     #[cfg(test)]
     fn save(&self, state: &PersistedStorageState) -> Result<(), String> {
-        let snapshot = encode_snapshot(state)?;
+        let snapshot = encode_snapshot(state, state.jwt_private_key_pem.clone())?;
         self.save_snapshot(&snapshot)
     }
 
@@ -127,6 +127,7 @@ pub struct Storage {
     principal_store: Arc<RwLock<PrincipalStore>>,
     group_store: Arc<RwLock<GroupStore>>,
     branding_store: Arc<RwLock<BrandingStore>>,
+    jwt_private_key_pem: Arc<Mutex<Option<String>>>,
     backend: Arc<dyn PersistenceBackend>,
 }
 
@@ -197,6 +198,10 @@ pub(crate) struct PersistedStorageState {
     principal_store: PrincipalStore,
     group_store: GroupStore,
     branding_store: BrandingStore,
+    /// Kept in the snapshot envelope rather than the bincode payload, so
+    /// snapshots written before the key was persisted still load.
+    #[serde(skip)]
+    jwt_private_key_pem: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -212,6 +217,9 @@ struct PersistedSnapshot {
     version: u32,
     encoding: String,
     payload: String,
+    /// PKCS#1 PEM of the JWT signing key, so issued tokens survive restarts.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    jwt_private_key_pem: Option<String>,
 }
 
 const SNAPSHOT_VERSION: u32 = 1;
@@ -239,17 +247,23 @@ fn decode_snapshot(content: &str) -> Result<PersistedStorageState, String> {
         .decode(snapshot.payload.as_bytes())
         .map_err(|e| format!("Invalid snapshot payload encoding: {e}"))?;
 
-    bincode::deserialize::<PersistedStorageState>(&payload)
-        .map_err(|e| format!("Failed to deserialize snapshot payload: {e}"))
+    let mut state = bincode::deserialize::<PersistedStorageState>(&payload)
+        .map_err(|e| format!("Failed to deserialize snapshot payload: {e}"))?;
+    state.jwt_private_key_pem = snapshot.jwt_private_key_pem;
+    Ok(state)
 }
 
-fn encode_snapshot<T: Serialize>(state: &T) -> Result<Vec<u8>, String> {
+fn encode_snapshot<T: Serialize>(
+    state: &T,
+    jwt_private_key_pem: Option<String>,
+) -> Result<Vec<u8>, String> {
     let payload =
         bincode::serialize(state).map_err(|e| format!("Failed to serialize storage state: {e}"))?;
     let snapshot = PersistedSnapshot {
         version: SNAPSHOT_VERSION,
         encoding: SNAPSHOT_ENCODING.to_string(),
         payload: BASE64_STANDARD.encode(payload),
+        jwt_private_key_pem,
     };
 
     serde_json::to_vec_pretty(&snapshot).map_err(|e| format!("Failed to encode snapshot: {e}"))
@@ -304,6 +318,7 @@ impl Storage {
             principal_store: Arc::new(RwLock::new(initial_state.principal_store)),
             group_store: Arc::new(RwLock::new(initial_state.group_store)),
             branding_store: Arc::new(RwLock::new(initial_state.branding_store)),
+            jwt_private_key_pem: Arc::new(Mutex::new(initial_state.jwt_private_key_pem)),
             backend,
         };
         storage.start_auto_persist_loop();
@@ -332,6 +347,7 @@ impl Storage {
         let principal_store = Arc::downgrade(&self.principal_store);
         let group_store = Arc::downgrade(&self.group_store);
         let branding_store = Arc::downgrade(&self.branding_store);
+        let jwt_private_key_pem = Arc::clone(&self.jwt_private_key_pem);
         let backend = Arc::clone(&self.backend);
         handle.spawn(async move {
             let mut last_snapshot: Option<Vec<u8>> = None;
@@ -354,6 +370,7 @@ impl Storage {
                     &principal_store,
                     &group_store,
                     &branding_store,
+                    &jwt_private_key_pem,
                 )
                 .await
                 {
@@ -383,18 +400,26 @@ impl Storage {
         principal_store: &RwLock<PrincipalStore>,
         group_store: &RwLock<GroupStore>,
         branding_store: &RwLock<BrandingStore>,
+        jwt_private_key_pem: &Mutex<Option<String>>,
     ) -> Result<Vec<u8>, String> {
+        let jwt_private_key_pem = jwt_private_key_pem
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
         let pool_store = pool_store.read().await;
         let principal_store = principal_store.read().await;
         let group_store = group_store.read().await;
         let branding_store = branding_store.read().await;
 
-        encode_snapshot(&PersistedStorageStateRef {
-            pool_store: &pool_store,
-            principal_store: &principal_store,
-            group_store: &group_store,
-            branding_store: &branding_store,
-        })
+        encode_snapshot(
+            &PersistedStorageStateRef {
+                pool_store: &pool_store,
+                principal_store: &principal_store,
+                group_store: &group_store,
+                branding_store: &branding_store,
+            },
+            jwt_private_key_pem,
+        )
     }
 
     /// Flush in-memory state to the persistence backend immediately.
@@ -404,6 +429,7 @@ impl Storage {
             &self.principal_store,
             &self.group_store,
             &self.branding_store,
+            &self.jwt_private_key_pem,
         )
         .await?;
         self.backend.save_snapshot(&snapshot)
@@ -412,6 +438,22 @@ impl Storage {
     /// Returns a description of the active storage backend.
     pub fn backend_description(&self) -> &str {
         self.backend.describe()
+    }
+
+    /// JWT signing key restored from the persisted snapshot, if any.
+    pub fn jwt_private_key_pem(&self) -> Option<String> {
+        self.jwt_private_key_pem
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
+    }
+
+    /// Persist the JWT signing key together with the emulator state.
+    pub fn set_jwt_private_key_pem(&self, pem: String) {
+        *self
+            .jwt_private_key_pem
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = Some(pem);
     }
 
     // ==================== User Pool Operations ====================
@@ -1942,6 +1984,35 @@ mod tests {
         let pools = loaded.list_user_pools().await;
         assert_eq!(pools.len(), 1);
         assert_eq!(pools[0].name, "compat-pool");
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[tokio::test]
+    async fn test_persistence_roundtrip_jwt_private_key() {
+        let path = temp_data_file();
+
+        let storage = Storage::with_config(StorageConfig::persistent(path.clone())).unwrap();
+        assert_eq!(storage.jwt_private_key_pem(), None);
+        storage.set_jwt_private_key_pem("test-pem".to_string());
+        storage.flush_persistence().await.unwrap();
+
+        let loaded = Storage::with_config(StorageConfig::persistent(path.clone())).unwrap();
+        assert_eq!(loaded.jwt_private_key_pem().as_deref(), Some("test-pem"));
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn test_snapshot_without_jwt_private_key_loads() {
+        let path = temp_data_file();
+        let snapshot = encode_snapshot(&PersistedStorageState::default(), None).unwrap();
+        let envelope: Value = serde_json::from_slice(&snapshot).unwrap();
+        assert!(envelope.get("jwt_private_key_pem").is_none());
+        fs::write(&path, &snapshot).unwrap();
+
+        let loaded = Storage::with_config(StorageConfig::persistent(path.clone())).unwrap();
+        assert_eq!(loaded.jwt_private_key_pem(), None);
 
         let _ = fs::remove_file(path);
     }

@@ -14,11 +14,12 @@ use rsa::pkcs8::LineEnding;
 use rsa::traits::PublicKeyParts;
 use rsa::{RsaPrivateKey, RsaPublicKey};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::{fs, sync::OnceLock};
 
 use crate::types::{ClientId, TokenValidityUnit, User, UserPoolClient, UserPoolId};
 
-/// Global JWT key pair (generated once at startup)
+/// Global JWT key pair (configured, restored, or generated once at startup)
 static JWT_KEYS: OnceLock<JwtKeys> = OnceLock::new();
 static JWT_ISSUER_BASE_URL: OnceLock<String> = OnceLock::new();
 const DEFAULT_ISSUER_BASE_URL: &str = "http://localhost:9229";
@@ -33,10 +34,12 @@ pub struct JwtKeys {
 }
 
 impl JwtKeys {
+    /// Build signing keys. Without an explicit `key_id`, the RFC 7638 JWK
+    /// thumbprint is used so the `kid` stays stable for the same key pair.
     fn from_rsa_keys(
         private_key: RsaPrivateKey,
         public_key: RsaPublicKey,
-        key_id: String,
+        key_id: Option<String>,
     ) -> Result<Self, String> {
         let private_pem = private_key
             .to_pkcs1_pem(LineEnding::LF)
@@ -50,15 +53,16 @@ impl JwtKeys {
         let decoding_key = DecodingKey::from_rsa_pem(public_pem.as_bytes())
             .map_err(|e| format!("Invalid public key PEM: {e}"))?;
 
-        let n_bytes = public_key.n().to_bytes_be();
-        let e_bytes = public_key.e().to_bytes_be();
+        let public_key_n = URL_SAFE_NO_PAD.encode(public_key.n().to_bytes_be());
+        let public_key_e = URL_SAFE_NO_PAD.encode(public_key.e().to_bytes_be());
+        let key_id = key_id.unwrap_or_else(|| rsa_jwk_thumbprint(&public_key_n, &public_key_e));
 
         Ok(Self {
             encoding_key,
             decoding_key,
             key_id,
-            public_key_n: URL_SAFE_NO_PAD.encode(&n_bytes),
-            public_key_e: URL_SAFE_NO_PAD.encode(&e_bytes),
+            public_key_n,
+            public_key_e,
         })
     }
 
@@ -101,25 +105,72 @@ impl JwtKeys {
             RsaPublicKey::from(&private_key)
         };
 
-        let key_id = std::env::var("COGNITOX_JWT_KEY_ID")
-            .unwrap_or_else(|_| uuid::Uuid::new_v4().to_string());
+        let key_id = std::env::var("COGNITOX_JWT_KEY_ID").ok();
 
         Self::from_rsa_keys(private_key, public_key, key_id).map(Some)
     }
 
+    /// Restore the key pair from a persisted PKCS#1 PEM, or generate a new one.
+    /// Returns the keys together with the private key PEM to persist.
+    fn restore_or_generate(
+        persisted_private_key_pem: Option<&str>,
+    ) -> Result<(Self, String), String> {
+        let private_key = match persisted_private_key_pem {
+            Some(pem) => RsaPrivateKey::from_pkcs1_pem(pem)
+                .map_err(|e| format!("Failed to parse persisted JWT private key: {e}"))?,
+            None => generate_private_key(),
+        };
+        let private_pem = private_key
+            .to_pkcs1_pem(LineEnding::LF)
+            .map_err(|e| format!("Failed to encode private key: {e}"))?
+            .to_string();
+        let public_key = RsaPublicKey::from(&private_key);
+
+        Ok((
+            Self::from_rsa_keys(private_key, public_key, None)?,
+            private_pem,
+        ))
+    }
+
     /// Generate a new RSA key pair
     fn generate() -> Self {
-        let mut rng = rand::thread_rng();
-
-        // Generate 2048-bit RSA key
-        let private_key =
-            RsaPrivateKey::new(&mut rng, 2048).expect("Failed to generate RSA key pair");
+        let private_key = generate_private_key();
         let public_key = RsaPublicKey::from(&private_key);
-        let key_id = uuid::Uuid::new_v4().to_string();
 
-        Self::from_rsa_keys(private_key, public_key, key_id)
+        Self::from_rsa_keys(private_key, public_key, None)
             .expect("Failed to create JWT keys from generated RSA key pair")
     }
+}
+
+fn generate_private_key() -> RsaPrivateKey {
+    let mut rng = rand::thread_rng();
+    RsaPrivateKey::new(&mut rng, 2048).expect("Failed to generate RSA key pair")
+}
+
+/// RFC 7638 JWK thumbprint of an RSA public key.
+fn rsa_jwk_thumbprint(n: &str, e: &str) -> String {
+    let canonical = format!(r#"{{"e":"{e}","kty":"RSA","n":"{n}"}}"#);
+    URL_SAFE_NO_PAD.encode(Sha256::digest(canonical.as_bytes()))
+}
+
+/// Initialize the global JWT keys at startup.
+///
+/// Keys configured through `COGNITOX_JWT_*` take precedence. Otherwise the key
+/// restored from persisted state is reused, or a new one is generated, so that
+/// tokens stay verifiable across restarts. Returns the private key PEM to
+/// persist, or `None` when the key is configured externally.
+pub fn init_jwt_keys(persisted_private_key_pem: Option<&str>) -> Result<Option<String>, String> {
+    let (keys, private_pem) = match JwtKeys::from_env()? {
+        Some(keys) => (keys, None),
+        None => {
+            let (keys, pem) = JwtKeys::restore_or_generate(persisted_private_key_pem)?;
+            (keys, Some(pem))
+        }
+    };
+    JWT_KEYS
+        .set(keys)
+        .map_err(|_| "JWT keys have already been initialized".to_string())?;
+    Ok(private_pem)
 }
 
 /// Get or initialize the global JWT keys
@@ -152,6 +203,49 @@ pub fn issuer_base_url() -> String {
         .unwrap_or_else(|| DEFAULT_ISSUER_BASE_URL.to_string())
 }
 
+/// Return the `iss` claim for tokens of a user pool, mirroring Cognito's
+/// `https://cognito-idp.<region>.amazonaws.com/<user-pool-id>` format.
+pub fn issuer_for_user_pool(user_pool_id: &UserPoolId) -> String {
+    format!("{}/{}", issuer_base_url(), user_pool_id)
+}
+
+/// Identifiers shared by the tokens issued for one authentication.
+#[derive(Debug, Clone)]
+pub struct TokenOrigin {
+    origin_jti: String,
+    event_id: String,
+}
+
+impl TokenOrigin {
+    /// Origin for tokens issued without a refresh token.
+    pub fn new() -> Self {
+        Self {
+            origin_jti: uuid::Uuid::new_v4().to_string(),
+            event_id: uuid::Uuid::new_v4().to_string(),
+        }
+    }
+
+    /// Origin bound to a refresh token, so `origin_jti` stays the same for all
+    /// tokens obtained with it, as in Cognito.
+    pub fn for_refresh_token(refresh_token: &str) -> Self {
+        let digest = Sha256::digest(refresh_token.as_bytes());
+        let mut bytes = [0u8; 16];
+        bytes.copy_from_slice(&digest[..16]);
+        Self {
+            origin_jti: uuid::Builder::from_random_bytes(bytes)
+                .into_uuid()
+                .to_string(),
+            event_id: uuid::Uuid::new_v4().to_string(),
+        }
+    }
+}
+
+impl Default for TokenOrigin {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Claims for ID Token
 #[derive(Debug, Serialize, Deserialize)]
 pub struct IdTokenClaims {
@@ -163,6 +257,12 @@ pub struct IdTokenClaims {
     pub exp: i64,
     pub auth_time: i64,
     pub token_use: String,
+    #[serde(default)]
+    pub jti: String,
+    #[serde(default)]
+    pub origin_jti: String,
+    #[serde(default)]
+    pub event_id: String,
 
     // Cognito-specific claims
     #[serde(skip_serializing_if = "Option::is_none", default)]
@@ -196,6 +296,14 @@ pub struct AccessTokenClaims {
     pub auth_time: i64,
     pub token_use: String,
     pub client_id: String,
+    #[serde(default)]
+    pub version: u32,
+    #[serde(default)]
+    pub jti: String,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub origin_jti: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub event_id: Option<String>,
 
     // Cognito-specific claims
     #[serde(
@@ -208,12 +316,16 @@ pub struct AccessTokenClaims {
     pub username: String,
 }
 
+/// Cognito access token format version.
+const ACCESS_TOKEN_VERSION: u32 = 2;
+
 /// Generate ID Token
 pub fn generate_id_token(
     user: &User,
     client_id: &str,
-    _user_pool_id: &UserPoolId,
+    user_pool_id: &UserPoolId,
     groups: &[String],
+    origin: &TokenOrigin,
     expiry: Duration,
 ) -> Result<String, String> {
     let keys = get_jwt_keys();
@@ -223,11 +335,14 @@ pub fn generate_id_token(
     let claims = IdTokenClaims {
         sub: user.id.to_string(),
         aud: client_id.to_string(),
-        iss: issuer_base_url(),
+        iss: issuer_for_user_pool(user_pool_id),
         iat: now.timestamp(),
         exp: (now + expiry).timestamp(),
         auth_time,
         token_use: "id".to_string(),
+        jti: uuid::Uuid::new_v4().to_string(),
+        origin_jti: origin.origin_jti.clone(),
+        event_id: origin.event_id.clone(),
         email: user.email.clone(),
         email_verified: user.email.as_ref().map(|_| true),
         phone_number: user.phone_number.clone(),
@@ -247,9 +362,10 @@ pub fn generate_id_token(
 pub fn generate_access_token(
     user: &User,
     client_id: &str,
-    _user_pool_id: &UserPoolId,
+    user_pool_id: &UserPoolId,
     groups: &[String],
     scopes: &[String],
+    origin: &TokenOrigin,
     expiry: Duration,
 ) -> Result<String, String> {
     let keys = get_jwt_keys();
@@ -264,13 +380,17 @@ pub fn generate_access_token(
 
     let claims = AccessTokenClaims {
         sub: user.id.to_string(),
-        iss: issuer_base_url(),
+        iss: issuer_for_user_pool(user_pool_id),
         iat: now.timestamp(),
         cognitox_iat_ms: Some(now.timestamp_millis()),
         exp: (now + expiry).timestamp(),
         auth_time,
         token_use: "access".to_string(),
         client_id: client_id.to_string(),
+        version: ACCESS_TOKEN_VERSION,
+        jti: uuid::Uuid::new_v4().to_string(),
+        origin_jti: Some(origin.origin_jti.clone()),
+        event_id: Some(origin.event_id.clone()),
         cognito_groups: groups.to_vec(),
         scope,
         username: user.username.clone(),
@@ -286,6 +406,7 @@ pub fn generate_access_token(
 /// Generate an OAuth client credentials access token.
 pub fn generate_client_credentials_access_token(
     client_id: &ClientId,
+    user_pool_id: &UserPoolId,
     scopes: &[String],
     expiry: Duration,
 ) -> Result<String, String> {
@@ -295,13 +416,17 @@ pub fn generate_client_credentials_access_token(
 
     let claims = AccessTokenClaims {
         sub: client_id.to_string(),
-        iss: issuer_base_url(),
+        iss: issuer_for_user_pool(user_pool_id),
         iat: now.timestamp(),
         cognitox_iat_ms: Some(now.timestamp_millis()),
         exp: (now + expiry).timestamp(),
         auth_time: now.timestamp(),
         token_use: "access".to_string(),
         client_id: client_id.to_string(),
+        version: ACCESS_TOKEN_VERSION,
+        jti: uuid::Uuid::new_v4().to_string(),
+        origin_jti: None,
+        event_id: None,
         cognito_groups: Vec::new(),
         scope: scopes.join(" "),
         username: client_id.to_string(),
@@ -452,18 +577,26 @@ mod tests {
         let client_id = "test_client_id";
         let groups = vec!["admin".to_string()];
 
+        let origin = TokenOrigin::new();
         let access_token = generate_access_token(
             &user,
             client_id,
             &user_pool_id,
             &groups,
             &[],
+            &origin,
             Duration::hours(1),
         )
         .expect("Failed to generate access token");
-        let id_token =
-            generate_id_token(&user, client_id, &user_pool_id, &groups, Duration::hours(1))
-                .expect("Failed to generate ID token");
+        let id_token = generate_id_token(
+            &user,
+            client_id,
+            &user_pool_id,
+            &groups,
+            &origin,
+            Duration::hours(1),
+        )
+        .expect("Failed to generate ID token");
 
         // Verify tokens
         let access_result = verify_access_token(&access_token);
@@ -471,6 +604,9 @@ mod tests {
         let access_claims = access_result.unwrap().claims;
         assert_eq!(access_claims.sub, user.id.to_string());
         assert_eq!(access_claims.token_use, "access");
+        assert_eq!(access_claims.iss, issuer_for_user_pool(&user_pool_id));
+        assert_eq!(access_claims.version, ACCESS_TOKEN_VERSION);
+        assert!(!access_claims.jti.is_empty());
 
         let id_result = verify_id_token(&id_token, client_id);
         assert!(id_result.is_ok());
@@ -478,6 +614,58 @@ mod tests {
         assert_eq!(id_claims.sub, user.id.to_string());
         assert_eq!(id_claims.token_use, "id");
         assert_eq!(id_claims.email, Some("test@example.com".to_string()));
+        assert_eq!(id_claims.iss, access_claims.iss);
+        assert_ne!(id_claims.jti, access_claims.jti);
+        assert_eq!(
+            Some(&id_claims.origin_jti),
+            access_claims.origin_jti.as_ref()
+        );
+        assert_eq!(Some(&id_claims.event_id), access_claims.event_id.as_ref());
+    }
+
+    #[test]
+    fn test_token_origin_is_stable_per_refresh_token() {
+        let first = TokenOrigin::for_refresh_token("refresh-a");
+        let second = TokenOrigin::for_refresh_token("refresh-a");
+        assert_eq!(first.origin_jti, second.origin_jti);
+        assert_ne!(first.event_id, second.event_id);
+        assert!(uuid::Uuid::parse_str(&first.origin_jti).is_ok());
+        assert_ne!(
+            first.origin_jti,
+            TokenOrigin::for_refresh_token("refresh-b").origin_jti
+        );
+    }
+
+    #[test]
+    fn test_rsa_jwk_thumbprint_matches_rfc7638_example() {
+        let n = "0vx7agoebGcQSuuPiLJXZptN9nndrQmbXEps2aiAFbWhM78LhWx4cbbfAAtVT86zwu1RK7aPFFxuhDR1L6tSoc_BJECPebWKRXjBZCiFV4n3oknjhMstn64tZ_2W-5JsGY4Hc5n9yBXArwl93lqt7_RN5w6Cf0h4QyQ5v-65YGjQR0_FDW2QvzqY368QQMicAtaSqzs8KJZgnYb9c7d0zgdAZHzu6qMQvRL5hajrn1n91CbOpbISD08qNLyrdkt-bFTWhAI4vMQFh6WeZu0fM4lFd2NcRwr3XPksINHaQ-G_xBniIqbw0Ls1jF44-csFCur-kEgU8awapJzKnqDKgw";
+        assert_eq!(
+            rsa_jwk_thumbprint(n, "AQAB"),
+            "NzbLsXh8uDCcd-6MNwXF4W_7noWXFZAfHkxZsRGC9Xs"
+        );
+    }
+
+    #[test]
+    fn test_restored_key_keeps_key_id_and_verifies_existing_tokens() {
+        let (generated, pem) = JwtKeys::restore_or_generate(None).unwrap();
+        let (restored, restored_pem) = JwtKeys::restore_or_generate(Some(&pem)).unwrap();
+        assert_eq!(restored_pem, pem);
+        assert_eq!(restored.key_id, generated.key_id);
+        assert_eq!(restored.public_key_n, generated.public_key_n);
+
+        let token = encode(
+            &Header::new(Algorithm::RS256),
+            &serde_json::json!({ "sub": "s", "iss": "i", "iat": 0, "exp": i64::MAX }),
+            &generated.encoding_key,
+        )
+        .unwrap();
+        let validation = Validation::new(Algorithm::RS256);
+        assert!(decode::<serde_json::Value>(&token, &restored.decoding_key, &validation).is_ok());
+    }
+
+    #[test]
+    fn test_restore_rejects_invalid_persisted_key() {
+        assert!(JwtKeys::restore_or_generate(Some("not a pem")).is_err());
     }
 
     #[test]

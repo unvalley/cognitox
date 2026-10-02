@@ -10,7 +10,7 @@ use crate::{
     action::user::auth_flow::require_refresh_token_auth_flow,
     error::{AppError, Result},
     jwt::{
-        generate_access_token, generate_id_token, resolve_access_token_expiry,
+        TokenOrigin, generate_access_token, generate_id_token, resolve_access_token_expiry,
         resolve_id_token_expiry,
     },
     storage::Storage,
@@ -84,6 +84,7 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
 
     let access_expiry = resolve_access_token_expiry(&client);
     let id_expiry = resolve_id_token_expiry(&client);
+    let origin = TokenOrigin::for_refresh_token(&req.refresh_token);
 
     let access_token = generate_access_token(
         &user,
@@ -92,6 +93,7 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
         &groups,
         // OAuth scopes are granted through the OAuth endpoints, not this API.
         &[],
+        &origin,
         access_expiry,
     )
     .map_err(AppError::Internal)?;
@@ -100,6 +102,7 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
         req.client_id.as_str(),
         &client.user_pool_id,
         &groups,
+        &origin,
         id_expiry,
     )
     .map_err(AppError::Internal)?;

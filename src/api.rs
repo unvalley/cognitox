@@ -98,6 +98,14 @@ pub fn create_router(storage: Storage) -> Router {
             get(oauth2::openid_configuration),
         )
         .route("/.well-known/jwks.json", get(jwks))
+        .route(
+            "/{user_pool_id}/.well-known/openid-configuration",
+            get(oauth2::user_pool_openid_configuration),
+        )
+        .route(
+            "/{user_pool_id}/.well-known/jwks.json",
+            get(oauth2::user_pool_jwks),
+        )
         // OAuth 2.0 endpoints
         .route("/oauth2/authorize", get(oauth2::authorize))
         .route("/oauth2/token", post(oauth2::token))

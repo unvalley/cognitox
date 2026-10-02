@@ -121,6 +121,42 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_get_user_rejects_token_from_another_pool_issuer() {
+        let storage = Storage::new();
+        let (_pool_id, client_id) = setup_pool_and_client(&storage).await;
+        let (other_pool_id, _) = setup_pool_and_client(&storage).await;
+        let access_token =
+            create_confirmed_user_and_get_token(&storage, &client_id, "testuser", "Password123!")
+                .await;
+        let user_id = crate::jwt::verify_access_token(&access_token)
+            .unwrap()
+            .claims
+            .sub
+            .parse()
+            .unwrap();
+        let user = storage.get_user(&user_id).await.unwrap();
+
+        let foreign_token = crate::jwt::generate_access_token(
+            &user,
+            &client_id,
+            &crate::types::UserPoolId::new(&other_pool_id).unwrap(),
+            &[],
+            &[],
+            &crate::jwt::TokenOrigin::new(),
+            chrono::Duration::hours(1),
+        )
+        .unwrap();
+
+        let result = handler(&storage, json!({ "AccessToken": foreign_token })).await;
+        assert!(matches!(result, Err(AppError::InvalidAccessToken)));
+        assert!(
+            handler(&storage, json!({ "AccessToken": access_token }))
+                .await
+                .is_ok()
+        );
+    }
+
+    #[tokio::test]
     async fn test_get_user_success() {
         let storage = Storage::new();
         let (_pool_id, client_id) = setup_pool_and_client(&storage).await;

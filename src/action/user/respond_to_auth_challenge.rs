@@ -17,7 +17,7 @@ use crate::{
 
 use super::{
     auth_flow::{
-        AuthChallengeName, ChallengeResponses, build_auth_response,
+        AuthChallengeName, ChallengeResponses, RefreshTokenMode, build_auth_response,
         complete_new_password_challenge, complete_software_token_mfa_challenge,
         issue_authentication_result, resolve_new_password_challenge,
         resolve_software_token_mfa_challenge,
@@ -124,7 +124,7 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
                     &req.client_id,
                     &client.user_pool_id,
                     &user,
-                    true,
+                    RefreshTokenMode::IssueNew,
                     false,
                 )
                 .await?,
@@ -180,7 +180,7 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
                     &req.client_id,
                     &client.user_pool_id,
                     &user,
-                    true,
+                    RefreshTokenMode::IssueNew,
                     false,
                 )
                 .await?,

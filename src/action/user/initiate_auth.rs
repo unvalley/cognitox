@@ -15,9 +15,9 @@ use crate::{
 };
 
 use super::auth_flow::{
-    AuthParameters, PasswordAuthResult, UserInitiateAuthFlow, authenticate_with_password,
-    authenticate_with_refresh_token, build_auth_response, issue_authentication_result,
-    require_refresh_token_auth_flow, require_user_password_auth_flow,
+    AuthParameters, PasswordAuthResult, RefreshTokenMode, UserInitiateAuthFlow,
+    authenticate_with_password, authenticate_with_refresh_token, build_auth_response,
+    issue_authentication_result, require_refresh_token_auth_flow, require_user_password_auth_flow,
 };
 
 #[derive(Debug, Deserialize)]
@@ -115,7 +115,7 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
                         &req.client_id,
                         &client.user_pool_id,
                         &user,
-                        true,
+                        RefreshTokenMode::IssueNew,
                         true,
                     )
                     .await?,
@@ -150,7 +150,7 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
                     &req.client_id,
                     &client.user_pool_id,
                     &user,
-                    false,
+                    RefreshTokenMode::Existing(refresh_token),
                     false,
                 )
                 .await?,

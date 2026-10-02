@@ -196,6 +196,14 @@ pub async fn verify_and_extract_active_user_id(
     {
         return Err("Access token has been revoked".to_string());
     }
+    let expected_issuer = storage
+        .with_user(&user_id, |user| {
+            jwt::issuer_for_user_pool(&user.user_pool_id)
+        })
+        .await;
+    if expected_issuer.is_some_and(|issuer| issuer != token_data.claims.iss) {
+        return Err("Access token was not issued by this user pool".to_string());
+    }
     Ok(user_id)
 }
 

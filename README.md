@@ -94,6 +94,21 @@ access and refresh tokens, which remain invalid after the account is re-enabled.
 User Pools API authentication and refresh requests grant the
 `aws.cognito.signin.user.admin` scope; use the OAuth endpoints for `openid` access.
 
+### Verifying Tokens
+
+Tokens are signed with RS256 and issued per user pool, like Cognito:
+
+| | Cognito | cognitox |
+|---|---|---|
+| `iss` claim | `https://cognito-idp.<region>.amazonaws.com/<user-pool-id>` | `http://localhost:9229/<user-pool-id>` |
+| Discovery | `<iss>/.well-known/openid-configuration` | `<iss>/.well-known/openid-configuration` |
+| JWKS | `<iss>/.well-known/jwks.json` | `<iss>/.well-known/jwks.json` |
+
+Any OIDC/JWT library can verify tokens by pointing it at the cognitox issuer.
+[`aws-jwt-verify`](https://github.com/awslabs/aws-jwt-verify)'s `CognitoJwtVerifier` only accepts the AWS
+issuer format; start cognitox with `COGNITOX_ISSUER_BASE_URL=https://cognito-idp.<region>.amazonaws.com`
+and load the keys from cognitox with `verifier.cacheJwks(await (await fetch("http://localhost:9229/<user-pool-id>/.well-known/jwks.json")).json())`.
+
 ### Admin Console
 
 A management UI for browsing user pools, users, clients, and groups:
@@ -110,11 +125,16 @@ http://localhost:9229/admin/
 | `RUST_LOG` | `cognitox=info,tower_http=info` | Log filter (e.g. `debug` or `cognitox=debug,tower_http=info`) |
 | `COGNITOX_STORAGE_MODE` | `persistent` | Storage mode: `persistent` (file-backed) or `memory` (no persistence). |
 | `COGNITOX_DATA_FILE` | `cognitox-data.json` | Path to persist emulator state (JSON snapshot) when storage mode is `persistent`. |
-| `COGNITOX_ISSUER_BASE_URL` | `http://localhost:<COGNITOX_PORT>` | Base URL used as the JWT `iss` claim and in OpenID discovery. |
+| `COGNITOX_ISSUER_BASE_URL` | `http://localhost:<COGNITOX_PORT>` | Base URL of the JWT `iss` claim (`<base>/<user-pool-id>`) and OpenID discovery. |
+| `COGNITOX_JWT_PRIVATE_KEY_PATH` / `COGNITOX_JWT_PRIVATE_KEY_PEM` | - | RSA private key (PKCS#1 PEM) for signing tokens. Overrides the generated key. |
+| `COGNITOX_JWT_PUBLIC_KEY_PATH` / `COGNITOX_JWT_PUBLIC_KEY_PEM` | derived | RSA public key (PKCS#1 PEM). Derived from the private key when omitted. |
+| `COGNITOX_JWT_KEY_ID` | JWK thumbprint | `kid` header and JWKS key ID. |
 
 ### Persistence
 
 By default, state is persisted to `cognitox-data.json` in the working directory and survives restarts. The emulator auto-saves every 500ms when changes are detected, and flushes on graceful shutdown (Ctrl+C or SIGTERM). For Docker, mount `/data` as shown above so the snapshot survives container replacement.
+
+The generated JWT signing key is stored in the same snapshot, so issued access, ID, and refresh tokens stay valid across restarts. In `memory` mode a new key is generated on every start unless one is configured with `COGNITOX_JWT_PRIVATE_KEY_*`.
 
 To use a different file:
 

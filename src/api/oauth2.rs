@@ -5,9 +5,9 @@
 
 use axum::{
     Form, Json,
-    extract::{Query, State},
+    extract::{Path, Query, State},
     http::{HeaderMap, StatusCode, header},
-    response::{IntoResponse, Redirect},
+    response::{IntoResponse, Redirect, Response},
 };
 use base64::{
     Engine,
@@ -22,9 +22,10 @@ use uuid::Uuid;
 use crate::{
     error::OAuthError,
     jwt::{
-        generate_access_token, generate_client_credentials_access_token, generate_id_token,
-        issuer_base_url, resolve_access_token_expiry, resolve_id_token_expiry,
-        resolve_refresh_token_expiry, verify_access_token,
+        TokenOrigin, generate_access_token, generate_client_credentials_access_token,
+        generate_id_token, get_jwks, issuer_base_url, issuer_for_user_pool,
+        resolve_access_token_expiry, resolve_id_token_expiry, resolve_refresh_token_expiry,
+        verify_access_token,
     },
     storage::Storage,
     types::{
@@ -342,6 +343,7 @@ pub async fn authorize(
 
                 let access_expiry = resolve_access_token_expiry(&client);
                 let id_expiry = resolve_id_token_expiry(&client);
+                let origin = TokenOrigin::new();
 
                 let access_token = generate_access_token(
                     &user,
@@ -349,6 +351,7 @@ pub async fn authorize(
                     &client.user_pool_id,
                     &groups,
                     &scopes,
+                    &origin,
                     access_expiry,
                 )
                 .map_err(|e| OAuthError {
@@ -371,6 +374,7 @@ pub async fn authorize(
                         &params.client_id,
                         &client.user_pool_id,
                         &groups,
+                        &origin,
                         id_expiry,
                     )
                     .map_err(|e| OAuthError {
@@ -579,6 +583,8 @@ pub async fn token(
             let access_expiry = resolve_access_token_expiry(&client);
             let id_expiry = resolve_id_token_expiry(&client);
             let refresh_expiry = resolve_refresh_token_expiry(&client);
+            let refresh_token_str = Uuid::new_v4().to_string();
+            let origin = TokenOrigin::for_refresh_token(&refresh_token_str);
 
             // Generate tokens
             let access_token = generate_access_token(
@@ -587,6 +593,7 @@ pub async fn token(
                 &client.user_pool_id,
                 &groups,
                 &auth_code.scope,
+                &origin,
                 access_expiry,
             )
             .map_err(|e| OAuthError {
@@ -601,6 +608,7 @@ pub async fn token(
                         client_id.as_str(),
                         &client.user_pool_id,
                         &groups,
+                        &origin,
                         id_expiry,
                     )
                     .map_err(|e| OAuthError {
@@ -612,8 +620,6 @@ pub async fn token(
                 None
             };
 
-            // Generate refresh token
-            let refresh_token_str = Uuid::new_v4().to_string();
             let refresh = RefreshToken {
                 token: refresh_token_str.clone(),
                 user_id: user.id,
@@ -682,6 +688,7 @@ pub async fn token(
 
             let access_expiry = resolve_access_token_expiry(&client);
             let id_expiry = resolve_id_token_expiry(&client);
+            let origin = TokenOrigin::for_refresh_token(refresh_token);
 
             let access_token = generate_access_token(
                 &user,
@@ -689,6 +696,7 @@ pub async fn token(
                 &client.user_pool_id,
                 &groups,
                 &scopes,
+                &origin,
                 access_expiry,
             )
             .map_err(|e| OAuthError {
@@ -703,6 +711,7 @@ pub async fn token(
                         stored_token.client_id.as_str(),
                         &client.user_pool_id,
                         &groups,
+                        &origin,
                         id_expiry,
                     )
                     .map_err(|e| OAuthError {
@@ -756,12 +765,16 @@ pub async fn token(
 
             let access_expiry = resolve_access_token_expiry(&client);
 
-            let access_token =
-                generate_client_credentials_access_token(client_id, &scopes, access_expiry)
-                    .map_err(|e| OAuthError {
-                        error: "server_error".to_string(),
-                        error_description: Some(e),
-                    })?;
+            let access_token = generate_client_credentials_access_token(
+                client_id,
+                &client.user_pool_id,
+                &scopes,
+                access_expiry,
+            )
+            .map_err(|e| OAuthError {
+                error: "server_error".to_string(),
+                error_description: Some(e),
+            })?;
 
             Ok(Json(TokenResponse {
                 access_token,
@@ -858,6 +871,13 @@ pub async fn userinfo(
         error_description: Some("User not found".to_string()),
     })?;
 
+    if token_data.claims.iss != issuer_for_user_pool(&user.user_pool_id) {
+        return Err(OAuthError {
+            error: "invalid_token".to_string(),
+            error_description: Some("Access token was not issued by this user pool".to_string()),
+        });
+    }
+
     if !user.enabled
         || storage
             .is_access_token_revoked(
@@ -879,10 +899,10 @@ pub async fn userinfo(
 
     Ok(Json(UserInfoResponse {
         sub: user.id.to_string(),
+        email_verified: user.email.as_ref().map(|_| true),
         email: user.email,
-        email_verified: Some(true),
+        phone_number_verified: user.phone_number.as_ref().map(|_| true),
         phone_number: user.phone_number,
-        phone_number_verified: Some(true),
         username: user.username,
         groups,
     }))
@@ -927,16 +947,62 @@ pub async fn logout(
     Ok(Redirect::to(redirect_target))
 }
 
-/// GET /.well-known/openid-configuration - OpenID Connect Discovery
+/// GET /.well-known/openid-configuration - pool-agnostic OpenID Connect Discovery.
+///
+/// Tokens are issued per user pool; prefer `/{user_pool_id}/.well-known/openid-configuration`.
 pub async fn openid_configuration(_headers: axum::http::HeaderMap) -> Json<Value> {
+    Json(discovery_document(&issuer_base_url()))
+}
+
+/// GET /{user_pool_id}/.well-known/openid-configuration - OpenID Connect Discovery
+pub async fn user_pool_openid_configuration(
+    State(storage): State<Storage>,
+    Path(user_pool_id): Path<String>,
+) -> Response {
+    match find_user_pool_id(&storage, &user_pool_id).await {
+        Some(user_pool_id) => {
+            Json(discovery_document(&issuer_for_user_pool(&user_pool_id))).into_response()
+        }
+        None => user_pool_not_found(&user_pool_id),
+    }
+}
+
+/// GET /{user_pool_id}/.well-known/jwks.json - JWKS of a user pool's issuer
+pub async fn user_pool_jwks(
+    State(storage): State<Storage>,
+    Path(user_pool_id): Path<String>,
+) -> Response {
+    match find_user_pool_id(&storage, &user_pool_id).await {
+        Some(_) => Json(get_jwks()).into_response(),
+        None => user_pool_not_found(&user_pool_id),
+    }
+}
+
+async fn find_user_pool_id(storage: &Storage, raw_user_pool_id: &str) -> Option<UserPoolId> {
+    let user_pool_id = UserPoolId::new(raw_user_pool_id).ok()?;
+    storage
+        .user_pool_exists(&user_pool_id)
+        .await
+        .then_some(user_pool_id)
+}
+
+fn user_pool_not_found(user_pool_id: &str) -> Response {
+    (
+        StatusCode::NOT_FOUND,
+        Json(json!({ "message": format!("User pool {user_pool_id} does not exist.") })),
+    )
+        .into_response()
+}
+
+fn discovery_document(issuer: &str) -> Value {
     let base_url = issuer_base_url();
 
-    Json(json!({
-        "issuer": base_url.clone(),
+    json!({
+        "issuer": issuer,
         "authorization_endpoint": format!("{}/oauth2/authorize", base_url),
         "token_endpoint": format!("{}/oauth2/token", base_url),
         "userinfo_endpoint": format!("{}/oauth2/userInfo", base_url),
-        "jwks_uri": format!("{}/.well-known/jwks.json", base_url),
+        "jwks_uri": format!("{}/.well-known/jwks.json", issuer),
         "response_types_supported": ["code", "token", "code token"],
         "subject_types_supported": ["public"],
         "id_token_signing_alg_values_supported": ["RS256"],
@@ -948,7 +1014,7 @@ pub async fn openid_configuration(_headers: axum::http::HeaderMap) -> Json<Value
         ],
         "code_challenge_methods_supported": ["S256", "plain"],
         "grant_types_supported": ["authorization_code", "refresh_token", "client_credentials"]
-    }))
+    })
 }
 
 /// Generate a simple login HTML page
