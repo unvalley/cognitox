@@ -12,12 +12,13 @@ use uuid::Uuid;
 use crate::{
     error::{AppError, Result},
     storage::Storage,
-    types::{User, UserAttribute, UserPoolId, UserStatus},
+    types::{AliasAttribute, User, UserAttribute, UserPoolId, UserStatus},
     validation::{validate_email, validate_password, validate_phone_number, validate_username},
 };
 
 use super::helpers::{
     build_user_attributes, find_user_attribute_value, hash_password, sync_user_profile_attributes,
+    upsert_user_attribute,
 };
 
 #[derive(Debug, Deserialize)]
@@ -38,12 +39,19 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
     let req: Request = serde_json::from_value(body)
         .map_err(|e| AppError::InvalidParameter(format!("Invalid request: {}", e)))?;
     let _ = (
-        &req.force_alias_creation,
-        &req.message_action,
         &req.desired_delivery_mediums,
         &req.client_metadata,
         &req.validation_data,
     );
+    let resend = match req.message_action.as_deref() {
+        None | Some("SUPPRESS") => false,
+        Some("RESEND") => true,
+        Some(action) => {
+            return Err(AppError::InvalidParameter(format!(
+                "Invalid MessageAction: {action}"
+            )));
+        }
+    };
 
     // Validate input
     validate_username(&req.username)?;
@@ -66,16 +74,18 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
         validate_phone_number(&phone_number)?;
     }
 
-    storage
+    let pool = storage
         .get_user_pool(&req.user_pool_id)
         .await
         .ok_or(AppError::UserPoolNotFound)?;
 
-    if storage
+    let existing = storage
         .get_user_by_username(&req.user_pool_id, &req.username)
-        .await
-        .is_some()
-    {
+        .await;
+    if resend {
+        return resend_invitation(storage, existing, req.temporary_password).await;
+    }
+    if existing.is_some() {
         return Err(AppError::UserAlreadyExists);
     }
 
@@ -100,21 +110,101 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
     };
     sync_user_profile_attributes(&mut user);
 
+    // An email address or phone number created as verified becomes a sign-in
+    // alias, which must be unique within the user pool.
+    for (alias, name, verified_attribute) in [
+        (AliasAttribute::Email, "email", "email_verified"),
+        (
+            AliasAttribute::PhoneNumber,
+            "phone_number",
+            "phone_number_verified",
+        ),
+    ] {
+        let is_alias = pool
+            .alias_attributes
+            .as_ref()
+            .is_some_and(|attributes| attributes.contains(&alias));
+        let is_verified = find_user_attribute_value(&user.attributes, verified_attribute)
+            .is_some_and(|value| value == "true");
+        if !is_alias || !is_verified {
+            continue;
+        }
+        let Some(value) = user.alias_value(alias) else {
+            continue;
+        };
+        let Some(owner) = storage.get_user_by_alias(&req.user_pool_id, value).await else {
+            continue;
+        };
+        if req.force_alias_creation != Some(true) {
+            return Err(AppError::AliasExists(name));
+        }
+        // ForceAliasCreation migrates the alias: the previous owner keeps the
+        // attribute but can no longer be addressed by it.
+        storage
+            .update_user_with(&owner.id, |owner| {
+                upsert_user_attribute(
+                    &mut owner.attributes,
+                    verified_attribute,
+                    Some("false".to_string()),
+                );
+            })
+            .await;
+    }
+
     let created = storage
         .try_create_user(user)
         .await
         .ok_or(AppError::UserAlreadyExists)?;
 
     Ok(json!({
-        "User": {
-            "Username": created.username,
-            "Enabled": created.enabled,
-            "UserStatus": created.user_status,
-            "UserCreateDate": created.creation_date.timestamp(),
-            "UserLastModifiedDate": created.last_modified_date.timestamp(),
-            "Attributes": build_user_attributes(&created)
-        }
+        "User": user_view(&created)
     }))
+}
+
+/// `MessageAction: RESEND` re-sends the invitation of a user that has not
+/// signed in yet. The emulator delivers no message, so the only observable
+/// effect is that a given temporary password replaces the previous one.
+async fn resend_invitation(
+    storage: &Storage,
+    existing: Option<User>,
+    temporary_password: Option<String>,
+) -> Result<Value> {
+    let user = existing.ok_or(AppError::UserNotFound)?;
+    if user.user_status != UserStatus::ForceChangePassword {
+        return Err(AppError::UnsupportedUserState(format!(
+            "Resend not possible. {} status is not FORCE_CHANGE_PASSWORD",
+            user.id
+        )));
+    }
+    let Some(password) = temporary_password else {
+        return Ok(json!({
+            "User": user_view(&user)
+        }));
+    };
+    let password_hash = hash_password(&password).map_err(AppError::Internal)?;
+    let updated = storage
+        .update_user_with(&user.id, |user| {
+            user.password_hash = password_hash;
+            user.last_modified_date = Utc::now();
+            user.clone()
+        })
+        .await
+        .ok_or(AppError::UserNotFound)?;
+
+    Ok(json!({
+        "User": user_view(&updated)
+    }))
+}
+
+fn user_view(user: &User) -> Value {
+    json!({
+        "Username": user.username,
+        "Enabled": user.enabled,
+        "UserStatus": user.user_status,
+        "UserCreateDate": user.creation_date.timestamp(),
+        "UserLastModifiedDate": user.last_modified_date.timestamp(),
+        "Attributes": build_user_attributes(user)
+    })
 }
 
 #[cfg(test)]
@@ -284,5 +374,141 @@ mod tests {
 
         assert!(result.is_ok());
         assert_eq!(result.unwrap()["User"]["Username"], "fullsyntaxuser");
+    }
+
+    async fn create_email_alias_pool(storage: &Storage) -> String {
+        let pool = create_user_pool::handler(
+            storage,
+            json!({"PoolName": "test", "AliasAttributes": ["email"]}),
+        )
+        .await
+        .unwrap();
+        pool["UserPool"]["Id"].as_str().unwrap().to_string()
+    }
+
+    fn verified_email_user(pool_id: &str, username: &str) -> Value {
+        json!({
+            "UserPoolId": pool_id,
+            "Username": username,
+            "TemporaryPassword": "TempPass123!",
+            "UserAttributes": [
+                {"Name": "email", "Value": "shared@example.com"},
+                {"Name": "email_verified", "Value": "true"}
+            ]
+        })
+    }
+
+    #[tokio::test]
+    async fn test_admin_create_user_rejects_existing_email_alias() {
+        let storage = Storage::new();
+        let pool_id = create_email_alias_pool(&storage).await;
+        handler(&storage, verified_email_user(&pool_id, "first"))
+            .await
+            .unwrap();
+
+        let result = handler(&storage, verified_email_user(&pool_id, "second")).await;
+
+        assert!(matches!(result, Err(AppError::AliasExists("email"))));
+    }
+
+    #[tokio::test]
+    async fn test_admin_create_user_allows_duplicate_email_without_alias() {
+        let storage = Storage::new();
+        let pool = create_user_pool::handler(&storage, json!({"PoolName": "test"}))
+            .await
+            .unwrap();
+        let pool_id = pool["UserPool"]["Id"].as_str().unwrap();
+        handler(&storage, verified_email_user(pool_id, "first"))
+            .await
+            .unwrap();
+
+        let result = handler(&storage, verified_email_user(pool_id, "second")).await;
+
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_admin_create_user_force_alias_creation_migrates_alias() {
+        let storage = Storage::new();
+        let pool_id = create_email_alias_pool(&storage).await;
+        handler(&storage, verified_email_user(&pool_id, "first"))
+            .await
+            .unwrap();
+
+        let mut request = verified_email_user(&pool_id, "second");
+        request["ForceAliasCreation"] = json!(true);
+        handler(&storage, request).await.unwrap();
+
+        let pool_id = UserPoolId::new(pool_id).unwrap();
+        let owner = storage
+            .get_user_by_username(&pool_id, "shared@example.com")
+            .await
+            .unwrap();
+        assert_eq!(owner.username, "second");
+    }
+
+    #[tokio::test]
+    async fn test_admin_create_user_resend_replaces_temporary_password() {
+        let storage = Storage::new();
+        let pool_id = create_email_alias_pool(&storage).await;
+        handler(&storage, verified_email_user(&pool_id, "invited"))
+            .await
+            .unwrap();
+        let parsed_pool_id = UserPoolId::new(pool_id.as_str()).unwrap();
+        let before = storage
+            .get_user_by_username(&parsed_pool_id, "invited")
+            .await
+            .unwrap();
+
+        let result = handler(
+            &storage,
+            json!({
+                "UserPoolId": pool_id,
+                "Username": "invited",
+                "TemporaryPassword": "NewTempPass123!",
+                "MessageAction": "RESEND"
+            }),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(result["User"]["UserStatus"], "FORCE_CHANGE_PASSWORD");
+        let after = storage
+            .get_user_by_username(&parsed_pool_id, "invited")
+            .await
+            .unwrap();
+        assert_ne!(before.password_hash, after.password_hash);
+    }
+
+    #[tokio::test]
+    async fn test_admin_create_user_resend_requires_invited_user() {
+        let storage = Storage::new();
+        let pool_id = create_email_alias_pool(&storage).await;
+
+        let missing = handler(
+            &storage,
+            json!({"UserPoolId": pool_id, "Username": "missing", "MessageAction": "RESEND"}),
+        )
+        .await;
+        assert!(matches!(missing, Err(AppError::UserNotFound)));
+
+        handler(&storage, verified_email_user(&pool_id, "confirmed"))
+            .await
+            .unwrap();
+        let parsed_pool_id = UserPoolId::new(pool_id.as_str()).unwrap();
+        let user = storage
+            .get_user_by_username(&parsed_pool_id, "confirmed")
+            .await
+            .unwrap();
+        storage
+            .update_user_with(&user.id, |user| user.user_status = UserStatus::Confirmed)
+            .await;
+
+        let confirmed = handler(
+            &storage,
+            json!({"UserPoolId": pool_id, "Username": "confirmed", "MessageAction": "RESEND"}),
+        )
+        .await;
+        assert!(matches!(confirmed, Err(AppError::UnsupportedUserState(_))));
     }
 }
