@@ -95,6 +95,12 @@ pub enum AppError {
     #[error("User already exists")]
     UserAlreadyExists,
 
+    #[error("An account with the {0} already exists.")]
+    AliasExists(&'static str),
+
+    #[error("{0}")]
+    UnsupportedUserState(String),
+
     #[error("Invalid password")]
     InvalidPassword,
 
@@ -183,6 +189,10 @@ impl IntoResponse for AppError {
             AppError::DeviceNotFound => (StatusCode::BAD_REQUEST, "ResourceNotFoundException"),
             AppError::AuthEventNotFound => (StatusCode::BAD_REQUEST, "ResourceNotFoundException"),
             AppError::UserAlreadyExists => (StatusCode::BAD_REQUEST, "UsernameExistsException"),
+            AppError::AliasExists(_) => (StatusCode::BAD_REQUEST, "AliasExistsException"),
+            AppError::UnsupportedUserState(_) => {
+                (StatusCode::BAD_REQUEST, "UnsupportedUserStateException")
+            }
             AppError::InvalidPassword => (StatusCode::BAD_REQUEST, "InvalidPasswordException"),
             AppError::InvalidConfirmationCode => (StatusCode::BAD_REQUEST, "CodeMismatchException"),
             AppError::InvalidAccessToken => (StatusCode::UNAUTHORIZED, "NotAuthorizedException"),
