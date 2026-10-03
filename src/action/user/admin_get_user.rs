@@ -107,6 +107,77 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_admin_get_user_resolves_alias_attribute() {
+        let storage = Storage::new();
+
+        let pool = create_user_pool::handler(
+            &storage,
+            json!({"PoolName": "test", "AliasAttributes": ["email", "preferred_username"]}),
+        )
+        .await
+        .unwrap();
+        let pool_id = pool["UserPool"]["Id"].as_str().unwrap();
+        admin_create_user::handler(
+            &storage,
+            json!({
+                "UserPoolId": pool_id,
+                "Username": "testuser",
+                "UserAttributes": [
+                    {"Name": "email", "Value": "test@example.com"},
+                    {"Name": "preferred_username", "Value": "tester"}
+                ]
+            }),
+        )
+        .await
+        .unwrap();
+
+        for alias in ["test@example.com", "tester"] {
+            let body = handler(&storage, json!({"UserPoolId": pool_id, "Username": alias}))
+                .await
+                .unwrap();
+            assert_eq!(body["Username"], "testuser");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_admin_get_user_ignores_unconfigured_or_unverified_alias() {
+        let storage = Storage::new();
+
+        for (pool_request, email_verified) in [
+            (json!({"PoolName": "no-alias"}), "true"),
+            (
+                json!({"PoolName": "alias", "AliasAttributes": ["email"]}),
+                "false",
+            ),
+        ] {
+            let pool = create_user_pool::handler(&storage, pool_request)
+                .await
+                .unwrap();
+            let pool_id = pool["UserPool"]["Id"].as_str().unwrap();
+            admin_create_user::handler(
+                &storage,
+                json!({
+                    "UserPoolId": pool_id,
+                    "Username": "testuser",
+                    "UserAttributes": [
+                        {"Name": "email", "Value": "test@example.com"},
+                        {"Name": "email_verified", "Value": email_verified}
+                    ]
+                }),
+            )
+            .await
+            .unwrap();
+
+            let result = handler(
+                &storage,
+                json!({"UserPoolId": pool_id, "Username": "test@example.com"}),
+            )
+            .await;
+            assert!(matches!(result, Err(AppError::UserNotFound)));
+        }
+    }
+
+    #[tokio::test]
     async fn test_admin_get_user_not_found() {
         let storage = Storage::new();
 

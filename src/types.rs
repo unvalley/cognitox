@@ -805,6 +805,34 @@ pub struct User {
     pub last_modified_date: DateTime<Utc>,
 }
 
+impl User {
+    fn attribute_value(&self, name: &str) -> Option<&str> {
+        self.attributes
+            .iter()
+            .find(|attribute| attribute.name == name)
+            .and_then(|attribute| attribute.value.as_deref())
+    }
+
+    /// The value this user can be addressed by through `alias`, as a
+    /// substitute for the username.
+    ///
+    /// Cognito only resolves verified email addresses and phone numbers. The
+    /// emulator delivers no verification codes on sign-up and issues tokens
+    /// that claim both as verified, so a value counts as verified unless its
+    /// `*_verified` attribute is explicitly `false` (which attribute updates
+    /// set while a new value awaits verification).
+    pub fn alias_value(&self, alias: AliasAttribute) -> Option<&str> {
+        let (value, verified_attribute) = match alias {
+            AliasAttribute::Email => (self.email.as_deref(), "email_verified"),
+            AliasAttribute::PhoneNumber => (self.phone_number.as_deref(), "phone_number_verified"),
+            AliasAttribute::PreferredUsername => {
+                return self.attribute_value("preferred_username");
+            }
+        };
+        value.filter(|_| self.attribute_value(verified_attribute) != Some("false"))
+    }
+}
+
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum UserStatus {
