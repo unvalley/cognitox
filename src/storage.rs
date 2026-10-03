@@ -977,16 +977,48 @@ impl Storage {
         store.users.get(id).map(f)
     }
 
+    /// Look up a user by username, or by one of the user pool's alias
+    /// attributes (`AliasAttributes`), which Cognito accepts wherever a
+    /// `Username` is expected.
     pub async fn get_user_by_username(
         &self,
         user_pool_id: &UserPoolId,
         username: &str,
     ) -> Option<User> {
+        {
+            let store = self.principal_store.read().await;
+            if let Some(user_id) = store
+                .username_index
+                .get(&(user_pool_id.clone(), username.to_string()))
+            {
+                return store.users.get(user_id).cloned();
+            }
+        }
+        self.get_user_by_alias(user_pool_id, username).await
+    }
+
+    /// Look up the user that owns `alias` through one of the user pool's
+    /// alias attributes.
+    pub async fn get_user_by_alias(&self, user_pool_id: &UserPoolId, alias: &str) -> Option<User> {
+        let alias_attributes = {
+            let store = self.pool_store.read().await;
+            store
+                .user_pools
+                .get(user_pool_id)?
+                .alias_attributes
+                .clone()?
+        };
         let store = self.principal_store.read().await;
-        let user_id = store
-            .username_index
-            .get(&(user_pool_id.clone(), username.to_string()))?;
-        store.users.get(user_id).cloned()
+        store
+            .users
+            .values()
+            .find(|user| {
+                &user.user_pool_id == user_pool_id
+                    && alias_attributes
+                        .iter()
+                        .any(|attribute| user.alias_value(*attribute) == Some(alias))
+            })
+            .cloned()
     }
 
     pub async fn update_user(&self, user: User) -> Option<User> {
