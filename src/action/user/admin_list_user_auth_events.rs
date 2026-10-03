@@ -35,7 +35,7 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
         .ok_or(AppError::UserNotFound)?;
 
     let mut events = storage.list_auth_events_for_user(&user.id).await;
-    events.sort_by(|a, b| b.creation_date.cmp(&a.creation_date));
+    events.sort_by_key(|event| std::cmp::Reverse(event.creation_date));
 
     let max_results = req.max_results.unwrap_or(60) as usize;
     if max_results == 0 {
