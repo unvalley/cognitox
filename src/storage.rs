@@ -77,7 +77,7 @@ impl PersistenceBackend for NullBackend {
     }
 }
 
-/// File-based persistence backend using bincode + base64 snapshots.
+/// File-based persistence backend using MessagePack + base64 snapshots.
 struct FileBackend {
     data_file: PathBuf,
     flush_interval: Duration,
@@ -214,21 +214,27 @@ struct PersistedSnapshot {
     payload: String,
 }
 
-const SNAPSHOT_VERSION: u32 = 1;
-const SNAPSHOT_ENCODING: &str = "bincode+base64";
+const SNAPSHOT_VERSION: u32 = 2;
+const SNAPSHOT_ENCODING: &str = "msgpack+base64";
+
+/// Snapshots written before version 2. bincode is not self-describing, so it
+/// cannot round-trip the optional fields that the domain types skip when
+/// `None` (`skip_serializing_if`) nor free-form `serde_json::Value` fields.
+/// Legacy snapshots that happen to contain neither are still loaded.
+const LEGACY_SNAPSHOT_VERSION: u32 = 1;
+const LEGACY_SNAPSHOT_ENCODING: &str = "bincode+base64";
 
 fn decode_snapshot(content: &str) -> Result<PersistedStorageState, String> {
     let snapshot: PersistedSnapshot =
         serde_json::from_str(content).map_err(|e| format!("Invalid JSON snapshot: {e}"))?;
 
-    if snapshot.version != SNAPSHOT_VERSION {
-        return Err(format!(
-            "Unsupported snapshot version: {}",
-            snapshot.version
-        ));
-    }
+    let expected_encoding = match snapshot.version {
+        SNAPSHOT_VERSION => SNAPSHOT_ENCODING,
+        LEGACY_SNAPSHOT_VERSION => LEGACY_SNAPSHOT_ENCODING,
+        version => return Err(format!("Unsupported snapshot version: {version}")),
+    };
 
-    if snapshot.encoding != SNAPSHOT_ENCODING {
+    if snapshot.encoding != expected_encoding {
         return Err(format!(
             "Unsupported snapshot encoding: {}",
             snapshot.encoding
@@ -239,13 +245,20 @@ fn decode_snapshot(content: &str) -> Result<PersistedStorageState, String> {
         .decode(snapshot.payload.as_bytes())
         .map_err(|e| format!("Invalid snapshot payload encoding: {e}"))?;
 
-    bincode::deserialize::<PersistedStorageState>(&payload)
+    if snapshot.version == LEGACY_SNAPSHOT_VERSION {
+        return bincode::deserialize::<PersistedStorageState>(&payload)
+            .map_err(|e| format!("Failed to deserialize snapshot payload: {e}"));
+    }
+
+    rmp_serde::from_slice::<PersistedStorageState>(&payload)
         .map_err(|e| format!("Failed to deserialize snapshot payload: {e}"))
 }
 
 fn encode_snapshot<T: Serialize>(state: &T) -> Result<Vec<u8>, String> {
-    let payload =
-        bincode::serialize(state).map_err(|e| format!("Failed to serialize storage state: {e}"))?;
+    // Field names are kept so that fields skipped on serialization are simply
+    // absent, instead of shifting every following field.
+    let payload = rmp_serde::to_vec_named(state)
+        .map_err(|e| format!("Failed to serialize storage state: {e}"))?;
     let snapshot = PersistedSnapshot {
         version: SNAPSHOT_VERSION,
         encoding: SNAPSHOT_ENCODING.to_string(),
@@ -1942,6 +1955,80 @@ mod tests {
         let pools = loaded.list_user_pools().await;
         assert_eq!(pools.len(), 1);
         assert_eq!(pools[0].name, "compat-pool");
+
+        let _ = fs::remove_file(path);
+    }
+
+    /// Optional fields that are skipped on serialization and free-form JSON
+    /// values must survive a restart.
+    #[tokio::test]
+    async fn test_persistence_roundtrip_with_optional_pool_settings() {
+        use crate::action::{
+            user::admin_create_user,
+            user_pool::{create_user_pool, create_user_pool_client},
+        };
+        use serde_json::json;
+
+        let path = temp_data_file();
+        let storage = Storage::with_config(StorageConfig::persistent(path.clone())).unwrap();
+        let pool = create_user_pool::handler(
+            &storage,
+            json!({
+                "PoolName": "configured-pool",
+                "AdminCreateUserConfig": { "AllowAdminCreateUserOnly": true },
+                "AliasAttributes": ["email"],
+                "LambdaConfig": { "PreSignUp": "arn:aws:lambda:local:000000000000:function:pre" },
+                "Schema": [
+                    { "Name": "initialized", "AttributeDataType": "Boolean", "Mutable": true }
+                ]
+            }),
+        )
+        .await
+        .unwrap();
+        let pool_id = pool["UserPool"]["Id"].as_str().unwrap();
+        create_user_pool_client::handler(
+            &storage,
+            json!({ "UserPoolId": pool_id, "ClientName": "client", "GenerateSecret": true }),
+        )
+        .await
+        .unwrap();
+        admin_create_user::handler(
+            &storage,
+            json!({
+                "UserPoolId": pool_id,
+                "Username": "user",
+                "UserAttributes": [{ "Name": "email", "Value": "user@example.com" }]
+            }),
+        )
+        .await
+        .unwrap();
+        storage.flush_persistence().await.unwrap();
+
+        let loaded = Storage::with_config(StorageConfig::persistent(path.clone())).unwrap();
+        let pools = loaded.list_user_pools().await;
+        assert_eq!(pools.len(), 1);
+        assert!(pools[0].admin_create_user_config.is_some());
+        assert!(pools[0].lambda_config.is_some());
+        assert_eq!(pools[0].schema_attributes.as_ref().map(Vec::len), Some(1));
+        assert_eq!(loaded.list_users(&pools[0].id).await.len(), 1);
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn test_legacy_bincode_snapshot_is_loaded() {
+        let path = temp_data_file();
+        let payload = bincode::serialize(&PersistedStorageState::default()).unwrap();
+        let snapshot = serde_json::to_vec(&PersistedSnapshot {
+            version: LEGACY_SNAPSHOT_VERSION,
+            encoding: LEGACY_SNAPSHOT_ENCODING.to_string(),
+            payload: BASE64_STANDARD.encode(payload),
+        })
+        .unwrap();
+        fs::write(&path, snapshot).unwrap();
+
+        let result = Storage::with_config(StorageConfig::persistent(path.clone()));
+        assert!(result.is_ok());
 
         let _ = fs::remove_file(path);
     }
