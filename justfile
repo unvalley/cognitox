@@ -71,8 +71,13 @@ test-one NAME:
 ui-check:
     cd ui && pnpm run check
 
-# Run all checks (spec drift + Rust tests + UI type check)
-check-all: spec-check test ui-check
+# Run every CI gate: fmt check, spec drift, clippy, tests
+check:
+    scripts/check.sh
+
+# Run every CI gate plus the UI type check
+check-all:
+    scripts/check.sh --ui
 
 # Check request/response drift against AWS API baseline
 spec-check:
