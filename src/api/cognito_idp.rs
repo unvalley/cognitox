@@ -72,6 +72,9 @@ macro_rules! define_action_registry {
         }
 
         impl Action {
+            /// Every registered operation, in registry order.
+            pub const ALL: &'static [Action] = &[$(Self::$variant,)+];
+
             /// Returns true if this operation is implemented.
             /// Generated from the same registry as dispatch and parsing.
             pub const fn is_implemented(&self) -> bool {
@@ -258,6 +261,13 @@ mod tests {
         assert!(Action::AdminInitiateAuth.is_implemented());
         assert!(Action::AdminRespondToAuthChallenge.is_implemented());
         assert!(Action::AdminForgetDevice.is_implemented());
+    }
+
+    #[test]
+    fn test_all_round_trips_through_from_str() {
+        for action in Action::ALL {
+            assert_eq!(format!("{action:?}").parse::<Action>().unwrap(), *action);
+        }
     }
 
     #[test]
