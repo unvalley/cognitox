@@ -37,6 +37,9 @@ ui/dist/
 data.json
 cognitox-data.json
 
+# Local environment overrides (loaded by dotenvy and `just`)
+.env
+
 # Claude Code: share project settings, hooks, and skills; keep personal state local
 .claude/*
 !.claude/settings.json
