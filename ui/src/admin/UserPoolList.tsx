@@ -2,6 +2,7 @@ import { useEffect, useState } from 'preact/hooks'
 import type { UserPool, User, UserPoolClient } from '../lib/types'
 import { formatDate } from '../lib/types'
 import {
+  API_BASE,
   adminCreateUser,
   adminDeleteUser,
   adminDisableUser,
@@ -593,7 +594,7 @@ export function UserPoolList() {
     if (!brandingClientId) return ''
     const client = inspectorState.clients.find(current => current.ClientId === brandingClientId)
     const callbackUrl = client?.CallbackURLs?.[0] || 'http://localhost:3000/callback'
-    return `http://localhost:9229/ui/?response_type=code&client_id=${brandingClientId}&redirect_uri=${encodeURIComponent(callbackUrl)}&scope=openid`
+    return `${API_BASE}/ui/?response_type=code&client_id=${brandingClientId}&redirect_uri=${encodeURIComponent(callbackUrl)}&scope=openid`
   }
 
   function renderUserPoolsTable() {
