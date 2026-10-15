@@ -146,6 +146,15 @@ See [spec/README.md](spec/README.md).
 - **MFA enforcement** -- MFA operations are implemented but not enforced during auth
 - **Advanced security features** -- risk configuration is stored but not evaluated
 
+## Development
+
+```bash
+scripts/check.sh   # rustfmt, spec drift, clippy, and tests: the same gates as CI
+```
+
+See [AGENTS.md](AGENTS.md) for the architecture, conventions, and the workflow
+for changing an operation.
+
 ## License
 
 MIT
