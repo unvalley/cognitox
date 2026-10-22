@@ -5,9 +5,9 @@
 
 use axum::{
     Form, Json,
-    extract::{Query, State},
+    extract::{Path, Query, State},
     http::{HeaderMap, StatusCode, header},
-    response::{IntoResponse, Redirect},
+    response::{IntoResponse, Redirect, Response},
 };
 use base64::{
     Engine,
@@ -23,8 +23,8 @@ use crate::{
     error::OAuthError,
     jwt::{
         generate_access_token, generate_client_credentials_access_token, generate_id_token,
-        issuer_base_url, resolve_access_token_expiry, resolve_id_token_expiry,
-        resolve_refresh_token_expiry, verify_access_token,
+        get_jwks, issuer_base_url, resolve_access_token_expiry, resolve_id_token_expiry,
+        resolve_refresh_token_expiry, user_pool_issuer, verify_access_token,
     },
     storage::Storage,
     types::{
@@ -756,12 +756,16 @@ pub async fn token(
 
             let access_expiry = resolve_access_token_expiry(&client);
 
-            let access_token =
-                generate_client_credentials_access_token(client_id, &scopes, access_expiry)
-                    .map_err(|e| OAuthError {
-                        error: "server_error".to_string(),
-                        error_description: Some(e),
-                    })?;
+            let access_token = generate_client_credentials_access_token(
+                client_id,
+                &client.user_pool_id,
+                &scopes,
+                access_expiry,
+            )
+            .map_err(|e| OAuthError {
+                error: "server_error".to_string(),
+                error_description: Some(e),
+            })?;
 
             Ok(Json(TokenResponse {
                 access_token,
@@ -929,14 +933,61 @@ pub async fn logout(
 
 /// GET /.well-known/openid-configuration - OpenID Connect Discovery
 pub async fn openid_configuration(_headers: axum::http::HeaderMap) -> Json<Value> {
-    let base_url = issuer_base_url();
+    Json(openid_configuration_document(issuer_base_url()))
+}
 
-    Json(json!({
-        "issuer": base_url.clone(),
+/// GET /{user_pool_id}/.well-known/openid-configuration - OpenID Connect Discovery for a user pool
+///
+/// Cognito serves discovery under the user pool issuer, so OIDC clients can derive it from `iss`.
+pub async fn user_pool_openid_configuration(
+    State(storage): State<Storage>,
+    Path(user_pool_id): Path<String>,
+) -> Result<Json<Value>, UserPoolNotFound> {
+    let user_pool_id = find_user_pool_id(&storage, &user_pool_id).await?;
+    Ok(Json(openid_configuration_document(user_pool_issuer(
+        &user_pool_id,
+    ))))
+}
+
+/// GET /{user_pool_id}/.well-known/jwks.json - JWKS for a user pool
+pub async fn user_pool_jwks(
+    State(storage): State<Storage>,
+    Path(user_pool_id): Path<String>,
+) -> Result<Json<Value>, UserPoolNotFound> {
+    find_user_pool_id(&storage, &user_pool_id).await?;
+    Ok(Json(get_jwks()))
+}
+
+/// 404 for a user pool path whose pool does not exist
+pub struct UserPoolNotFound(String);
+
+impl IntoResponse for UserPoolNotFound {
+    fn into_response(self) -> Response {
+        let message = format!("User pool {} does not exist.", self.0);
+        (StatusCode::NOT_FOUND, Json(json!({ "message": message }))).into_response()
+    }
+}
+
+async fn find_user_pool_id(storage: &Storage, raw: &str) -> Result<UserPoolId, UserPoolNotFound> {
+    let not_found = || UserPoolNotFound(raw.to_string());
+    let user_pool_id = UserPoolId::new(raw).map_err(|_| not_found())?;
+    storage
+        .get_user_pool(&user_pool_id)
+        .await
+        .ok_or_else(not_found)?;
+    Ok(user_pool_id)
+}
+
+fn openid_configuration_document(issuer: String) -> Value {
+    let base_url = issuer_base_url();
+    let jwks_uri = format!("{}/.well-known/jwks.json", issuer);
+
+    json!({
+        "issuer": issuer,
         "authorization_endpoint": format!("{}/oauth2/authorize", base_url),
         "token_endpoint": format!("{}/oauth2/token", base_url),
         "userinfo_endpoint": format!("{}/oauth2/userInfo", base_url),
-        "jwks_uri": format!("{}/.well-known/jwks.json", base_url),
+        "jwks_uri": jwks_uri,
         "response_types_supported": ["code", "token", "code token"],
         "subject_types_supported": ["public"],
         "id_token_signing_alg_values_supported": ["RS256"],
@@ -948,7 +999,7 @@ pub async fn openid_configuration(_headers: axum::http::HeaderMap) -> Json<Value
         ],
         "code_challenge_methods_supported": ["S256", "plain"],
         "grant_types_supported": ["authorization_code", "refresh_token", "client_credentials"]
-    }))
+    })
 }
 
 /// Generate a simple login HTML page

@@ -178,9 +178,46 @@ async fn test_jwks_endpoint() {
 }
 
 #[tokio::test]
+async fn test_user_pool_openid_configuration_and_jwks() {
+    let client = TestClient::new();
+    let (pool_id, _, _, _) = setup_user_and_client(&client).await;
+
+    let response = client
+        .get(&format!("/{pool_id}/.well-known/openid-configuration"))
+        .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let discovery: serde_json::Value = response.json().await.unwrap();
+    let issuer = discovery["issuer"].as_str().unwrap();
+    assert!(issuer.ends_with(&format!("/{pool_id}")));
+    assert_eq!(
+        discovery["jwks_uri"],
+        format!("{issuer}/.well-known/jwks.json")
+    );
+
+    let response = client
+        .get(&format!("/{pool_id}/.well-known/jwks.json"))
+        .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let jwks: serde_json::Value = response.json().await.unwrap();
+    assert_eq!(jwks["keys"][0]["alg"], "RS256");
+}
+
+#[tokio::test]
+async fn test_user_pool_openid_configuration_and_jwks_reject_unknown_pool() {
+    let client = TestClient::new();
+
+    for path in [
+        "/us-east-1_Missing/.well-known/openid-configuration",
+        "/us-east-1_Missing/.well-known/jwks.json",
+    ] {
+        assert_eq!(client.get(path).await.status(), StatusCode::NOT_FOUND);
+    }
+}
+
+#[tokio::test]
 async fn test_authorization_code_flow() {
     let client = TestClient::new();
-    let (_, client_id, username, password) = setup_user_and_client(&client).await;
+    let (pool_id, client_id, username, password) = setup_user_and_client(&client).await;
 
     // Request authorization code with direct auth (for testing)
     let auth_url = format!(
@@ -233,7 +270,7 @@ async fn test_authorization_code_flow() {
     assert_eq!(token_body["token_type"], "Bearer");
 
     let discovery: serde_json::Value = client
-        .get("/.well-known/openid-configuration")
+        .get(&format!("/{pool_id}/.well-known/openid-configuration"))
         .await
         .json()
         .await
@@ -241,6 +278,9 @@ async fn test_authorization_code_flow() {
     let id_token = token_body["id_token"].as_str().unwrap();
     let claims = verify_id_token(id_token, &client_id).unwrap().claims;
     assert_eq!(claims.iss, discovery["issuer"].as_str().unwrap());
+    let access_token = token_body["access_token"].as_str().unwrap();
+    let access_claims = verify_access_token(access_token).unwrap().claims;
+    assert_eq!(access_claims.iss, claims.iss);
 }
 
 #[tokio::test]
@@ -933,6 +973,7 @@ async fn test_client_credentials_returns_jwt_access_token() {
     let claims = verify_access_token(access_token).unwrap().claims;
     assert_eq!(claims.client_id, client_id);
     assert_eq!(claims.scope, "api/read");
+    assert!(claims.iss.ends_with(&format!("/{pool_id}")));
 }
 
 #[tokio::test]

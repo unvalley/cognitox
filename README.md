@@ -110,7 +110,7 @@ http://localhost:9229/admin/
 | `RUST_LOG` | `cognitox=info,tower_http=info` | Log filter (e.g. `debug` or `cognitox=debug,tower_http=info`) |
 | `COGNITOX_STORAGE_MODE` | `persistent` | Storage mode: `persistent` (file-backed) or `memory` (no persistence). |
 | `COGNITOX_DATA_FILE` | `cognitox-data.json` | Path to persist emulator state (JSON snapshot) when storage mode is `persistent`. |
-| `COGNITOX_ISSUER_BASE_URL` | `http://localhost:<COGNITOX_PORT>` | Base URL used as the JWT `iss` claim and in OpenID discovery. |
+| `COGNITOX_ISSUER_BASE_URL` | `http://localhost:<COGNITOX_PORT>` | Base URL for the JWT `iss` claim, which is `<base>/<user pool id>` as in Cognito, and for OpenID discovery. |
 
 ### Persistence
 

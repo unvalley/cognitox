@@ -152,6 +152,13 @@ pub fn issuer_base_url() -> String {
         .unwrap_or_else(|| DEFAULT_ISSUER_BASE_URL.to_string())
 }
 
+/// Return the `iss` claim for tokens issued by a user pool.
+///
+/// Mirrors Cognito, whose issuer is `https://cognito-idp.<region>.amazonaws.com/<user pool id>`.
+pub fn user_pool_issuer(user_pool_id: &UserPoolId) -> String {
+    format!("{}/{}", issuer_base_url(), user_pool_id)
+}
+
 /// Claims for ID Token
 #[derive(Debug, Serialize, Deserialize)]
 pub struct IdTokenClaims {
@@ -212,7 +219,7 @@ pub struct AccessTokenClaims {
 pub fn generate_id_token(
     user: &User,
     client_id: &str,
-    _user_pool_id: &UserPoolId,
+    user_pool_id: &UserPoolId,
     groups: &[String],
     expiry: Duration,
 ) -> Result<String, String> {
@@ -223,7 +230,7 @@ pub fn generate_id_token(
     let claims = IdTokenClaims {
         sub: user.id.to_string(),
         aud: client_id.to_string(),
-        iss: issuer_base_url(),
+        iss: user_pool_issuer(user_pool_id),
         iat: now.timestamp(),
         exp: (now + expiry).timestamp(),
         auth_time,
@@ -247,7 +254,7 @@ pub fn generate_id_token(
 pub fn generate_access_token(
     user: &User,
     client_id: &str,
-    _user_pool_id: &UserPoolId,
+    user_pool_id: &UserPoolId,
     groups: &[String],
     scopes: &[String],
     expiry: Duration,
@@ -264,7 +271,7 @@ pub fn generate_access_token(
 
     let claims = AccessTokenClaims {
         sub: user.id.to_string(),
-        iss: issuer_base_url(),
+        iss: user_pool_issuer(user_pool_id),
         iat: now.timestamp(),
         cognitox_iat_ms: Some(now.timestamp_millis()),
         exp: (now + expiry).timestamp(),
@@ -286,6 +293,7 @@ pub fn generate_access_token(
 /// Generate an OAuth client credentials access token.
 pub fn generate_client_credentials_access_token(
     client_id: &ClientId,
+    user_pool_id: &UserPoolId,
     scopes: &[String],
     expiry: Duration,
 ) -> Result<String, String> {
@@ -295,7 +303,7 @@ pub fn generate_client_credentials_access_token(
 
     let claims = AccessTokenClaims {
         sub: client_id.to_string(),
-        iss: issuer_base_url(),
+        iss: user_pool_issuer(user_pool_id),
         iat: now.timestamp(),
         cognitox_iat_ms: Some(now.timestamp_millis()),
         exp: (now + expiry).timestamp(),
@@ -471,6 +479,7 @@ mod tests {
         let access_claims = access_result.unwrap().claims;
         assert_eq!(access_claims.sub, user.id.to_string());
         assert_eq!(access_claims.token_use, "access");
+        assert_eq!(access_claims.iss, user_pool_issuer(&user_pool_id));
 
         let id_result = verify_id_token(&id_token, client_id);
         assert!(id_result.is_ok());
@@ -478,6 +487,7 @@ mod tests {
         assert_eq!(id_claims.sub, user.id.to_string());
         assert_eq!(id_claims.token_use, "id");
         assert_eq!(id_claims.email, Some("test@example.com".to_string()));
+        assert_eq!(id_claims.iss, user_pool_issuer(&user_pool_id));
     }
 
     #[test]
