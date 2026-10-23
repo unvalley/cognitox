@@ -111,6 +111,7 @@ http://localhost:9229/admin/
 | `COGNITOX_STORAGE_MODE` | `persistent` | Storage mode: `persistent` (file-backed) or `memory` (no persistence). |
 | `COGNITOX_DATA_FILE` | `cognitox-data.json` | Path to persist emulator state (JSON snapshot) when storage mode is `persistent`. |
 | `COGNITOX_ISSUER_BASE_URL` | `http://localhost:<COGNITOX_PORT>` | Base URL for the JWT `iss` claim, which is `<base>/<user pool id>` as in Cognito, and for OpenID discovery. |
+| `COGNITOX_SEED_FILE` | *(unset)* | JSON file of user pools and clients to create at startup with fixed IDs. See [Seeding](#seeding). |
 
 ### Persistence
 
@@ -126,6 +127,36 @@ To opt out of persistence and run purely in-memory:
 
 ```bash
 COGNITOX_STORAGE_MODE=memory cargo run
+```
+
+### Seeding
+
+Cognito assigns user pool and client IDs itself, so they cannot be written into application config ahead of time. A seed file creates them with fixed IDs at startup. Each user pool is a `CreateUserPool` request plus `Id` and `Clients`; each client is a `CreateUserPoolClient` request without `UserPoolId`, plus `ClientId` and an optional `ClientSecret`. Entries that already exist, such as ones restored from the snapshot, are left as they are.
+
+```json
+{
+  "UserPools": [
+    {
+      "Id": "us-east-1_LocalPool",
+      "PoolName": "local",
+      "Clients": [
+        {
+          "ClientId": "localwebclient",
+          "ClientSecret": "local-web-secret",
+          "ClientName": "web",
+          "AllowedOAuthFlows": ["code"],
+          "AllowedOAuthFlowsUserPoolClient": true,
+          "AllowedOAuthScopes": ["openid", "email"],
+          "CallbackURLs": ["http://localhost:3000/callback"]
+        }
+      ]
+    }
+  ]
+}
+```
+
+```bash
+COGNITOX_SEED_FILE=./seed.json cargo run
 ```
 
 ## API Coverage
