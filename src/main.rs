@@ -1,7 +1,7 @@
 use std::{net::SocketAddr, path::PathBuf, sync::Arc};
 
 use bpaf::Bpaf;
-use cognitox::{api, config::StorageConfig, jwt::set_issuer_base_url, storage::Storage};
+use cognitox::{api, config::StorageConfig, jwt::set_issuer_base_url, seed, storage::Storage};
 use tokio::signal;
 use tower_http::{
     cors::{Any, CorsLayer},
@@ -49,6 +49,11 @@ struct Cli {
     /// Defaults to "cognitox-data.json" when --storage-mode=persistent.
     #[bpaf(short, long, env("COGNITOX_DATA_FILE"), argument("FILE"))]
     data_file: Option<PathBuf>,
+
+    /// JSON file of user pools and clients to create at startup with fixed IDs.
+    /// Entries that already exist are left as they are.
+    #[bpaf(long, env("COGNITOX_SEED_FILE"), argument("FILE"))]
+    seed_file: Option<PathBuf>,
 
     /// Log level filter (e.g. "debug", "cognitox=debug,tower_http=info")
     #[bpaf(short, long, env("RUST_LOG"), argument("FILTER"))]
@@ -122,6 +127,13 @@ async fn main() {
     }));
 
     tracing::info!("Storage backend: {}", storage.backend_description());
+
+    if let Some(path) = &cli.seed_file
+        && let Err(e) = seed::apply_file(&storage, path).await
+    {
+        tracing::error!("{e}");
+        std::process::exit(1);
+    }
 
     // Build router
     let app = api::create_router((*storage).clone())
@@ -197,6 +209,7 @@ mod tests {
             port: DEFAULT_PORT,
             storage_mode: DEFAULT_STORAGE_MODE.to_string(),
             data_file: None,
+            seed_file: None,
             log_level: None,
         }
     }

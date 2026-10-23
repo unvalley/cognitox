@@ -314,6 +314,11 @@ pub(crate) fn build_user_pool_view(pool: &UserPool, estimated_number_of_users: u
 }
 
 pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
+    create(storage, body, UserPoolId::new_local()).await
+}
+
+/// Create a user pool under a caller-chosen ID, as seeding does.
+pub(crate) async fn create(storage: &Storage, body: Value, id: UserPoolId) -> Result<Value> {
     let req: Request = parse_request(body)?;
     let pool_name = req.pool_name.clone();
     let config = req.into_config();
@@ -323,7 +328,7 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
 
     let now = Utc::now();
     let pool = UserPool {
-        id: UserPoolId::new_local(),
+        id,
         name: pool_name,
         creation_date: now,
         last_modified_date: now,

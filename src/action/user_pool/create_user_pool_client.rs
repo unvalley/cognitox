@@ -196,6 +196,18 @@ impl Request {
 }
 
 pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
+    create(storage, body, ClientId::generate(), None).await
+}
+
+/// Create a client under a caller-chosen ID, as seeding does.
+///
+/// `client_secret` is used when `GenerateSecret` is set; otherwise a secret is generated.
+pub(crate) async fn create(
+    storage: &Storage,
+    body: Value,
+    client_id: ClientId,
+    client_secret: Option<String>,
+) -> Result<Value> {
     let req: Request = parse_request(body)?;
     let client_name = req.client_name.clone();
     let user_pool_id = req.user_pool_id.clone();
@@ -219,9 +231,8 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
         .ok_or(AppError::UserPoolNotFound)?;
 
     let now = Utc::now();
-    let client_id = ClientId::generate();
     let client_secret = if generate_secret {
-        Some(Uuid::new_v4().to_string())
+        Some(client_secret.unwrap_or_else(|| Uuid::new_v4().to_string()))
     } else {
         None
     };
