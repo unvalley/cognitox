@@ -427,12 +427,33 @@ pub struct SmsConfiguration {
     pub sns_region: Option<String>,
 }
 
+/// Cognito spells these in snake case. The upper case aliases keep older snapshots loading.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+#[serde(rename_all = "snake_case")]
 pub enum RecoveryMechanismName {
+    #[serde(alias = "VERIFIED_EMAIL")]
     VerifiedEmail,
+    #[serde(alias = "VERIFIED_PHONE_NUMBER")]
     VerifiedPhoneNumber,
+    #[serde(alias = "ADMIN_ONLY")]
     AdminOnly,
+}
+
+#[cfg(test)]
+mod recovery_mechanism_name_tests {
+    use super::RecoveryMechanismName;
+
+    #[test]
+    fn serializes_in_snake_case_and_reads_legacy_upper_case() {
+        assert_eq!(
+            serde_json::to_value(RecoveryMechanismName::VerifiedEmail).unwrap(),
+            "verified_email"
+        );
+        assert_eq!(
+            serde_json::from_value::<RecoveryMechanismName>("VERIFIED_EMAIL".into()).unwrap(),
+            RecoveryMechanismName::VerifiedEmail
+        );
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

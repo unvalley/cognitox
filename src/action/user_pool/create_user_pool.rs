@@ -466,7 +466,7 @@ mod tests {
                 "AccountRecoverySetting": {
                     "RecoveryMechanisms": [
                         {
-                            "Name": "VERIFIED_EMAIL",
+                            "Name": "verified_email",
                             "Priority": 1
                         }
                     ]
@@ -501,7 +501,7 @@ mod tests {
 
         assert_eq!(
             result["UserPool"]["AccountRecoverySetting"]["RecoveryMechanisms"][0]["Name"],
-            "VERIFIED_EMAIL"
+            "verified_email"
         );
         assert_eq!(
             result["UserPool"]["AdminCreateUserConfig"]["AllowAdminCreateUserOnly"],
