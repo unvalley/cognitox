@@ -371,6 +371,7 @@ pub async fn authorize(
                         &params.client_id,
                         &client.user_pool_id,
                         &groups,
+                        params.nonce.as_deref(),
                         id_expiry,
                     )
                     .map_err(|e| OAuthError {
@@ -601,6 +602,7 @@ pub async fn token(
                         client_id.as_str(),
                         &client.user_pool_id,
                         &groups,
+                        auth_code.nonce.as_deref(),
                         id_expiry,
                     )
                     .map_err(|e| OAuthError {
@@ -703,6 +705,7 @@ pub async fn token(
                         stored_token.client_id.as_str(),
                         &client.user_pool_id,
                         &groups,
+                        None,
                         id_expiry,
                     )
                     .map_err(|e| OAuthError {

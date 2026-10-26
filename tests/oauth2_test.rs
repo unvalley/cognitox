@@ -281,6 +281,97 @@ async fn test_authorization_code_flow() {
     let access_token = token_body["access_token"].as_str().unwrap();
     let access_claims = verify_access_token(access_token).unwrap().claims;
     assert_eq!(access_claims.iss, claims.iss);
+    assert_eq!(claims.nonce, None);
+}
+
+#[tokio::test]
+async fn test_authorization_code_flow_returns_nonce_in_id_token() {
+    let client = TestClient::new();
+    let (_, client_id, username, password) = setup_user_and_client(&client).await;
+
+    let response = client
+        .get(&format!(
+            "/oauth2/authorize?response_type=code&client_id={client_id}&redirect_uri=https://example.com/callback&scope=openid&nonce=n-0S6_WzA2Mj&username={username}&password={}",
+            urlencoding::encode(&password)
+        ))
+        .await;
+    assert_eq!(response.status(), StatusCode::TEMPORARY_REDIRECT);
+    let location = response.headers()["location"].to_str().unwrap();
+    let code = reqwest::Url::parse(location)
+        .unwrap()
+        .query_pairs()
+        .find(|(name, _)| name == "code")
+        .unwrap()
+        .1
+        .into_owned();
+
+    let token_response = client
+        .post_form(
+            "/oauth2/token",
+            &[
+                ("grant_type", "authorization_code"),
+                ("code", &code),
+                ("client_id", &client_id),
+                ("redirect_uri", "https://example.com/callback"),
+            ],
+        )
+        .await;
+    assert_eq!(token_response.status(), StatusCode::OK);
+    let token_body: serde_json::Value = token_response.json().await.unwrap();
+    let claims = verify_id_token(token_body["id_token"].as_str().unwrap(), &client_id)
+        .unwrap()
+        .claims;
+    assert_eq!(claims.nonce.as_deref(), Some("n-0S6_WzA2Mj"));
+
+    // The nonce binds one authorization, so refreshed ID tokens leave it out.
+    let refresh_response = client
+        .post_form(
+            "/oauth2/token",
+            &[
+                ("grant_type", "refresh_token"),
+                (
+                    "refresh_token",
+                    token_body["refresh_token"].as_str().unwrap(),
+                ),
+                ("client_id", &client_id),
+            ],
+        )
+        .await;
+    assert_eq!(refresh_response.status(), StatusCode::OK);
+    let refresh_body: serde_json::Value = refresh_response.json().await.unwrap();
+    let refreshed_claims = verify_id_token(refresh_body["id_token"].as_str().unwrap(), &client_id)
+        .unwrap()
+        .claims;
+    assert_eq!(refreshed_claims.nonce, None);
+}
+
+#[tokio::test]
+async fn test_implicit_flow_returns_nonce_in_id_token() {
+    let client = TestClient::new();
+    let (_, client_id, username, password) = setup_user_and_client(&client).await;
+
+    let response = client
+        .get(&format!(
+            "/oauth2/authorize?response_type=token&client_id={client_id}&redirect_uri=https://example.com/callback&scope=openid&nonce=n-0S6_WzA2Mj&username={username}&password={}",
+            urlencoding::encode(&password)
+        ))
+        .await;
+    assert_eq!(response.status(), StatusCode::TEMPORARY_REDIRECT);
+    let location = response.headers()["location"].to_str().unwrap();
+    let fragment = reqwest::Url::parse(location)
+        .unwrap()
+        .fragment()
+        .unwrap()
+        .to_string();
+    let id_token = reqwest::Url::parse(&format!("https://example.com/?{fragment}"))
+        .unwrap()
+        .query_pairs()
+        .find(|(name, _)| name == "id_token")
+        .unwrap()
+        .1
+        .into_owned();
+    let claims = verify_id_token(&id_token, &client_id).unwrap().claims;
+    assert_eq!(claims.nonce.as_deref(), Some("n-0S6_WzA2Mj"));
 }
 
 #[tokio::test]

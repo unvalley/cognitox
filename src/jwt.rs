@@ -170,6 +170,8 @@ pub struct IdTokenClaims {
     pub exp: i64,
     pub auth_time: i64,
     pub token_use: String,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub nonce: Option<String>,
 
     // Cognito-specific claims
     #[serde(skip_serializing_if = "Option::is_none", default)]
@@ -216,11 +218,15 @@ pub struct AccessTokenClaims {
 }
 
 /// Generate ID Token
+///
+/// `nonce` is the value the client sent to the authorize endpoint. Like
+/// Cognito, only tokens issued for that authorization carry it.
 pub fn generate_id_token(
     user: &User,
     client_id: &str,
     user_pool_id: &UserPoolId,
     groups: &[String],
+    nonce: Option<&str>,
     expiry: Duration,
 ) -> Result<String, String> {
     let keys = get_jwt_keys();
@@ -235,6 +241,7 @@ pub fn generate_id_token(
         exp: (now + expiry).timestamp(),
         auth_time,
         token_use: "id".to_string(),
+        nonce: nonce.map(str::to_string),
         email: user.email.clone(),
         email_verified: user.email.as_ref().map(|_| true),
         phone_number: user.phone_number.clone(),
@@ -469,9 +476,15 @@ mod tests {
             Duration::hours(1),
         )
         .expect("Failed to generate access token");
-        let id_token =
-            generate_id_token(&user, client_id, &user_pool_id, &groups, Duration::hours(1))
-                .expect("Failed to generate ID token");
+        let id_token = generate_id_token(
+            &user,
+            client_id,
+            &user_pool_id,
+            &groups,
+            None,
+            Duration::hours(1),
+        )
+        .expect("Failed to generate ID token");
 
         // Verify tokens
         let access_result = verify_access_token(&access_token);
