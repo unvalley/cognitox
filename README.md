@@ -94,7 +94,7 @@ The pages apply the user pool's rules. Sign-up and password reset enforce the
 `PasswordPolicy` and use six-digit codes (logged at debug level), confirming
 an account marks its email address verified, and a user who signs in with a
 temporary password is sent to `/new-password` to choose a new one before the
-sign-in completes. MFA is not asked for on these pages.
+sign-in completes. These pages have no MFA step: a sign-in that needs MFA is refused (see Known Limitations).
 
 | Endpoint | Notes |
 |----------|-------|
