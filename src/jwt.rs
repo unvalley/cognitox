@@ -379,7 +379,29 @@ pub struct IdTokenRequest<'a> {
     pub access_token: Option<&'a str>,
     /// The app client's `ReadAttributes`; empty means every attribute.
     pub readable_attributes: &'a [String],
+    /// The OAuth scopes granted with the token, which bound the attributes
+    /// it releases (see [`attribute_in_scopes`]). `None` for user pools API
+    /// authentication, which is not scoped.
+    pub oauth_scopes: Option<&'a [String]>,
     pub expiry: Duration,
+}
+
+/// Whether the granted OpenID Connect scopes release a user attribute.
+///
+/// With `openid` alone Cognito releases every attribute the app client can
+/// read. Once `email`, `phone`, or `profile` is requested, each attribute
+/// needs its scope: `email` covers the address and its verification flag,
+/// `phone` likewise, and `profile` everything else.
+pub fn attribute_in_scopes(name: &str, scopes: &[String]) -> bool {
+    let granted = |scope: &str| scopes.iter().any(|granted| granted == scope);
+    if !(granted("email") || granted("phone") || granted("profile")) {
+        return true;
+    }
+    match name {
+        "email" | "email_verified" => granted("email"),
+        "phone_number" | "phone_number_verified" => granted("phone"),
+        _ => granted("profile"),
+    }
 }
 
 /// Generate an ID token.
@@ -387,11 +409,14 @@ pub fn issue_id_token(request: &IdTokenRequest<'_>) -> Result<String, String> {
     let user = request.user;
     let now = Utc::now();
     let readable = |name: &str| {
-        request.readable_attributes.is_empty()
+        (request.readable_attributes.is_empty()
             || request
                 .readable_attributes
                 .iter()
-                .any(|attribute| attribute == name)
+                .any(|attribute| attribute == name))
+            && request
+                .oauth_scopes
+                .is_none_or(|scopes| attribute_in_scopes(name, scopes))
     };
 
     let email = user.email.clone().filter(|_| readable("email"));
@@ -506,6 +531,7 @@ pub fn generate_id_token(
         nonce,
         access_token: None,
         readable_attributes: &[],
+        oauth_scopes: None,
         expiry,
     })
 }

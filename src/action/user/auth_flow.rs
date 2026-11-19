@@ -1244,6 +1244,7 @@ pub(crate) async fn authentication_result(
         nonce: None,
         access_token: None,
         readable_attributes: &client.read_attributes,
+        oauth_scopes: None,
         expiry: resolve_id_token_expiry(client),
     })
     .map_err(AppError::Internal)?;

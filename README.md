@@ -100,7 +100,7 @@ sign-in completes. MFA is not asked for on these pages.
 |----------|-------|
 | `GET /oauth2/authorize` | Authorization code (`response_type=code`) and implicit (`token`) grants. Redirects with `302`. |
 | `POST /oauth2/token` | `authorization_code`, `refresh_token`, and `client_credentials` grants. Confidential clients authenticate with `Authorization: Basic ...` (`client_secret_basic`) or form fields (`client_secret_post`); public clients send `client_id` in the form body. |
-| `GET /oauth2/userInfo` | Needs an access token with the `openid` scope. Returns `sub`, `username`, and the attributes the token's scopes cover (`email`, `phone`, `profile`). |
+| `GET /oauth2/userInfo` | Needs an access token with the `openid` scope. Returns `sub`, `username`, and the user's attributes: all the app client can read with `openid` alone, or only those the `email`, `phone`, and `profile` scopes cover once one of them is requested. The ID token follows the same rule. |
 | `POST /oauth2/revoke` | Revokes a refresh token and the access and ID tokens of its sign-in. |
 | `GET /logout` | `client_id` with `logout_uri` (one of the client's `LogoutURLs`), or with `redirect_uri` and `response_type` to go back to the sign-in page. |
 | `GET /<user pool id>/.well-known/openid-configuration` | Discovery document; the signing keys are at `/<user pool id>/.well-known/jwks.json`. |

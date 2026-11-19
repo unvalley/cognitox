@@ -27,10 +27,10 @@ use crate::{
     },
     error::OAuthError,
     jwt::{
-        AccessTokenRequest, IdTokenRequest, TokenSession, generate_client_credentials_access_token,
-        get_jwks, issue_access_token, issue_id_token, issuer_base_url, resolve_access_token_expiry,
-        resolve_id_token_expiry, resolve_refresh_token_expiry, user_pool_issuer,
-        verify_access_token,
+        AccessTokenRequest, IdTokenRequest, TokenSession, attribute_in_scopes,
+        generate_client_credentials_access_token, get_jwks, issue_access_token, issue_id_token,
+        issuer_base_url, resolve_access_token_expiry, resolve_id_token_expiry,
+        resolve_refresh_token_expiry, user_pool_issuer, verify_access_token,
     },
     storage::Storage,
     types::{
@@ -124,8 +124,6 @@ pub struct TokenResponse {
     pub refresh_token: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub id_token: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub scope: Option<String>,
 }
 
 fn oauth_error(error: &str, description: impl Into<String>) -> OAuthError {
@@ -479,6 +477,7 @@ async fn issue_user_tokens(
                 nonce,
                 access_token: Some(&access_token),
                 readable_attributes: &client.read_attributes,
+                oauth_scopes: Some(scopes),
                 expiry: resolve_id_token_expiry(client),
             })
             .map_err(server_error)?,
@@ -796,7 +795,6 @@ pub async fn token(
                 expires_in: tokens.expires_in,
                 refresh_token: Some(refresh_token),
                 id_token: tokens.id_token,
-                scope: Some(auth_code.scope.join(" ")),
             }))
         }
         "refresh_token" => {
@@ -882,7 +880,6 @@ pub async fn token(
                 expires_in: tokens.expires_in,
                 refresh_token: rotated,
                 id_token: tokens.id_token,
-                scope: (!scopes.is_empty()).then(|| scopes.join(" ")),
             }))
         }
         "client_credentials" => {
@@ -934,7 +931,6 @@ pub async fn token(
                 expires_in: access_expiry.num_seconds(),
                 refresh_token: None,
                 id_token: None,
-                scope: (!scopes.is_empty()).then(|| scopes.join(" ")),
             }))
         }
         other => Err(oauth_error(
@@ -1035,10 +1031,6 @@ pub async fn revoke(
     StatusCode::OK.into_response()
 }
 
-/// Attributes each OIDC scope gives the userInfo endpoint access to.
-const EMAIL_SCOPE_ATTRIBUTES: &[&str] = &["email", "email_verified"];
-const PHONE_SCOPE_ATTRIBUTES: &[&str] = &["phone_number", "phone_number_verified"];
-
 /// Attributes that are never returned as claims of their own.
 const INTERNAL_ATTRIBUTES: &[&str] = &["sub", "preferred_mfa_setting"];
 
@@ -1125,15 +1117,12 @@ pub async fn userinfo(
                 .iter()
                 .any(|attribute| attribute == name)
     };
-    let in_scope = |name: &str| {
-        if EMAIL_SCOPE_ATTRIBUTES.contains(&name) {
-            has_scope("email")
-        } else if PHONE_SCOPE_ATTRIBUTES.contains(&name) {
-            has_scope("phone")
-        } else {
-            has_scope("profile")
-        }
-    };
+    let granted_scopes: Vec<String> = claims
+        .scope
+        .split_whitespace()
+        .map(str::to_string)
+        .collect();
+    let in_scope = |name: &str| attribute_in_scopes(name, &granted_scopes);
 
     let mut body = Map::new();
     body.insert("sub".to_string(), json!(user.id.to_string()));

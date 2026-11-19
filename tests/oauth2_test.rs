@@ -2440,12 +2440,35 @@ async fn test_userinfo_returns_the_attributes_the_scopes_cover() {
         jwt_claims(&tokens_for_scope(&client, client_id, "openid").await["access_token"])["sub"]
             .clone();
 
-    // `openid` alone identifies the user and nothing more.
+    // With `openid` alone Cognito releases every attribute the app client
+    // can read, in the ID token as well as from userInfo.
     let tokens = tokens_for_scope(&client, client_id, "openid").await;
     assert_eq!(
         userinfo(&client, &tokens["access_token"]).await,
-        json!({"sub": sub, "username": "testuser"})
+        json!({
+            "sub": sub,
+            "username": "testuser",
+            "email": "test@example.com",
+            "email_verified": "false",
+            "name": "Test User",
+            "phone_number": "+15555550100",
+            "phone_number_verified": "true"
+        })
     );
+    let id_token = jwt_claims(&tokens["id_token"]);
+    assert_eq!(id_token["email"], "test@example.com");
+    assert_eq!(id_token["name"], "Test User");
+    assert_eq!(id_token["phone_number"], "+15555550100");
+
+    // Asking for a standard scope narrows both to what the scopes cover.
+    let tokens = tokens_for_scope(&client, client_id, "openid email").await;
+    let id_token = jwt_claims(&tokens["id_token"]);
+    assert_eq!(id_token["email"], "test@example.com");
+    assert_eq!(id_token["email_verified"], false);
+    assert!(id_token.get("name").is_none());
+    assert!(id_token.get("phone_number").is_none());
+    // The token response itself carries no `scope` member.
+    assert!(tokens.get("scope").is_none());
 
     // The address was never verified, and userInfo says so, as a string.
     let tokens = tokens_for_scope(&client, client_id, "openid email").await;
