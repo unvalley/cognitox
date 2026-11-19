@@ -63,8 +63,8 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
             for attr in &req.custom_attributes {
                 if schema.iter().any(|existing| existing.name == attr.name) {
                     return Err(AppError::InvalidParameter(format!(
-                        "Custom attribute already exists: {}",
-                        attr.name
+                        "custom:{name}: Existing attribute already has name custom:{name}.",
+                        name = attr.name
                     )));
                 }
             }
@@ -118,7 +118,11 @@ mod tests {
         let schema = described["UserPool"]["SchemaAttributes"]
             .as_array()
             .unwrap();
-        assert!(schema.iter().any(|attr| attr["Name"] == "department"));
+        assert!(
+            schema
+                .iter()
+                .any(|attr| attr["Name"] == "custom:department")
+        );
     }
 
     #[tokio::test]
@@ -226,7 +230,11 @@ mod tests {
         )
         .await;
 
-        assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), AppError::InvalidParameter(_)));
+        assert!(matches!(
+            result,
+            Err(AppError::InvalidParameter(message))
+                if message
+                    == "custom:department: Existing attribute already has name custom:department."
+        ));
     }
 }

@@ -11,6 +11,7 @@ use serde_json::Value;
 use crate::{
     action::io::parse_request,
     action::user_pool::create_user_pool::{UserPoolConfigInput, validate_user_pool_configuration},
+    action::user_pool::defaults::apply_user_pool_defaults,
     error::{AppError, Result},
     storage::Storage,
     types::{
@@ -104,53 +105,32 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
                 validate_pool_name(&pool_name)?;
                 pool.name = pool_name.trim().to_string();
             }
-            if let Some(value) = req.account_recovery_setting {
-                pool.account_recovery_setting = Some(value);
-            }
-            if let Some(value) = req.admin_create_user_config {
-                pool.admin_create_user_config = Some(value);
-            }
-            if let Some(value) = req.auto_verified_attributes {
-                pool.auto_verified_attributes = Some(value);
-            }
+            // "If you don't provide a value for an attribute, Amazon Cognito
+            // sets it to its default value": the request replaces the pool's
+            // configuration instead of patching it.
+            pool.account_recovery_setting = req.account_recovery_setting;
+            pool.admin_create_user_config = req.admin_create_user_config;
+            pool.auto_verified_attributes = req.auto_verified_attributes;
+            pool.device_configuration = req.device_configuration;
+            pool.email_configuration = req.email_configuration;
+            pool.email_verification_message = req.email_verification_message;
+            pool.email_verification_subject = req.email_verification_subject;
+            pool.lambda_config = req.lambda_config;
+            pool.policies = req.policies;
+            pool.sms_authentication_message = req.sms_authentication_message;
+            pool.sms_configuration = req.sms_configuration;
+            pool.sms_verification_message = req.sms_verification_message;
+            pool.user_attribute_update_settings = req.user_attribute_update_settings;
+            pool.user_pool_add_ons = req.user_pool_add_ons;
+            pool.verification_message_template = req.verification_message_template;
+
+            // Settings with a lifecycle of their own keep their value when
+            // the request leaves them out.
             if let Some(value) = req.deletion_protection {
                 pool.deletion_protection = Some(value);
             }
-            if let Some(value) = req.device_configuration {
-                pool.device_configuration = Some(value);
-            }
-            if let Some(value) = req.email_configuration {
-                pool.email_configuration = Some(value);
-            }
-            if let Some(value) = req.email_verification_message {
-                pool.email_verification_message = Some(value);
-            }
-            if let Some(value) = req.email_verification_subject {
-                pool.email_verification_subject = Some(value);
-            }
-            if let Some(value) = req.lambda_config {
-                pool.lambda_config = Some(value);
-            }
             if let Some(value) = req.mfa_configuration {
                 pool.mfa_configuration = Some(value);
-            }
-            if let Some(value) = req.policies {
-                pool.policies = Some(value);
-            }
-            if let Some(value) = req.sms_authentication_message {
-                pool.sms_authentication_message = Some(value);
-            }
-            if let Some(value) = req.sms_configuration {
-                pool.sms_configuration = Some(value);
-            }
-            if let Some(value) = req.sms_verification_message {
-                pool.sms_verification_message = Some(value);
-            }
-            if let Some(value) = req.user_attribute_update_settings {
-                pool.user_attribute_update_settings = Some(value);
-            }
-            if let Some(value) = req.user_pool_add_ons {
-                pool.user_pool_add_ons = Some(value);
             }
             if let Some(value) = req.user_pool_tags {
                 pool.user_pool_tags = Some(value);
@@ -158,10 +138,8 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
             if let Some(value) = req.user_pool_tier {
                 pool.user_pool_tier = Some(value);
             }
-            if let Some(value) = req.verification_message_template {
-                pool.verification_message_template = Some(value);
-            }
 
+            apply_user_pool_defaults(pool);
             pool.last_modified_date = Utc::now();
             Ok(())
         })
@@ -286,5 +264,111 @@ mod tests {
             Some("dev")
         );
         assert_eq!(updated.user_pool_tier, Some(UserPoolTier::Plus));
+    }
+
+    #[tokio::test]
+    async fn test_update_user_pool_resets_what_the_request_leaves_out() {
+        let storage = Storage::new();
+
+        let pool = create_user_pool::handler(
+            &storage,
+            json!({
+                "PoolName": "test-pool",
+                "AutoVerifiedAttributes": ["email"],
+                "LambdaConfig": {
+                    "PreSignUp": "arn:aws:lambda:us-east-1:000000000000:function:pre"
+                },
+                "Policies": {
+                    "PasswordPolicy": {"MinimumLength": 12, "RequireSymbols": true}
+                },
+                "AdminCreateUserConfig": {"AllowAdminCreateUserOnly": true},
+                "DeletionProtection": "ACTIVE",
+                "MfaConfiguration": "OPTIONAL",
+                "UserPoolTier": "PLUS",
+                "UserPoolTags": {"env": "dev"}
+            }),
+        )
+        .await
+        .unwrap();
+        let pool_id: UserPoolId = pool["UserPool"]["Id"].as_str().unwrap().parse().unwrap();
+
+        handler(
+            &storage,
+            json!({
+                "UserPoolId": pool_id,
+                "SmsAuthenticationMessage": "Your code is {####}"
+            }),
+        )
+        .await
+        .unwrap();
+
+        let updated = storage.get_user_pool(&pool_id).await.unwrap();
+        assert_eq!(
+            updated.sms_authentication_message.as_deref(),
+            Some("Your code is {####}")
+        );
+        // Everything else the request could have set is back to its default.
+        assert_eq!(updated.auto_verified_attributes, None);
+        assert_eq!(updated.lambda_config, Some(json!({})));
+        assert_eq!(
+            updated
+                .policies
+                .as_ref()
+                .and_then(|policies| policies.password_policy.clone()),
+            Some(crate::validation::default_password_policy())
+        );
+        assert_eq!(
+            updated
+                .admin_create_user_config
+                .as_ref()
+                .and_then(|config| config.allow_admin_create_user_only),
+            Some(false)
+        );
+        // The name and the settings with their own lifecycle stay.
+        assert_eq!(updated.name, "test-pool");
+        assert_eq!(
+            updated.deletion_protection,
+            Some(DeletionProtection::Active)
+        );
+        assert_eq!(updated.mfa_configuration, Some(MfaConfiguration::Optional));
+        assert_eq!(updated.user_pool_tier, Some(UserPoolTier::Plus));
+        assert_eq!(
+            updated
+                .user_pool_tags
+                .as_ref()
+                .and_then(|tags| tags.get("env"))
+                .map(String::as_str),
+            Some("dev")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_update_user_pool_completes_a_partial_password_policy() {
+        let storage = Storage::new();
+
+        let pool = create_user_pool::handler(&storage, json!({"PoolName": "test-pool"}))
+            .await
+            .unwrap();
+        let pool_id: UserPoolId = pool["UserPool"]["Id"].as_str().unwrap().parse().unwrap();
+
+        handler(
+            &storage,
+            json!({
+                "UserPoolId": pool_id,
+                "Policies": {"PasswordPolicy": {"MinimumLength": 6}}
+            }),
+        )
+        .await
+        .unwrap();
+
+        let updated = storage.get_user_pool(&pool_id).await.unwrap();
+        let policy = updated
+            .policies
+            .and_then(|policies| policies.password_policy)
+            .unwrap();
+        assert_eq!(policy.minimum_length, Some(6));
+        assert_eq!(policy.require_symbols, Some(false));
+        assert_eq!(policy.require_uppercase, Some(false));
+        assert_eq!(policy.temporary_password_validity_days, Some(7));
     }
 }
