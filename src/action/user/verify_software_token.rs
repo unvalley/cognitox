@@ -39,61 +39,7 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
     let well_formed = req.user_code.len() == 6 && req.user_code.chars().all(|c| c.is_ascii_digit());
 
     if let Some(session) = req.session.as_deref() {
-        // The session is the `MFA_SETUP` challenge AssociateSoftwareToken
-        // continued; it lives, and tolerates wrong codes, as any challenge.
-        let invalid_session =
-            || AppError::NotAuthorized("Invalid session for the user.".to_string());
-        let mut pending = storage
-            .get_auth_challenge_session(session)
-            .await
-            .filter(|pending| pending.challenge_name == ChallengeType::MfaSetup)
-            .ok_or_else(invalid_session)?;
-        let (user_id, secret) = storage
-            .get_software_token_session(session)
-            .await
-            .filter(|(user_id, _)| *user_id == pending.user_id)
-            .ok_or_else(invalid_session)?;
-        if pending.expires_at < Utc::now() {
-            storage.delete_auth_challenge_session(session).await;
-            storage.delete_software_token_session(session).await;
-            return Err(AppError::NotAuthorized(
-                "Invalid session for the user, session is expired.".to_string(),
-            ));
-        }
-        storage
-            .get_user(&user_id)
-            .await
-            .ok_or(AppError::UserNotFound)?;
-
-        let attempts = storage
-            .update_auth_challenge_session(session, |pending| {
-                pending.failed_attempts += 1;
-                pending.failed_attempts
-            })
-            .await
-            .ok_or_else(invalid_session)?;
-        if !well_formed || !is_valid_totp_code(&secret, &req.user_code, Utc::now().timestamp())? {
-            if attempts >= MAX_SETUP_ATTEMPTS {
-                storage.delete_auth_challenge_session(session).await;
-                storage.delete_software_token_session(session).await;
-            }
-            return Err(code_mismatch());
-        }
-
-        // The device is verified: the factor becomes active, and a new
-        // session lets the client finish with RespondToAuthChallenge.
-        storage.delete_software_token_session(session).await;
-        storage.delete_auth_challenge_session(session).await;
-        storage.save_software_token_secret(&user_id, secret).await;
-        storage
-            .add_user_auth_factor(&user_id, SOFTWARE_TOKEN_MFA_FACTOR)
-            .await;
-        pending.session = new_session_token();
-        pending.mfa_setup_complete = true;
-        pending.failed_attempts = 0;
-        let next_session = pending.session.clone();
-        storage.save_auth_challenge_session(pending).await;
-
+        let next_session = verify_with_session(storage, session, &req.user_code, false).await?;
         return Ok(json!({
             "Status": "SUCCESS",
             "Session": next_session
@@ -136,6 +82,79 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
     Ok(json!({
         "Status": "SUCCESS"
     }))
+}
+
+/// Verify the first code of an authenticator app registered under an
+/// `MFA_SETUP` session. The factor becomes active, and the session returned
+/// finishes the challenge.
+///
+/// The session is the one `associate_with_session` continued; it lives, and
+/// tolerates wrong codes, as any challenge. `managed_login` says who is
+/// asking: a session is only good where it was issued.
+pub(crate) async fn verify_with_session(
+    storage: &Storage,
+    session: &str,
+    user_code: &str,
+    managed_login: bool,
+) -> Result<String> {
+    let code_mismatch = || AppError::EnableSoftwareTokenMfa("Code mismatch".to_string());
+    let well_formed = user_code.len() == 6 && user_code.chars().all(|c| c.is_ascii_digit());
+    let invalid_session = || AppError::NotAuthorized("Invalid session for the user.".to_string());
+
+    let mut pending = storage
+        .get_auth_challenge_session(session)
+        .await
+        .filter(|pending| {
+            pending.challenge_name == ChallengeType::MfaSetup
+                && pending.managed_login == managed_login
+        })
+        .ok_or_else(invalid_session)?;
+    let (user_id, secret) = storage
+        .get_software_token_session(session)
+        .await
+        .filter(|(user_id, _)| *user_id == pending.user_id)
+        .ok_or_else(invalid_session)?;
+    if pending.expires_at < Utc::now() {
+        storage.delete_auth_challenge_session(session).await;
+        storage.delete_software_token_session(session).await;
+        return Err(AppError::NotAuthorized(
+            "Invalid session for the user, session is expired.".to_string(),
+        ));
+    }
+    storage
+        .get_user(&user_id)
+        .await
+        .ok_or(AppError::UserNotFound)?;
+
+    let attempts = storage
+        .update_auth_challenge_session(session, |pending| {
+            pending.failed_attempts += 1;
+            pending.failed_attempts
+        })
+        .await
+        .ok_or_else(invalid_session)?;
+    if !well_formed || !is_valid_totp_code(&secret, user_code, Utc::now().timestamp())? {
+        if attempts >= MAX_SETUP_ATTEMPTS {
+            storage.delete_auth_challenge_session(session).await;
+            storage.delete_software_token_session(session).await;
+        }
+        return Err(code_mismatch());
+    }
+
+    // The device is verified: the factor becomes active, and a new
+    // session lets the client finish with RespondToAuthChallenge.
+    storage.delete_software_token_session(session).await;
+    storage.delete_auth_challenge_session(session).await;
+    storage.save_software_token_secret(&user_id, secret).await;
+    storage
+        .add_user_auth_factor(&user_id, SOFTWARE_TOKEN_MFA_FACTOR)
+        .await;
+    pending.session = new_session_token();
+    pending.mfa_setup_complete = true;
+    pending.failed_attempts = 0;
+    let next_session = pending.session.clone();
+    storage.save_auth_challenge_session(pending).await;
+    Ok(next_session)
 }
 
 /// Wrong codes an `MFA_SETUP` session tolerates before it is discarded.

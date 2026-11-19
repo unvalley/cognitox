@@ -71,12 +71,24 @@ With `PreventUserExistenceErrors: ENABLED` an unknown user looks like a wrong
 password. For SRP that means handing out a `PASSWORD_VERIFIER` challenge
 nobody can answer, as Cognito does.
 
-## Outside the state machine
+## Managed login
 
 The Hosted UI and `/oauth2/authorize` check passwords themselves
-(`api/oauth2.rs::check_credentials`). They have no MFA pages, so they refuse
-a sign-in the state machine would challenge (`requires_mfa`) instead of
-completing it.
+(`api/oauth2.rs::check_credentials`), because a browser sign-in ends in an
+authorization code rather than in tokens. For MFA they come back to the
+state machine: `second_factor` decides which challenge follows the password
+and stores it as the API would, `/mfa` renders the pending challenge its
+`session` names, and `answer_second_factor` checks the answer with the same
+attempt limit. Only the last step differs: `SecondFactorAnswer::Verified`
+hands the user back to `complete_authorization`.
+
+Requests from these pages carry `AuthApi::ManagedLogin`, which skips the
+`SECRET_HASH` check: the browser never holds the client secret. For that
+reason, and because the two ends differ (an authorization code with the
+request's scopes, or tokens with the API's), a challenge records where it
+was issued (`PendingAuthChallenge::managed_login`) and is only answered
+there. For `MFA_SETUP` the page takes the steps of `AssociateSoftwareToken`
+and `VerifySoftwareToken` (`associate_with_session`, `verify_with_session`).
 
 ## Not implemented
 

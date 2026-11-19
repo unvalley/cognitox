@@ -75,7 +75,7 @@ client = boto3.client(
 ### Hosted UI
 
 cognitox serves the endpoints of a Cognito managed login domain: sign-in,
-sign-up, and password reset pages, plus the OAuth 2.0 / OpenID Connect
+sign-up, password reset, and MFA pages, plus the OAuth 2.0 / OpenID Connect
 endpoints behind them.
 
 ```
@@ -94,7 +94,14 @@ The pages apply the user pool's rules. Sign-up and password reset enforce the
 `PasswordPolicy` and use six-digit codes (logged at debug level), confirming
 an account marks its email address verified, and a user who signs in with a
 temporary password is sent to `/new-password` to choose a new one before the
-sign-in completes. These pages have no MFA step: a sign-in that needs MFA is refused (see Known Limitations).
+sign-in completes.
+
+A user who has an MFA factor, or any user of a pool with
+`MfaConfiguration: ON`, continues at `/mfa` after the password: the page asks
+for the authenticator app's code or the code "sent" by SMS or email, offers
+the choice when the user has several factors and no preference, and has a
+user without a factor register an authenticator app from its secret key (the
+page shows the key, not a QR code). Three wrong codes end the attempt.
 
 | Endpoint | Notes |
 |----------|-------|
@@ -190,7 +197,7 @@ cognitox aims to fail locally where Cognito would fail in AWS:
 
 - **App client auth flows** -- a client created without `ExplicitAuthFlows` gets Cognito's default (`ALLOW_CUSTOM_AUTH`, `ALLOW_USER_SRP_AUTH`, `ALLOW_REFRESH_TOKEN_AUTH`). `USER_PASSWORD_AUTH` and the admin password flow answer `InvalidParameterException` until the client lists `ALLOW_USER_PASSWORD_AUTH` / `ALLOW_ADMIN_USER_PASSWORD_AUTH`.
 - **Password policy** -- the user pool's `PasswordPolicy` is enforced wherever a password is set, with `InvalidPasswordException` and Cognito's messages. A pool without one uses Cognito's default: 8 characters with upper case, lower case, a number, and a symbol.
-- **MFA** -- a user's MFA preference, or a pool with `MfaConfiguration: ON`, adds the `SOFTWARE_TOKEN_MFA`, `SMS_MFA`, `EMAIL_OTP`, `SELECT_MFA_TYPE`, or `MFA_SETUP` challenge to sign-in.
+- **MFA** -- a user's MFA preference, or a pool with `MfaConfiguration: ON`, adds the `SOFTWARE_TOKEN_MFA`, `SMS_MFA`, `EMAIL_OTP`, `SELECT_MFA_TYPE`, or `MFA_SETUP` challenge to sign-in, through the API and on the Hosted UI alike.
 - **Errors** -- client errors are HTTP 400 with Cognito's `__type` and message (`NotAuthorizedException: Incorrect username or password.`), plus the `x-amzn-errortype` and `x-amzn-requestid` headers.
 - **Tokens** -- ID tokens carry the user's attributes, `cognito:groups`, and `cognito:roles`; access and ID tokens share `origin_jti` and `event_id`, and `RevokeToken` voids the tokens of one sign-in.
 - **Usernames** -- in a pool with `UsernameAttributes` the address or number a user signs up with becomes the `email` / `phone_number` attribute and the username is the `sub`. Every API accepts the `sub`, and a verified email address or phone number in an `AliasAttributes` pool, in place of the username; names compare case-insensitively unless the pool is case sensitive.
@@ -214,7 +221,6 @@ See [spec/README.md](spec/README.md).
 - **Auth flows** -- `USER_SRP_AUTH`, `USER_PASSWORD_AUTH`, `ADMIN_USER_PASSWORD_AUTH` (`ADMIN_NO_SRP_AUTH`), `REFRESH_TOKEN_AUTH`, and the choice-based `USER_AUTH` flow (password, SRP, email and SMS one-time codes) are supported. `CUSTOM_AUTH` needs Lambda triggers and returns `NotImplementedException`, as do passkey (`WEB_AUTHN`) sign-in and device SRP.
 - **Lambda triggers** -- not supported (no pre/post auth hooks)
 - **Email/SMS delivery** -- nothing is sent. Confirmation, password reset, and SMS MFA codes are six digits and sign-in one-time passwords (`EMAIL_OTP`, `SMS_OTP`) eight, as Cognito's are; they are persisted in the data file and emitted only at debug log level (`RUST_LOG=cognitox=debug`).
-- **MFA on the hosted pages** -- the Hosted UI and `/oauth2/authorize` have no MFA step. A user who has an MFA factor, or any user of a pool with `MfaConfiguration: ON`, is refused there rather than signed in with the password alone; sign such users in through the user pools API.
 - **Account lockout** -- failed sign-in attempts are not rate limited; only a challenge session ends after repeated wrong answers.
 - **Advanced security features** -- risk configuration is stored but not evaluated
 

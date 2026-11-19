@@ -20,6 +20,7 @@ use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
+use super::hosted_ui::{OAuthParams, after_password};
 use crate::{
     action::user::{
         auth_flow::{group_claims, new_session_token},
@@ -34,8 +35,8 @@ use crate::{
     },
     storage::Storage,
     types::{
-        AuthorizationCode, ClientId, MfaConfiguration, OAuthFlow, RefreshToken,
-        RefreshTokenRotationFeature, User, UserPool, UserPoolClient, UserPoolId, UserStatus,
+        AuthorizationCode, ClientId, OAuthFlow, RefreshToken, RefreshTokenRotationFeature, User,
+        UserPool, UserPoolClient, UserPoolId, UserStatus,
     },
 };
 
@@ -334,7 +335,7 @@ pub(crate) async fn validate_authorization_request(
 
 /// Where a correct password leaves a managed login sign-in.
 pub(crate) enum SignIn {
-    /// The user may be signed in.
+    /// Nothing but MFA, for a user who needs it, stands before the sign-in.
     Complete(User),
     /// The password is temporary; the user has to choose a new one first.
     NewPasswordRequired(User),
@@ -351,8 +352,6 @@ pub(crate) enum SignInError {
     IncorrectCredentials,
     Disabled,
     TemporaryPasswordExpired,
-    /// The sign-in needs an MFA challenge the hosted pages cannot present.
-    MfaUnsupported,
 }
 
 impl SignInError {
@@ -363,9 +362,6 @@ impl SignInError {
             Self::Disabled => "User is disabled.",
             Self::TemporaryPasswordExpired => {
                 "Temporary password has expired and must be reset by an administrator."
-            }
-            Self::MfaUnsupported => {
-                "This sign-in requires MFA, which the cognitox hosted pages do not support yet. Sign in through the user pools API."
             }
         }
     }
@@ -384,7 +380,8 @@ fn temporary_password_expired(pool: &UserPool, user: &User) -> bool {
 
 /// Check a username and password the way the user pools API does: a
 /// disabled user is refused outright, the account state only matters once
-/// the password is known to be right.
+/// the password is known to be right. MFA, where the user or the user pool
+/// calls for it, is the caller's next step.
 pub(crate) async fn check_credentials(
     storage: &Storage,
     pool: &UserPool,
@@ -424,20 +421,8 @@ pub(crate) async fn check_credentials(
                 Ok(SignIn::NewPasswordRequired(user))
             }
         }
-        _ if requires_mfa(storage, pool, &user).await => Err(SignInError::MfaUnsupported),
         _ => Ok(SignIn::Complete(user)),
     }
-}
-
-/// Whether Cognito would follow the password with an MFA challenge: the
-/// user has a factor enabled, or the user pool requires one.
-///
-/// The hosted pages have no MFA step yet. Signing such a user in with the
-/// password alone would hand out tokens Cognito would not, so the hosted
-/// sign-in refuses instead.
-pub(crate) async fn requires_mfa(storage: &Storage, pool: &UserPool, user: &User) -> bool {
-    pool.mfa_configuration == Some(MfaConfiguration::On)
-        || !storage.list_user_auth_factors(&user.id).await.is_empty()
 }
 
 /// Tokens issued to a user through the OAuth 2.0 endpoints.
@@ -567,6 +552,9 @@ pub(crate) async fn complete_authorization(
 ///
 /// Shows the sign-in page. As a convenience for tests and the bundled UI, a
 /// request that carries `username` and `password` is authenticated directly.
+/// A user who needs MFA is sent on to the MFA page: the redirect, or the
+/// `redirectUrl` of the JSON answer, is then the relative `/mfa?...` rather
+/// than the callback.
 pub async fn authorize(
     State(storage): State<Storage>,
     headers: HeaderMap,
@@ -616,7 +604,17 @@ pub async fn authorize(
         Err(error) => return Err(oauth_error("access_denied", error.message())),
     };
 
-    let redirect_url = complete_authorization(&storage, &request, &user).await?;
+    let oauth = OAuthParams {
+        response_type: params.response_type.clone(),
+        client_id: params.client_id.clone(),
+        redirect_uri: params.redirect_uri.clone(),
+        scope: params.scope.clone(),
+        state: params.state.clone(),
+        nonce: params.nonce.clone(),
+        code_challenge: params.code_challenge.clone(),
+        code_challenge_method: params.code_challenge_method.clone(),
+    };
+    let redirect_url = after_password(&storage, &request, &oauth, &user).await?;
     if !request.implicit && prefers_json_redirect(&headers) {
         return Ok(Json(json!({ "redirectUrl": redirect_url })).into_response());
     }

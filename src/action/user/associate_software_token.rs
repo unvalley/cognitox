@@ -48,13 +48,33 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
         ));
     };
 
-    // The only session that can register a device is the `MFA_SETUP`
-    // challenge of a sign-in, which proves the password was presented.
+    let (secret_code, next_session) = associate_with_session(storage, session, false).await?;
+    Ok(json!({
+        "SecretCode": secret_code,
+        "Session": next_session
+    }))
+}
+
+/// Start registering an authenticator app under the `MFA_SETUP` challenge
+/// of a sign-in, which proves the password was presented; no other session
+/// can register a device. Returns the secret key and the session that
+/// continues the setup.
+///
+/// `managed_login` says who is asking: a session is only good where it was
+/// issued, the API or the managed login pages.
+pub(crate) async fn associate_with_session(
+    storage: &Storage,
+    session: &str,
+    managed_login: bool,
+) -> Result<(String, String)> {
     let invalid_session = || AppError::NotAuthorized("Invalid session for the user.".to_string());
     let mut pending = storage
         .get_auth_challenge_session(session)
         .await
-        .filter(|pending| pending.challenge_name == ChallengeType::MfaSetup)
+        .filter(|pending| {
+            pending.challenge_name == ChallengeType::MfaSetup
+                && pending.managed_login == managed_login
+        })
         .ok_or_else(invalid_session)?;
     if pending.expires_at < Utc::now() {
         storage.delete_auth_challenge_session(session).await;
@@ -78,10 +98,7 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
         .save_software_token_session(next_session.clone(), &user_id, secret_code.clone())
         .await;
 
-    Ok(json!({
-        "SecretCode": secret_code,
-        "Session": next_session
-    }))
+    Ok((secret_code, next_session))
 }
 
 fn secret_only(secret_code: String) -> Value {

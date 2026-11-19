@@ -1052,6 +1052,11 @@ pub struct PendingAuthChallenge {
     /// Whether the session belongs to the choice-based `USER_AUTH` flow.
     #[serde(default)]
     pub user_auth: bool,
+    /// Whether the managed login pages issued the session. A session is
+    /// answered where it was issued: the pages do not take the API's, nor
+    /// the API theirs.
+    #[serde(default)]
+    pub managed_login: bool,
 }
 
 /// What the server keeps between `SRP_A` and `PASSWORD_VERIFIER`.

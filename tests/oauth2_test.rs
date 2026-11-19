@@ -2939,7 +2939,7 @@ async fn test_oauth_grants_stay_within_their_scopes_and_respect_mfa() {
     refused(body);
 
     // A user pool that requires MFA does not hand out a code for a password
-    // alone; the hosted pages have no MFA step to offer.
+    // alone: the sign-in goes on to the MFA page.
     client
         .cognito_request(
             "SetUserPoolMfaConfig",
@@ -2957,5 +2957,17 @@ async fn test_oauth_grants_stay_within_their_scopes_and_respect_mfa() {
             urlencoding::encode(&password)
         ))
         .await;
-    assert_ne!(response.status(), StatusCode::FOUND);
+    assert_eq!(response.status(), StatusCode::FOUND);
+    let location = response.headers()["location"].to_str().unwrap();
+    assert!(location.starts_with("/mfa?"), "{location}");
+    assert!(!location.contains("code="), "{location}");
+
+    // The page carries the authorization request on to the callback.
+    let page = client.get(location).await;
+    assert_eq!(page.status(), StatusCode::OK);
+    assert!(page.body_string().contains("Set up an authenticator app"));
+    assert!(
+        page.body_string()
+            .contains("name=\"scope\" value=\"openid\"")
+    );
 }

@@ -121,6 +121,7 @@ pub fn create_router(storage: Storage) -> Router {
             "/new-password",
             get(hosted_ui::new_password_page).post(hosted_ui::new_password_submit),
         )
+        .route("/mfa", get(hosted_ui::mfa_page).post(hosted_ui::mfa_submit))
         .route(
             "/signup",
             get(hosted_ui::signup_page).post(hosted_ui::signup_submit),

@@ -41,7 +41,7 @@ use super::helpers::{
 use super::verify_software_token::is_valid_totp_code;
 
 const INCORRECT_CREDENTIALS: &str = "Incorrect username or password.";
-const INVALID_SESSION: &str = "Invalid session for the user.";
+pub(crate) const INVALID_SESSION: &str = "Invalid session for the user.";
 const EXPIRED_SESSION: &str = "Invalid session for the user, session is expired.";
 const CODE_MISMATCH: &str = "Invalid code received for user";
 /// Default `AuthSessionValidity`, in minutes.
@@ -52,11 +52,13 @@ const MAX_CHALLENGE_ATTEMPTS: u32 = 3;
 const DEFAULT_TEMPORARY_PASSWORD_DAYS: i64 = 7;
 
 /// Which API a request came through. The admin operations accept the
-/// server-side flows; the public ones do not.
+/// server-side flows; the public ones do not. The managed login pages answer
+/// challenges for the browser, which never holds the client secret.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum AuthApi {
     User,
     Admin,
+    ManagedLogin,
 }
 
 /// What every step of a sign-in needs to know about the request.
@@ -423,62 +425,15 @@ pub(crate) async fn respond_to_auth_challenge(
             ctx.storage.delete_auth_challenge_session(session).await;
             after_first_factor(ctx, user, pending.user_auth).await
         }
-        ChallengeType::SoftwareTokenMfa => {
-            let code = required(responses, "SOFTWARE_TOKEN_MFA_CODE")?;
-            let secret = ctx.storage.get_software_token_secret(&user.id).await;
-            let attempt = claim_attempt(ctx, &pending).await?;
-            let valid = match secret {
-                Some(secret) => {
-                    is_valid_totp_code(&secret, code, Utc::now().timestamp()).unwrap_or(false)
-                }
-                None => false,
-            };
-            if !valid {
-                return Err(wrong_answer(ctx, &pending, attempt, CODE_MISMATCH).await);
-            }
-            ctx.storage.delete_auth_challenge_session(session).await;
-            complete(ctx, &user).await
-        }
-        ChallengeType::SmsMfa | ChallengeType::EmailOtp | ChallengeType::SmsOtp => {
-            let key = match challenge_name {
-                ChallengeType::SmsMfa => "SMS_MFA_CODE",
-                ChallengeType::EmailOtp => "EMAIL_OTP_CODE",
-                _ => "SMS_OTP_CODE",
-            };
-            // The API reference also names the email code `EMAIL_MFA_CODE`.
-            let code = match optional(responses, "EMAIL_MFA_CODE") {
-                Some(code) if challenge_name == ChallengeType::EmailOtp => code,
-                _ => required(responses, key)?,
-            };
-            let attempt = claim_attempt(ctx, &pending).await?;
-            if pending.code.as_deref() != Some(code.trim()) {
-                return Err(wrong_answer(ctx, &pending, attempt, CODE_MISMATCH).await);
-            }
-            ctx.storage.delete_auth_challenge_session(session).await;
-            complete(ctx, &user).await
-        }
-        ChallengeType::SelectMfaType => {
-            // The API reference calls the email factor `EMAIL_MFA` here;
-            // the challenge and the SDKs call it `EMAIL_OTP`.
-            let answer = match required(responses, "ANSWER")? {
-                "EMAIL_MFA" => EMAIL_OTP_FACTOR,
-                answer => answer,
-            };
-            if !pending.choices.iter().any(|choice| choice == answer) {
-                return Err(AppError::InvalidParameter(format!(
-                    "Invalid ANSWER {answer} for SELECT_MFA_TYPE"
-                )));
-            }
-            ctx.storage.delete_auth_challenge_session(session).await;
-            mfa_challenge(ctx, &user, answer).await
-        }
-        ChallengeType::MfaSetup => {
-            if !pending.mfa_setup_complete {
-                return Err(AppError::NotAuthorized(INVALID_SESSION.to_string()));
-            }
-            ctx.storage.delete_auth_challenge_session(session).await;
-            complete(ctx, &user).await
-        }
+        ChallengeType::SoftwareTokenMfa
+        | ChallengeType::SmsMfa
+        | ChallengeType::EmailOtp
+        | ChallengeType::SmsOtp
+        | ChallengeType::SelectMfaType
+        | ChallengeType::MfaSetup => match answer_factor(ctx, &pending, &user, responses).await? {
+            Some(next) => Ok(next.into_response()),
+            None => complete(ctx, &user).await,
+        },
         ChallengeType::SelectChallenge => {
             let answer = required(responses, "ANSWER")?;
             let chosen = ChallengeType::parse(answer)
@@ -528,6 +483,112 @@ pub(crate) async fn respond_to_auth_challenge(
     }
 }
 
+/// The challenges that stand between a correct password and a sign-in.
+pub(crate) const SECOND_FACTOR_CHALLENGES: &[ChallengeType] = &[
+    ChallengeType::SoftwareTokenMfa,
+    ChallengeType::SmsMfa,
+    ChallengeType::EmailOtp,
+    ChallengeType::SelectMfaType,
+    ChallengeType::MfaSetup,
+];
+
+/// Where the answer to an MFA challenge leaves a sign-in.
+pub(crate) enum SecondFactorAnswer {
+    /// Every factor is satisfied; the caller signs the user in.
+    Verified(User),
+    /// The answer picked a factor, whose challenge comes next.
+    Next(Challenge),
+}
+
+/// Answer an MFA challenge without issuing tokens, for a caller that
+/// finishes the sign-in its own way (the managed login pages hand out an
+/// authorization code).
+pub(crate) async fn answer_second_factor(
+    ctx: &AuthContext<'_>,
+    session: &str,
+    responses: &HashMap<String, String>,
+) -> Result<SecondFactorAnswer> {
+    let pending = load_session(ctx, session, SECOND_FACTOR_CHALLENGES).await?;
+    let user = session_user(ctx, &pending, responses).await?;
+    match answer_factor(ctx, &pending, &user, responses).await? {
+        Some(next) => Ok(SecondFactorAnswer::Next(next)),
+        None => {
+            require_confirmed(&user)?;
+            Ok(SecondFactorAnswer::Verified(user))
+        }
+    }
+}
+
+/// Check the answer to an MFA or one-time-code challenge. `None` means the
+/// factor is satisfied; a choice of factor returns that factor's challenge.
+async fn answer_factor(
+    ctx: &AuthContext<'_>,
+    pending: &PendingAuthChallenge,
+    user: &User,
+    responses: &HashMap<String, String>,
+) -> Result<Option<Challenge>> {
+    let session = pending.session.as_str();
+    match pending.challenge_name {
+        ChallengeType::SoftwareTokenMfa => {
+            let code = required(responses, "SOFTWARE_TOKEN_MFA_CODE")?;
+            let secret = ctx.storage.get_software_token_secret(&user.id).await;
+            let attempt = claim_attempt(ctx, pending).await?;
+            let valid = match secret {
+                Some(secret) => {
+                    is_valid_totp_code(&secret, code, Utc::now().timestamp()).unwrap_or(false)
+                }
+                None => false,
+            };
+            if !valid {
+                return Err(wrong_answer(ctx, pending, attempt, CODE_MISMATCH).await);
+            }
+            ctx.storage.delete_auth_challenge_session(session).await;
+            Ok(None)
+        }
+        ChallengeType::SmsMfa | ChallengeType::EmailOtp | ChallengeType::SmsOtp => {
+            let key = match pending.challenge_name {
+                ChallengeType::SmsMfa => "SMS_MFA_CODE",
+                ChallengeType::EmailOtp => "EMAIL_OTP_CODE",
+                _ => "SMS_OTP_CODE",
+            };
+            // The API reference also names the email code `EMAIL_MFA_CODE`.
+            let code = match optional(responses, "EMAIL_MFA_CODE") {
+                Some(code) if pending.challenge_name == ChallengeType::EmailOtp => code,
+                _ => required(responses, key)?,
+            };
+            let attempt = claim_attempt(ctx, pending).await?;
+            if pending.code.as_deref() != Some(code.trim()) {
+                return Err(wrong_answer(ctx, pending, attempt, CODE_MISMATCH).await);
+            }
+            ctx.storage.delete_auth_challenge_session(session).await;
+            Ok(None)
+        }
+        ChallengeType::SelectMfaType => {
+            // The API reference calls the email factor `EMAIL_MFA` here;
+            // the challenge and the SDKs call it `EMAIL_OTP`.
+            let answer = match required(responses, "ANSWER")? {
+                "EMAIL_MFA" => EMAIL_OTP_FACTOR,
+                answer => answer,
+            };
+            if !pending.choices.iter().any(|choice| choice == answer) {
+                return Err(AppError::InvalidParameter(format!(
+                    "Invalid ANSWER {answer} for SELECT_MFA_TYPE"
+                )));
+            }
+            ctx.storage.delete_auth_challenge_session(session).await;
+            mfa_challenge(ctx, user, answer).await.map(Some)
+        }
+        ChallengeType::MfaSetup => {
+            if !pending.mfa_setup_complete {
+                return Err(AppError::NotAuthorized(INVALID_SESSION.to_string()));
+            }
+            ctx.storage.delete_auth_challenge_session(session).await;
+            Ok(None)
+        }
+        _ => Err(AppError::NotAuthorized(INVALID_SESSION.to_string())),
+    }
+}
+
 /// Load the pending challenge a `Session` refers to.
 async fn load_session(
     ctx: &AuthContext<'_>,
@@ -540,7 +601,14 @@ async fn load_session(
         .await
         .ok_or_else(|| AppError::NotAuthorized(INVALID_SESSION.to_string()))?;
 
-    if pending.client_id != ctx.client.client_id || pending.user_pool_id != ctx.pool.id {
+    // A session is answered where it was issued. The managed login pages
+    // ask for no client secret and end in an authorization code with the
+    // request's scopes; the API's sessions are not theirs to finish, nor
+    // theirs the API's.
+    if pending.client_id != ctx.client.client_id
+        || pending.user_pool_id != ctx.pool.id
+        || pending.managed_login != (ctx.api == AuthApi::ManagedLogin)
+    {
         return Err(AppError::NotAuthorized(INVALID_SESSION.to_string()));
     }
     if pending.expires_at < Utc::now() {
@@ -573,11 +641,13 @@ async fn session_user(
     {
         return Err(AppError::NotAuthorized(INVALID_SESSION.to_string()));
     }
-    verify_secret_hash(
-        ctx.client,
-        username.unwrap_or(&user.username),
-        optional(responses, "SECRET_HASH"),
-    )?;
+    if ctx.api != AuthApi::ManagedLogin {
+        verify_secret_hash(
+            ctx.client,
+            username.unwrap_or(&user.username),
+            optional(responses, "SECRET_HASH"),
+        )?;
+    }
     Ok(user)
 }
 
@@ -726,6 +796,7 @@ async fn begin_srp(
             mfa_setup_complete: false,
             failed_attempts: 0,
             user_auth,
+            managed_login: false,
         })
         .await;
 
@@ -901,73 +972,85 @@ fn user_attributes_json(client: &UserPoolClient, user: &User) -> String {
 /// a password is followed by MFA when the user or the pool calls for it.
 async fn after_first_factor(ctx: &AuthContext<'_>, user: User, user_auth: bool) -> Result<Value> {
     let _ = user_auth;
+    match second_factor(ctx, &user).await? {
+        Some(challenge) => Ok(challenge.into_response()),
+        None => complete(ctx, &user).await,
+    }
+}
+
+/// The MFA challenge that follows a correct password, if the user or the
+/// user pool calls for one.
+pub(crate) async fn second_factor(ctx: &AuthContext<'_>, user: &User) -> Result<Option<Challenge>> {
     let factors = ctx.storage.list_user_auth_factors(&user.id).await;
     let mfa = ctx.pool.mfa_configuration.unwrap_or(MfaConfiguration::Off);
 
     if factors.is_empty() {
         if mfa != MfaConfiguration::On {
-            return complete(ctx, &user).await;
+            return Ok(None);
         }
         // MFA is required and the user has none set up. A phone number is
-        // enough for SMS; otherwise the user has to register a factor now.
+        // enough for SMS, and an email address for email when there is no
+        // authenticator app to offer; otherwise the user registers one now.
         if ctx.pool.sms_mfa_configuration.is_some() && user.phone_number.is_some() {
-            return mfa_challenge(ctx, &user, SMS_MFA_FACTOR).await;
+            return mfa_challenge(ctx, user, SMS_MFA_FACTOR).await.map(Some);
         }
-        let mut can_setup = Vec::new();
-        if software_token_mfa_enabled(ctx.pool) {
-            can_setup.push(SOFTWARE_TOKEN_MFA_FACTOR.to_string());
+        let email_mfa = ctx.pool.email_mfa_configuration.is_some() && user.email.is_some();
+        if email_mfa && !software_token_mfa_enabled(ctx.pool) {
+            return mfa_challenge(ctx, user, EMAIL_OTP_FACTOR).await.map(Some);
         }
-        if ctx.pool.email_mfa_configuration.is_some() && user.email.is_some() {
+        let mut can_setup = vec![SOFTWARE_TOKEN_MFA_FACTOR.to_string()];
+        if email_mfa {
             can_setup.push(EMAIL_OTP_FACTOR.to_string());
         }
-        if can_setup.is_empty() {
-            can_setup.push(SOFTWARE_TOKEN_MFA_FACTOR.to_string());
-        }
         let mut parameters = Map::new();
-        parameters.insert("USER_ID_FOR_SRP".to_string(), json!(user_id_for_srp(&user)));
+        parameters.insert("USER_ID_FOR_SRP".to_string(), json!(user_id_for_srp(user)));
         parameters.insert(
             "MFAS_CAN_SETUP".to_string(),
             json!(serde_json::to_string(&can_setup).unwrap_or_default()),
         );
-        return Ok(challenge(
-            ctx,
-            &user,
-            ChallengeType::MfaSetup,
-            parameters,
-            ChallengeState {
-                choices: can_setup,
-                ..ChallengeState::default()
-            },
-        )
-        .await);
+        return Ok(Some(
+            issue_challenge(
+                ctx,
+                user,
+                ChallengeType::MfaSetup,
+                parameters,
+                ChallengeState {
+                    choices: can_setup,
+                    ..ChallengeState::default()
+                },
+            )
+            .await,
+        ));
     }
 
     if let Some(preferred) =
-        preferred_mfa_setting(&user, &[]).filter(|preferred| factors.contains(preferred))
+        preferred_mfa_setting(user, &[]).filter(|preferred| factors.contains(preferred))
     {
-        return mfa_challenge(ctx, &user, &preferred).await;
+        return mfa_challenge(ctx, user, &preferred).await.map(Some);
     }
     if let [only] = factors.as_slice() {
-        return mfa_challenge(ctx, &user, only).await;
+        return mfa_challenge(ctx, user, only).await.map(Some);
     }
 
     let mut parameters = Map::new();
-    parameters.insert("USER_ID_FOR_SRP".to_string(), json!(user_id_for_srp(&user)));
+    parameters.insert("USER_ID_FOR_SRP".to_string(), json!(user_id_for_srp(user)));
     parameters.insert(
         "MFAS_CAN_CHOOSE".to_string(),
         json!(serde_json::to_string(&factors).unwrap_or_default()),
     );
-    Ok(challenge(
-        ctx,
-        &user,
-        ChallengeType::SelectMfaType,
-        parameters,
-        ChallengeState {
-            choices: factors,
-            ..ChallengeState::default()
-        },
-    )
-    .await)
+    Ok(Some(
+        issue_challenge(
+            ctx,
+            user,
+            ChallengeType::SelectMfaType,
+            parameters,
+            ChallengeState {
+                choices: factors,
+                ..ChallengeState::default()
+            },
+        )
+        .await,
+    ))
 }
 
 fn software_token_mfa_enabled(pool: &UserPool) -> bool {
@@ -978,12 +1061,12 @@ fn software_token_mfa_enabled(pool: &UserPool) -> bool {
 }
 
 /// Issue the challenge for one MFA factor.
-async fn mfa_challenge(ctx: &AuthContext<'_>, user: &User, factor: &str) -> Result<Value> {
+async fn mfa_challenge(ctx: &AuthContext<'_>, user: &User, factor: &str) -> Result<Challenge> {
     let mut parameters = Map::new();
     parameters.insert("USER_ID_FOR_SRP".to_string(), json!(user_id_for_srp(user)));
 
     match factor {
-        SOFTWARE_TOKEN_MFA_FACTOR => Ok(challenge(
+        SOFTWARE_TOKEN_MFA_FACTOR => Ok(issue_challenge(
             ctx,
             user,
             ChallengeType::SoftwareTokenMfa,
@@ -1001,7 +1084,7 @@ async fn mfa_challenge(ctx: &AuthContext<'_>, user: &User, factor: &str) -> Resu
                 "CODE_DELIVERY_DESTINATION".to_string(),
                 json!(mask_phone_number(phone_number)),
             );
-            Ok(challenge(
+            Ok(issue_challenge(
                 ctx,
                 user,
                 ChallengeType::SmsMfa,
@@ -1013,14 +1096,18 @@ async fn mfa_challenge(ctx: &AuthContext<'_>, user: &User, factor: &str) -> Resu
             )
             .await)
         }
-        EMAIL_OTP_FACTOR => Ok(email_otp_challenge(ctx, user, false).await?),
+        EMAIL_OTP_FACTOR => email_otp_challenge(ctx, user, false).await,
         other => Err(AppError::InvalidParameter(format!(
             "Unsupported MFA factor {other}"
         ))),
     }
 }
 
-async fn email_otp_challenge(ctx: &AuthContext<'_>, user: &User, user_auth: bool) -> Result<Value> {
+async fn email_otp_challenge(
+    ctx: &AuthContext<'_>,
+    user: &User,
+    user_auth: bool,
+) -> Result<Challenge> {
     let email = user
         .email
         .as_deref()
@@ -1032,7 +1119,7 @@ async fn email_otp_challenge(ctx: &AuthContext<'_>, user: &User, user_auth: bool
         "CODE_DELIVERY_DESTINATION".to_string(),
         json!(mask_email(email)),
     );
-    Ok(challenge(
+    Ok(issue_challenge(
         ctx,
         user,
         ChallengeType::EmailOtp,
@@ -1179,7 +1266,9 @@ async fn start_first_factor(
         },
         ChallengeType::EmailOtp => {
             require_confirmed(&user)?;
-            email_otp_challenge(ctx, &user, true).await
+            email_otp_challenge(ctx, &user, true)
+                .await
+                .map(Challenge::into_response)
         }
         ChallengeType::SmsOtp => {
             require_confirmed(&user)?;
@@ -1229,14 +1318,32 @@ struct ChallengeState {
     user_auth: bool,
 }
 
-/// Store a pending challenge and build the response announcing it.
-async fn challenge(
+/// A challenge the caller has to answer before the sign-in goes on.
+pub(crate) struct Challenge {
+    pub name: ChallengeType,
+    pub parameters: Map<String, Value>,
+    pub session: String,
+}
+
+impl Challenge {
+    /// The API response announcing the challenge.
+    fn into_response(self) -> Value {
+        json!({
+            "ChallengeName": self.name.as_str(),
+            "ChallengeParameters": self.parameters,
+            "Session": self.session,
+        })
+    }
+}
+
+/// Store a pending challenge.
+async fn issue_challenge(
     ctx: &AuthContext<'_>,
     user: &User,
     challenge_name: ChallengeType,
     parameters: Map<String, Value>,
     state: ChallengeState,
-) -> Value {
+) -> Challenge {
     let session = new_session_token();
     ctx.storage
         .save_auth_challenge_session(PendingAuthChallenge {
@@ -1252,14 +1359,28 @@ async fn challenge(
             mfa_setup_complete: false,
             failed_attempts: 0,
             user_auth: state.user_auth,
+            managed_login: ctx.api == AuthApi::ManagedLogin,
         })
         .await;
 
-    json!({
-        "ChallengeName": challenge_name.as_str(),
-        "ChallengeParameters": parameters,
-        "Session": session,
-    })
+    Challenge {
+        name: challenge_name,
+        parameters,
+        session,
+    }
+}
+
+/// Store a pending challenge and build the response announcing it.
+async fn challenge(
+    ctx: &AuthContext<'_>,
+    user: &User,
+    challenge_name: ChallengeType,
+    parameters: Map<String, Value>,
+    state: ChallengeState,
+) -> Value {
+    issue_challenge(ctx, user, challenge_name, parameters, state)
+        .await
+        .into_response()
 }
 
 /// An opaque session string. Cognito's are long base64url blobs; clients

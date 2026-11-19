@@ -55,7 +55,7 @@ POST /   X-Amz-Target: AWSCognitoIdentityProviderService.<Operation>
 
 `src/api.rs` (`create_router`) also serves `/oauth2/*`, `/.well-known/*`,
 and `/logout` (`api/oauth2.rs`); `/login`, `/signup`, `/confirm`,
-`/forgot-password`, `/reset-password`, and `/new-password`
+`/forgot-password`, `/reset-password`, `/new-password`, and `/mfa`
 (`api/hosted_ui.rs`); the embedded
 SPAs at `/ui/*`, `/admin/*`, and `/assets/*`; and `/health`.
 

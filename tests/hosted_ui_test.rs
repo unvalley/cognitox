@@ -878,3 +878,646 @@ async fn test_reset_password_enforces_the_code_and_the_policy() {
         "Invalid code provided, please request a code again.",
     );
 }
+
+// ==================== MFA ====================
+
+const MFA_PASSWORD: &str = "Passw0rd!";
+
+/// The code an authenticator app shows for a secret key (RFC 6238), offset
+/// by a number of 30-second steps.
+fn totp(secret: &str, step_offset: i64) -> String {
+    use hmac::{Hmac, Mac};
+
+    let mut bits = 0u32;
+    let mut bit_count = 0;
+    let mut key = Vec::new();
+    for ch in secret.bytes() {
+        let value = match ch {
+            b'A'..=b'Z' => ch - b'A',
+            b'2'..=b'7' => ch - b'2' + 26,
+            _ => panic!("not a base32 secret: {secret}"),
+        };
+        bits = (bits << 5) | u32::from(value);
+        bit_count += 5;
+        if bit_count >= 8 {
+            bit_count -= 8;
+            key.push((bits >> bit_count) as u8);
+            bits &= (1 << bit_count) - 1;
+        }
+    }
+
+    let counter = (chrono::Utc::now().timestamp() / 30 + step_offset) as u64;
+    let mut mac = Hmac::<sha1::Sha1>::new_from_slice(&key).unwrap();
+    mac.update(&counter.to_be_bytes());
+    let digest = mac.finalize().into_bytes();
+    let offset = (digest[19] & 0x0f) as usize;
+    let binary = u32::from_be_bytes(digest[offset..offset + 4].try_into().unwrap()) & 0x7fff_ffff;
+    format!("{:06}", binary % 1_000_000)
+}
+
+/// A well-formed code no authenticator app would show right now.
+fn wrong_totp(secret: &str) -> String {
+    let accepted: Vec<String> = (-2..=2).map(|step| totp(secret, step)).collect();
+    ["000000", "111111", "222222", "333333", "444444", "555555"]
+        .into_iter()
+        .find(|code| !accepted.iter().any(|accepted| accepted == code))
+        .unwrap()
+        .to_string()
+}
+
+impl Hosted {
+    async fn set_pool_mfa(&self, settings: serde_json::Value) {
+        let mut request = json!({"UserPoolId": self.pool_id});
+        request
+            .as_object_mut()
+            .unwrap()
+            .extend(settings.as_object().unwrap().clone());
+        self.client
+            .cognito_request("SetUserPoolMfaConfig", request)
+            .await;
+    }
+
+    /// A confirmed user with a permanent password.
+    async fn permanent_user(&self, username: &str, attributes: serde_json::Value) {
+        self.client
+            .cognito_request(
+                "AdminCreateUser",
+                json!({
+                    "UserPoolId": self.pool_id,
+                    "Username": username,
+                    "UserAttributes": attributes,
+                    "MessageAction": "SUPPRESS"
+                }),
+            )
+            .await;
+        self.client
+            .cognito_request(
+                "AdminSetUserPassword",
+                json!({
+                    "UserPoolId": self.pool_id,
+                    "Username": username,
+                    "Password": MFA_PASSWORD,
+                    "Permanent": true
+                }),
+            )
+            .await;
+    }
+
+    /// Sign in with the password and follow the redirect to the MFA page.
+    /// Returns the session and the page.
+    async fn login_to_mfa(&self, username: &str) -> (String, String) {
+        let response = self.login(username, MFA_PASSWORD).await;
+        self.mfa_page(&response).await
+    }
+
+    async fn mfa_page(&self, response: &common::TestResponse) -> (String, String) {
+        let next = location(response);
+        assert!(next.starts_with("/mfa?"), "{next}");
+        let session = location_query(response)["session"].clone();
+        let page = self.client.get(&next).await;
+        assert_eq!(page.status(), StatusCode::OK);
+        (session, page.body_string())
+    }
+
+    async fn mfa_code(&self, session: &str, code: &str) -> common::TestResponse {
+        self.post("/mfa", &[("session", session), ("code", code)])
+            .await
+    }
+
+    /// The code the emulator "sent" for an MFA challenge.
+    async fn sent_mfa_code(&self, session: &str) -> String {
+        self.client
+            .storage()
+            .get_auth_challenge_session(session)
+            .await
+            .unwrap()
+            .code
+            .unwrap()
+    }
+
+    fn signed_in(&self, response: &common::TestResponse) {
+        let next = location(response);
+        assert!(next.starts_with(&format!("{CALLBACK}?code=")), "{next}");
+    }
+}
+
+#[tokio::test]
+async fn test_required_mfa_registers_an_authenticator_app_and_asks_for_it() {
+    let hosted = Hosted::new(json!({})).await;
+    hosted
+        .set_pool_mfa(json!({
+            "MfaConfiguration": "ON",
+            "SoftwareTokenMfaConfiguration": {"Enabled": true}
+        }))
+        .await;
+    hosted.permanent_user("alice", json!([])).await;
+
+    // The password alone does not sign the user in: without a factor, the
+    // page has them register an authenticator app.
+    let (session, page) = hosted.login_to_mfa("alice").await;
+    assert!(page.contains("Set up an authenticator app"), "{page}");
+    let (_, secret) = hosted
+        .client
+        .storage()
+        .get_software_token_session(&session)
+        .await
+        .unwrap();
+    assert!(page.contains(&secret), "{page}");
+
+    let response = hosted.mfa_code("made-up-session", &totp(&secret, 0)).await;
+    page_error(&response, "Invalid session for the user.");
+    // A wrong code leaves the page, and its secret key, for another try.
+    let response = hosted.mfa_code(&session, &wrong_totp(&secret)).await;
+    page_error(&response, "Code mismatch");
+    assert!(response.body_string().contains(&secret));
+
+    let response = hosted.mfa_code(&session, &totp(&secret, 0)).await;
+    hosted.signed_in(&response);
+    let tokens = hosted.tokens_from(&response).await;
+    assert_eq!(jwt_claims(&tokens["id_token"])["cognito:username"], "alice");
+    assert_eq!(
+        hosted.admin_get_user("alice").await["UserMFASettingList"],
+        json!(["SOFTWARE_TOKEN_MFA"])
+    );
+
+    // The spent session is of no further use.
+    let response = hosted.mfa_code(&session, &totp(&secret, 0)).await;
+    page_error(&response, "Invalid session for the user.");
+
+    // From now on the app's code follows the password.
+    let (session, page) = hosted.login_to_mfa("alice").await;
+    assert!(
+        page.contains("Enter the code from your authenticator app"),
+        "{page}"
+    );
+    assert!(!page.contains(&secret));
+    let response = hosted.mfa_code(&session, &wrong_totp(&secret)).await;
+    page_error(&response, "Invalid code received for user");
+    assert!(response.body_string().contains("Verify your identity"));
+    let response = hosted.mfa_code(&session, &totp(&secret, 0)).await;
+    hosted.signed_in(&response);
+
+    // Three wrong codes end the session; the user starts over.
+    let (session, _) = hosted.login_to_mfa("alice").await;
+    for _ in 0..3 {
+        let response = hosted.mfa_code(&session, &wrong_totp(&secret)).await;
+        page_error(&response, "Invalid code received for user");
+    }
+    let response = hosted.mfa_code(&session, &totp(&secret, 0)).await;
+    page_error(&response, "Invalid session for the user.");
+    assert!(response.body_string().contains("action=\"/login\""));
+}
+
+#[tokio::test]
+async fn test_sent_codes_and_the_choice_between_factors() {
+    let hosted = Hosted::new(json!({})).await;
+    hosted
+        .set_pool_mfa(json!({
+            "MfaConfiguration": "OPTIONAL",
+            "SoftwareTokenMfaConfiguration": {"Enabled": true},
+            "SmsMfaConfiguration": {
+                "SmsConfiguration": {"SnsCallerArn": "arn:aws:iam::000000000000:role/sms"}
+            }
+        }))
+        .await;
+    hosted
+        .permanent_user(
+            "bob",
+            json!([{"Name": "phone_number", "Value": "+15555550100"}]),
+        )
+        .await;
+
+    // MFA is optional and bob has no factor: the password is enough.
+    let response = hosted.login("bob", MFA_PASSWORD).await;
+    hosted.signed_in(&response);
+
+    let set_mfa = |settings: serde_json::Value| {
+        let mut request = json!({"UserPoolId": hosted.pool_id, "Username": "bob"});
+        request
+            .as_object_mut()
+            .unwrap()
+            .extend(settings.as_object().unwrap().clone());
+        hosted
+            .client
+            .cognito_request("AdminSetUserMFAPreference", request)
+    };
+    set_mfa(json!({"SMSMfaSettings": {"Enabled": true}})).await;
+
+    // With SMS as the only factor, the code goes to the phone number.
+    let (session, page) = hosted.login_to_mfa("bob").await;
+    assert!(page.contains("We sent a code to +*******0100"), "{page}");
+    let code = hosted.sent_mfa_code(&session).await;
+    let wrong = if code == "000000" { "000001" } else { "000000" };
+    let response = hosted.mfa_code(&session, wrong).await;
+    page_error(&response, "Invalid code received for user");
+    let response = hosted.mfa_code(&session, &code).await;
+    hosted.signed_in(&response);
+
+    // The session belongs to the app client that started the sign-in.
+    let (session, _) = hosted.login_to_mfa("bob").await;
+    let code = hosted.sent_mfa_code(&session).await;
+    let other = hosted
+        .client
+        .cognito_request(
+            "CreateUserPoolClient",
+            json!({
+                "UserPoolId": hosted.pool_id,
+                "ClientName": "other-client",
+                "AllowedOAuthFlowsUserPoolClient": true,
+                "AllowedOAuthFlows": ["code"],
+                "AllowedOAuthScopes": ["openid"],
+                "CallbackURLs": [CALLBACK]
+            }),
+        )
+        .await;
+    let response = hosted
+        .client
+        .post_form(
+            "/mfa",
+            &[
+                ("response_type", "code"),
+                (
+                    "client_id",
+                    other["UserPoolClient"]["ClientId"].as_str().unwrap(),
+                ),
+                ("redirect_uri", CALLBACK),
+                ("session", &session),
+                ("code", &code),
+            ],
+        )
+        .await;
+    page_error(&response, "Invalid session for the user.");
+    let response = hosted.mfa_code(&session, &code).await;
+    hosted.signed_in(&response);
+
+    // A second factor and no preference: the user chooses.
+    hosted
+        .permanent_user(
+            "carol",
+            json!([
+                {"Name": "phone_number", "Value": "+15555550111"},
+                {"Name": "email", "Value": "carol@example.com"},
+                {"Name": "email_verified", "Value": "true"}
+            ]),
+        )
+        .await;
+    hosted
+        .set_pool_mfa(json!({
+            "EmailMfaConfiguration": {"Message": "Your code is {####}", "Subject": "Code"}
+        }))
+        .await;
+    hosted
+        .client
+        .cognito_request(
+            "AdminSetUserMFAPreference",
+            json!({
+                "UserPoolId": hosted.pool_id,
+                "Username": "carol",
+                "SMSMfaSettings": {"Enabled": true},
+                "EmailMfaSettings": {"Enabled": true}
+            }),
+        )
+        .await;
+    let (session, page) = hosted.login_to_mfa("carol").await;
+    assert!(page.contains("Choose a verification method"), "{page}");
+    assert!(page.contains("value=\"SMS_MFA\""));
+    assert!(page.contains("value=\"EMAIL_OTP\""));
+    assert!(!page.contains("value=\"SOFTWARE_TOKEN_MFA\""));
+
+    let response = hosted
+        .post(
+            "/mfa",
+            &[("session", &session), ("answer", "SOFTWARE_TOKEN_MFA")],
+        )
+        .await;
+    page_error(
+        &response,
+        "Invalid ANSWER SOFTWARE_TOKEN_MFA for SELECT_MFA_TYPE",
+    );
+    let response = hosted
+        .post("/mfa", &[("session", &session), ("answer", "EMAIL_OTP")])
+        .await;
+    let (session, page) = hosted.mfa_page(&response).await;
+    assert!(page.contains("We sent a code to c***@e***"), "{page}");
+    let code = hosted.sent_mfa_code(&session).await;
+    assert_eq!(code.len(), 8);
+    let response = hosted.mfa_code(&session, &code).await;
+    hosted.signed_in(&response);
+}
+
+#[tokio::test]
+async fn test_mfa_follows_a_new_password_and_needs_no_client_secret() {
+    let hosted = Hosted::new(json!({})).await;
+    hosted
+        .set_pool_mfa(json!({
+            "MfaConfiguration": "ON",
+            "SoftwareTokenMfaConfiguration": {"Enabled": true}
+        }))
+        .await;
+    hosted
+        .client
+        .cognito_request(
+            "AdminCreateUser",
+            json!({
+                "UserPoolId": hosted.pool_id,
+                "Username": "dave",
+                "TemporaryPassword": "TempPass123!",
+                "MessageAction": "SUPPRESS"
+            }),
+        )
+        .await;
+
+    // Temporary password, then the new one, then MFA.
+    let response = hosted.login("dave", "TempPass123!").await;
+    assert!(location(&response).starts_with("/new-password?"));
+    let session = location_query(&response)["session"].clone();
+    let response = hosted
+        .new_password(&session, MFA_PASSWORD, MFA_PASSWORD)
+        .await;
+    let (session, page) = hosted.mfa_page(&response).await;
+    assert!(page.contains("Set up an authenticator app"), "{page}");
+    let (_, secret) = hosted
+        .client
+        .storage()
+        .get_software_token_session(&session)
+        .await
+        .unwrap();
+    let response = hosted.mfa_code(&session, &totp(&secret, 0)).await;
+    hosted.signed_in(&response);
+
+    // The browser never holds a client secret, so the pages of a
+    // confidential app client answer the challenge without its hash.
+    let confidential = hosted
+        .client
+        .cognito_request(
+            "CreateUserPoolClient",
+            json!({
+                "UserPoolId": hosted.pool_id,
+                "ClientName": "confidential-client",
+                "GenerateSecret": true,
+                "AllowedOAuthFlowsUserPoolClient": true,
+                "AllowedOAuthFlows": ["code"],
+                "AllowedOAuthScopes": ["openid"],
+                "CallbackURLs": [CALLBACK]
+            }),
+        )
+        .await;
+    let client_id = confidential["UserPoolClient"]["ClientId"].as_str().unwrap();
+    let request = [
+        ("response_type", "code"),
+        ("client_id", client_id),
+        ("redirect_uri", CALLBACK),
+    ];
+    let mut form = request.to_vec();
+    form.extend([("username", "dave"), ("password", MFA_PASSWORD)]);
+    let response = hosted.client.post_form("/login", &form).await;
+    let session = location_query(&response)["session"].clone();
+    assert!(location(&response).starts_with("/mfa?"));
+    let code = totp(&secret, 0);
+    let mut form = request.to_vec();
+    form.extend([("session", session.as_str()), ("code", code.as_str())]);
+    let response = hosted.client.post_form("/mfa", &form).await;
+    hosted.signed_in(&response);
+}
+
+#[tokio::test]
+async fn test_required_email_mfa_sends_a_code_to_the_users_address() {
+    let hosted = Hosted::new(json!({})).await;
+    hosted
+        .set_pool_mfa(json!({
+            "MfaConfiguration": "ON",
+            "EmailMfaConfiguration": {"Message": "Your code is {####}", "Subject": "Code"}
+        }))
+        .await;
+    hosted
+        .permanent_user(
+            "erin",
+            json!([
+                {"Name": "email", "Value": "erin@example.com"},
+                {"Name": "email_verified", "Value": "true"}
+            ]),
+        )
+        .await;
+
+    // An email address is all that email MFA needs; there is nothing to
+    // set up first.
+    let (session, page) = hosted.login_to_mfa("erin").await;
+    assert!(page.contains("We sent a code to e***@e***"), "{page}");
+    let response = hosted
+        .mfa_code(&session, &hosted.sent_mfa_code(&session).await)
+        .await;
+    hosted.signed_in(&response);
+}
+
+#[tokio::test]
+async fn test_challenge_sessions_are_answered_where_they_were_issued() {
+    let hosted = Hosted::new(json!({
+        "Policies": {"SignInPolicy": {"AllowedFirstAuthFactors": ["PASSWORD", "EMAIL_OTP"]}}
+    }))
+    .await;
+    hosted
+        .set_pool_mfa(json!({
+            "MfaConfiguration": "OPTIONAL",
+            "SmsMfaConfiguration": {
+                "SmsConfiguration": {"SnsCallerArn": "arn:aws:iam::000000000000:role/sms"}
+            }
+        }))
+        .await;
+    // An app client for both the API and the pages.
+    let app_client = hosted
+        .client
+        .cognito_request(
+            "CreateUserPoolClient",
+            json!({
+                "UserPoolId": hosted.pool_id,
+                "ClientName": "both",
+                "ExplicitAuthFlows": [
+                    "ALLOW_USER_PASSWORD_AUTH",
+                    "ALLOW_USER_AUTH",
+                    "ALLOW_REFRESH_TOKEN_AUTH"
+                ],
+                "AllowedOAuthFlowsUserPoolClient": true,
+                "AllowedOAuthFlows": ["code"],
+                "AllowedOAuthScopes": ["openid"],
+                "CallbackURLs": [CALLBACK]
+            }),
+        )
+        .await;
+    let client_id = app_client["UserPoolClient"]["ClientId"].as_str().unwrap();
+    let http = &hosted.client;
+    let post = |path: &'static str, fields: Vec<(&'static str, String)>| {
+        let mut form = vec![
+            ("response_type", "code".to_string()),
+            ("client_id", client_id.to_string()),
+            ("redirect_uri", CALLBACK.to_string()),
+        ];
+        form.extend(fields);
+        async move {
+            let form: Vec<(&str, &str)> = form
+                .iter()
+                .map(|(name, value)| (*name, value.as_str()))
+                .collect();
+            http.post_form(path, &form).await
+        }
+    };
+    let initiate = |flow: &'static str, parameters: serde_json::Value| {
+        hosted.client.cognito_request(
+            "InitiateAuth",
+            json!({"ClientId": client_id, "AuthFlow": flow, "AuthParameters": parameters}),
+        )
+    };
+
+    hosted
+        .permanent_user(
+            "frank",
+            json!([
+                {"Name": "email", "Value": "frank@example.com"},
+                {"Name": "email_verified", "Value": "true"}
+            ]),
+        )
+        .await;
+
+    // A one-time code that signs in through the API without a password is
+    // not a way to an authorization code.
+    let challenge = initiate(
+        "USER_AUTH",
+        json!({"USERNAME": "frank", "PREFERRED_CHALLENGE": "EMAIL_OTP"}),
+    )
+    .await;
+    assert_eq!(challenge["ChallengeName"], "EMAIL_OTP");
+    let session = challenge["Session"].as_str().unwrap().to_string();
+    let code = hosted.sent_mfa_code(&session).await;
+    let response = post("/mfa", vec![("session", session), ("code", code)]).await;
+    page_error(&response, "Invalid session for the user.");
+
+    // Nor does the page finish the MFA challenge of an API sign-in.
+    hosted
+        .permanent_user(
+            "grace",
+            json!([{"Name": "phone_number", "Value": "+15555550122"}]),
+        )
+        .await;
+    hosted
+        .client
+        .cognito_request(
+            "AdminSetUserMFAPreference",
+            json!({
+                "UserPoolId": hosted.pool_id,
+                "Username": "grace",
+                "SMSMfaSettings": {"Enabled": true}
+            }),
+        )
+        .await;
+    let challenge = initiate(
+        "USER_PASSWORD_AUTH",
+        json!({"USERNAME": "grace", "PASSWORD": MFA_PASSWORD}),
+    )
+    .await;
+    assert_eq!(challenge["ChallengeName"], "SMS_MFA");
+    let api_session = challenge["Session"].as_str().unwrap().to_string();
+    let code = hosted.sent_mfa_code(&api_session).await;
+    let response = post(
+        "/mfa",
+        vec![("session", api_session.clone()), ("code", code.clone())],
+    )
+    .await;
+    page_error(&response, "Invalid session for the user.");
+
+    // The other way around, a session of the pages is no use to the API,
+    // which would answer it with tokens of its own scope.
+    let response = post(
+        "/login",
+        vec![
+            ("username", "grace".to_string()),
+            ("password", MFA_PASSWORD.to_string()),
+        ],
+    )
+    .await;
+    assert!(location(&response).starts_with("/mfa?"));
+    let page_session = location_query(&response)["session"].clone();
+    let page_code = hosted.sent_mfa_code(&page_session).await;
+    let (status, body) = hosted
+        .client
+        .request(
+            "RespondToAuthChallenge",
+            json!({
+                "ClientId": client_id,
+                "ChallengeName": "SMS_MFA",
+                "Session": page_session,
+                "ChallengeResponses": {"USERNAME": "grace", "SMS_MFA_CODE": page_code}
+            }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(body["message"], "Invalid session for the user.");
+
+    // Each is still good where it came from.
+    let response = post("/mfa", vec![("session", page_session), ("code", page_code)]).await;
+    hosted.signed_in(&response);
+    let tokens = hosted
+        .client
+        .cognito_request(
+            "RespondToAuthChallenge",
+            json!({
+                "ClientId": client_id,
+                "ChallengeName": "SMS_MFA",
+                "Session": api_session,
+                "ChallengeResponses": {"USERNAME": "grace", "SMS_MFA_CODE": code}
+            }),
+        )
+        .await;
+    assert!(tokens["AuthenticationResult"]["AccessToken"].is_string());
+}
+
+#[tokio::test]
+async fn test_mfa_page_is_not_cached_and_its_session_expires() {
+    let hosted = Hosted::new(json!({})).await;
+    hosted
+        .set_pool_mfa(json!({
+            "MfaConfiguration": "ON",
+            "EmailMfaConfiguration": {"Message": "Your code is {####}", "Subject": "Code"}
+        }))
+        .await;
+    hosted
+        .permanent_user(
+            "heidi",
+            json!([
+                {"Name": "email", "Value": "heidi@example.com"},
+                {"Name": "email_verified", "Value": "true"}
+            ]),
+        )
+        .await;
+
+    let response = hosted.login("heidi", MFA_PASSWORD).await;
+    let next = location(&response);
+    let session = location_query(&response)["session"].clone();
+    let page = hosted.client.get(&next).await;
+    assert_eq!(page.headers()["cache-control"], "no-store");
+
+    // What the page reflects is escaped.
+    let response = hosted
+        .post(
+            "/mfa",
+            &[
+                ("session", "\"><script>alert(1)</script>"),
+                ("code", "000000"),
+            ],
+        )
+        .await;
+    assert!(!response.body_string().contains("<script>alert(1)"));
+
+    let code = hosted.sent_mfa_code(&session).await;
+    hosted
+        .client
+        .storage()
+        .update_auth_challenge_session(&session, |pending| {
+            pending.expires_at = chrono::Utc::now() - chrono::Duration::seconds(1);
+        })
+        .await
+        .unwrap();
+    let page = hosted.client.get(&next).await;
+    page_error(&page, "Invalid session for the user.");
+    assert!(page.body_string().contains("action=\"/login\""));
+    let response = hosted.mfa_code(&session, &code).await;
+    page_error(&response, "Invalid session for the user.");
+}

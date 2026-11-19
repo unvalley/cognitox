@@ -727,6 +727,43 @@ async fn required_mfa_walks_the_user_through_totp_setup() {
 }
 
 #[tokio::test]
+async fn required_email_mfa_needs_only_an_email_address() {
+    let fixture = Fixture::default().await;
+    set_user_pool_mfa_config::handler(
+        &fixture.storage,
+        json!({
+            "UserPoolId": fixture.pool_id,
+            "MfaConfiguration": "ON",
+            "EmailMfaConfiguration": {"Message": "Your code is {####}", "Subject": "Code"},
+        }),
+    )
+    .await
+    .unwrap();
+    fixture.confirmed_user("alice", json!([])).await;
+
+    // With no authenticator app to register, there is nothing to set up:
+    // the code goes to the address the user already has.
+    let challenge = fixture.password_sign_in("alice", PASSWORD).await.unwrap();
+    assert_eq!(challenge["ChallengeName"], "EMAIL_OTP");
+    assert_eq!(
+        challenge["ChallengeParameters"]["CODE_DELIVERY_DESTINATION"],
+        "a***@e***"
+    );
+    let session = challenge["Session"].as_str().unwrap();
+    let code = fixture.delivered_code(session).await;
+    assert_tokens(
+        &fixture
+            .respond(
+                "EMAIL_OTP",
+                Some(session),
+                json!({"USERNAME": "alice", "EMAIL_OTP_CODE": code}),
+            )
+            .await
+            .unwrap(),
+    );
+}
+
+#[tokio::test]
 async fn repeated_wrong_codes_end_the_challenge() {
     let fixture = Fixture::default().await;
     fixture

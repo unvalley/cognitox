@@ -5,16 +5,18 @@
 //! - Sign up
 //! - Forgot password
 //! - Confirmation code entry
+//! - The MFA step of a sign-in
 
 use axum::{
     Form,
     extract::{Query, State},
-    http::StatusCode,
+    http::{HeaderValue, StatusCode, header},
     response::{Html, IntoResponse, Response},
 };
 use chrono::{Duration, Utc};
+use std::collections::HashMap;
 
-use super::oauth2::{SignInError, requires_mfa};
+use super::oauth2::AuthorizationRequest;
 use crate::types::UsernameAttribute;
 use serde::Deserialize;
 use tera::{Context, Tera};
@@ -26,13 +28,19 @@ use super::oauth2::{
 };
 use crate::{
     action::user::{
-        auth_flow::new_session_token,
+        associate_software_token::associate_with_session,
+        auth_flow::{
+            AuthApi, AuthContext, Challenge, INVALID_SESSION, SECOND_FACTOR_CHALLENGES,
+            SecondFactorAnswer, answer_second_factor, new_session_token, second_factor,
+        },
         helpers::{
-            confirmation_attribute, generate_confirmation_code, normalize_confirmation_code,
+            EMAIL_OTP_FACTOR, SMS_MFA_FACTOR, SOFTWARE_TOKEN_MFA_FACTOR, confirmation_attribute,
+            generate_confirmation_code, mask_email, mask_phone_number, normalize_confirmation_code,
             recovery_delivery, set_user_password, upsert_user_attribute,
         },
+        verify_software_token::verify_with_session,
     },
-    error::OAuthError,
+    error::{AppError, OAuthError},
     storage::Storage,
     types::{
         AutoVerifiedAttribute, ChallengeType, ClientId, ConfirmationCode, ManagedLoginBranding,
@@ -325,6 +333,27 @@ const BASE_TEMPLATE: &str = r#"<!DOCTYPE html>
         .btn-primary {
             background-color: {{ button_color }};
             color: {{ button_text_color }};
+        }
+        .secret {
+            display: block;
+            padding: 12px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            background: #f8f8f8;
+            font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+            font-size: 14px;
+            word-break: break-all;
+            user-select: all;
+        }
+        .choice {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 10px 12px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            margin-bottom: 8px;
+            cursor: pointer;
         }
         .btn-link {
             background: none;
@@ -627,6 +656,67 @@ const NEW_PASSWORD_TEMPLATE: &str = r#"{% extends "base" %}
 </div>
 {% endblock %}"#;
 
+/// MFA page template. One page serves every challenge that can follow the
+/// password: a code from an authenticator app, a code that was sent, the
+/// choice between factors, and the registration of an authenticator app.
+const MFA_TEMPLATE: &str = r#"{% extends "base" %}
+{% block content %}
+{% if challenge == "SELECT_MFA_TYPE" %}
+<h1>Choose a verification method</h1>
+<p class="subheader">Select how you want to verify your identity</p>
+{% elif challenge == "MFA_SETUP" %}
+<h1>Set up an authenticator app</h1>
+<p class="subheader">Add this secret key to your authenticator app, then enter the code it shows</p>
+{% else %}
+<h1>Verify your identity</h1>
+<p class="subheader">{% if destination %}We sent a code to {{ destination }}{% else %}Enter the code from your authenticator app{% endif %}</p>
+{% endif %}
+
+{% if error %}
+<div class="error">{{ error }}</div>
+{% endif %}
+
+<form method="POST" action="/mfa">
+    <input type="hidden" name="response_type" value="{{ response_type }}">
+    <input type="hidden" name="client_id" value="{{ client_id }}">
+    <input type="hidden" name="redirect_uri" value="{{ redirect_uri }}">
+    {% if scope %}<input type="hidden" name="scope" value="{{ scope }}">{% endif %}
+    {% if state %}<input type="hidden" name="state" value="{{ state }}">{% endif %}
+    {% if nonce %}<input type="hidden" name="nonce" value="{{ nonce }}">{% endif %}
+    {% if code_challenge %}<input type="hidden" name="code_challenge" value="{{ code_challenge }}">{% endif %}
+    {% if code_challenge_method %}<input type="hidden" name="code_challenge_method" value="{{ code_challenge_method }}">{% endif %}
+    <input type="hidden" name="session" value="{{ session }}">
+
+    {% if challenge == "SELECT_MFA_TYPE" %}
+    <div class="form-group">
+        {% if software_token_mfa %}<label class="choice"><input type="radio" name="answer" value="SOFTWARE_TOKEN_MFA" required> Authenticator app</label>{% endif %}
+        {% if sms_mfa %}<label class="choice"><input type="radio" name="answer" value="SMS_MFA" required> Text message (SMS)</label>{% endif %}
+        {% if email_otp %}<label class="choice"><input type="radio" name="answer" value="EMAIL_OTP" required> Email message</label>{% endif %}
+    </div>
+
+    <button type="submit" class="btn btn-primary">Continue</button>
+    {% else %}
+    {% if secret %}
+    <div class="form-group">
+        <label>Secret key</label>
+        <code class="secret">{{ secret }}</code>
+    </div>
+    {% endif %}
+
+    <div class="form-group">
+        <label for="code">Code</label>
+        <input type="text" id="code" name="code" inputmode="numeric" autocomplete="one-time-code" required autofocus>
+    </div>
+
+    <button type="submit" class="btn btn-primary">Sign In</button>
+    {% endif %}
+</form>
+
+<div class="links">
+    <a href="/login?{{ oauth_query }}">Back to Sign In</a>
+</div>
+{% endblock %}"#;
+
 const TEMPLATES: &[(&str, &str)] = &[
     ("base", BASE_TEMPLATE),
     ("login", LOGIN_TEMPLATE),
@@ -635,6 +725,7 @@ const TEMPLATES: &[(&str, &str)] = &[
     ("forgot_password", FORGOT_PASSWORD_TEMPLATE),
     ("reset_password", RESET_PASSWORD_TEMPLATE),
     ("new_password", NEW_PASSWORD_TEMPLATE),
+    ("mfa", MFA_TEMPLATE),
 ];
 
 /// Initialize Tera templates
@@ -823,6 +914,7 @@ pub async fn login_submit(State(storage): State<Storage>, Form(form): Form<Login
                     mfa_setup_complete: false,
                     failed_attempts: 0,
                     user_auth: false,
+                    managed_login: true,
                 })
                 .await;
             let url = page_url("/new-password", &form.oauth, &[("session", &session)]);
@@ -833,7 +925,7 @@ pub async fn login_submit(State(storage): State<Storage>, Form(form): Form<Login
         }
     };
 
-    match complete_authorization(&storage, &request, &user).await {
+    match after_password(&storage, &request, &form.oauth, &user).await {
         Ok(redirect_url) => redirect_found(&redirect_url),
         Err(error) => {
             render_page(&storage, &form.oauth, "login", &[], Some(&describe(error))).await
@@ -889,6 +981,7 @@ pub async fn new_password_submit(
         .await
         .filter(|pending| {
             pending.challenge_name == ChallengeType::NewPasswordRequired
+                && pending.managed_login
                 && pending.client_id == request.client.client_id
                 && pending.expires_at >= Utc::now()
         });
@@ -921,13 +1014,239 @@ pub async fn new_password_submit(
     };
     storage.delete_auth_challenge_session(&form.session).await;
 
-    // The new password is set; an MFA challenge would come next.
-    if requires_mfa(&storage, &request.pool, &user).await {
-        let error = SignInError::MfaUnsupported.message();
-        return render_page(&storage, &form.oauth, "login", &[], Some(error)).await;
+    // The new password is set; MFA comes next for a user who needs it.
+    match after_password(&storage, &request, &form.oauth, &user).await {
+        Ok(redirect_url) => redirect_found(&redirect_url),
+        Err(error) => {
+            render_page(&storage, &form.oauth, "login", &[], Some(&describe(error))).await
+        }
+    }
+}
+
+// ==================== MFA ====================
+
+fn managed_login<'a>(storage: &'a Storage, request: &'a AuthorizationRequest) -> AuthContext<'a> {
+    AuthContext {
+        storage,
+        pool: &request.pool,
+        client: &request.client,
+        api: AuthApi::ManagedLogin,
+    }
+}
+
+fn access_denied(error: AppError) -> OAuthError {
+    OAuthError {
+        error: "access_denied".to_string(),
+        error_description: Some(error.to_string()),
+    }
+}
+
+/// Where a sign-in goes once its password is accepted: to the MFA page when
+/// the user or the user pool calls for a second factor, otherwise to the
+/// app's callback.
+pub(crate) async fn after_password(
+    storage: &Storage,
+    request: &AuthorizationRequest,
+    oauth: &OAuthParams,
+    user: &User,
+) -> Result<String, OAuthError> {
+    let challenge = second_factor(&managed_login(storage, request), user)
+        .await
+        .map_err(access_denied)?;
+    match challenge {
+        Some(challenge) => mfa_page_url(storage, oauth, challenge).await,
+        None => complete_authorization(storage, request, user).await,
+    }
+}
+
+/// The URL of the MFA page for a challenge.
+async fn mfa_page_url(
+    storage: &Storage,
+    oauth: &OAuthParams,
+    challenge: Challenge,
+) -> Result<String, OAuthError> {
+    // A user who has to register a factor sets up an authenticator app,
+    // by the steps the API offers: the secret key is handed out under a
+    // new session.
+    let session = if challenge.name == ChallengeType::MfaSetup {
+        let (_, session) = associate_with_session(storage, &challenge.session, true)
+            .await
+            .map_err(access_denied)?;
+        session
+    } else {
+        challenge.session
+    };
+    Ok(page_url("/mfa", oauth, &[("session", &session)]))
+}
+
+/// The MFA challenge a session these pages issued for this app client is
+/// waiting on, and the user it belongs to.
+async fn pending_mfa(
+    storage: &Storage,
+    oauth: &OAuthParams,
+    session: &str,
+) -> Option<(PendingAuthChallenge, User)> {
+    let pending = storage
+        .get_auth_challenge_session(session)
+        .await
+        .filter(|pending| {
+            pending.managed_login
+                && pending.client_id.as_str() == oauth.client_id
+                && pending.expires_at >= Utc::now()
+                && SECOND_FACTOR_CHALLENGES.contains(&pending.challenge_name)
+        })?;
+    let user = storage
+        .get_user(&pending.user_id)
+        .await
+        .filter(|user| user.enabled)?;
+    Some((pending, user))
+}
+
+/// Render the MFA page for the challenge a session is waiting on. Without
+/// a live session the user starts over at the sign-in page.
+async fn render_mfa(
+    storage: &Storage,
+    oauth: &OAuthParams,
+    session: &str,
+    error: Option<&str>,
+) -> Response {
+    let Some((pending, user)) = pending_mfa(storage, oauth, session).await else {
+        let error = error.unwrap_or(INVALID_SESSION);
+        return render_page(storage, oauth, "login", &[], Some(error)).await;
+    };
+
+    let mut fields = vec![
+        ("session", session.to_string()),
+        ("challenge", pending.challenge_name.as_str().to_string()),
+    ];
+    match pending.challenge_name {
+        ChallengeType::SmsMfa => {
+            let phone_number = user.phone_number.as_deref().unwrap_or_default();
+            fields.push(("destination", mask_phone_number(phone_number)));
+        }
+        ChallengeType::EmailOtp => {
+            let email = user.email.as_deref().unwrap_or_default();
+            fields.push(("destination", mask_email(email)));
+        }
+        ChallengeType::SelectMfaType => {
+            for (factor, field) in [
+                (SOFTWARE_TOKEN_MFA_FACTOR, "software_token_mfa"),
+                (SMS_MFA_FACTOR, "sms_mfa"),
+                (EMAIL_OTP_FACTOR, "email_otp"),
+            ] {
+                if pending.choices.iter().any(|choice| choice == factor) {
+                    fields.push((field, "true".to_string()));
+                }
+            }
+        }
+        ChallengeType::MfaSetup => {
+            if let Some((_, secret)) = storage.get_software_token_session(session).await {
+                fields.push(("secret", secret));
+            }
+        }
+        _ => {}
     }
 
-    match complete_authorization(&storage, &request, &user).await {
+    let fields: Vec<(&str, &str)> = fields
+        .iter()
+        .map(|(name, value)| (*name, value.as_str()))
+        .collect();
+    // The page shows a secret key and its URL carries the session.
+    let mut response = render_page(storage, oauth, "mfa", &fields, error).await;
+    response
+        .headers_mut()
+        .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    response
+}
+
+/// Query params for the MFA page
+#[derive(Debug, Deserialize)]
+pub struct MfaPageQuery {
+    pub session: String,
+    #[serde(flatten)]
+    pub oauth: OAuthParams,
+}
+
+/// MFA form data: a code, or the choice of a factor
+#[derive(Debug, Deserialize)]
+pub struct MfaForm {
+    pub session: String,
+    #[serde(default)]
+    pub code: Option<String>,
+    #[serde(default)]
+    pub answer: Option<String>,
+    #[serde(flatten)]
+    pub oauth: OAuthParams,
+}
+
+/// GET /mfa - MFA page
+pub async fn mfa_page(
+    State(storage): State<Storage>,
+    Query(query): Query<MfaPageQuery>,
+) -> Response {
+    render_mfa(&storage, &query.oauth, &query.session, None).await
+}
+
+/// POST /mfa - Answer the MFA challenge and finish signing in
+pub async fn mfa_submit(State(storage): State<Storage>, Form(form): Form<MfaForm>) -> Response {
+    let request = match validate_authorization_request(&storage, &authorization_params(&form.oauth))
+        .await
+    {
+        Ok(request) => request,
+        Err(error) => {
+            return render_page(&storage, &form.oauth, "login", &[], Some(&describe(error))).await;
+        }
+    };
+    let Some((pending, _)) = pending_mfa(&storage, &form.oauth, &form.session).await else {
+        return render_page(&storage, &form.oauth, "login", &[], Some(INVALID_SESSION)).await;
+    };
+
+    let code = form.code.as_deref().unwrap_or_default().trim();
+    let mut session = form.session.clone();
+    let mut responses = HashMap::new();
+    match pending.challenge_name {
+        ChallengeType::MfaSetup => {
+            // Verifying the first code registers the authenticator app
+            // and continues the challenge under a new session.
+            match verify_with_session(&storage, &form.session, code, true).await {
+                Ok(next_session) => session = next_session,
+                Err(error) => {
+                    let error = error.to_string();
+                    return render_mfa(&storage, &form.oauth, &form.session, Some(&error)).await;
+                }
+            }
+        }
+        ChallengeType::SelectMfaType => {
+            let answer = form.answer.clone().unwrap_or_default();
+            responses.insert("ANSWER".to_string(), answer);
+        }
+        ChallengeType::SoftwareTokenMfa => {
+            responses.insert("SOFTWARE_TOKEN_MFA_CODE".to_string(), code.to_string());
+        }
+        ChallengeType::SmsMfa => {
+            responses.insert("SMS_MFA_CODE".to_string(), code.to_string());
+        }
+        _ => {
+            responses.insert("EMAIL_OTP_CODE".to_string(), code.to_string());
+        }
+    }
+
+    let ctx = managed_login(&storage, &request);
+    let redirect_url = match answer_second_factor(&ctx, &session, &responses).await {
+        Ok(SecondFactorAnswer::Verified(user)) => {
+            complete_authorization(&storage, &request, &user).await
+        }
+        Ok(SecondFactorAnswer::Next(challenge)) => {
+            mfa_page_url(&storage, &form.oauth, challenge).await
+        }
+        // A wrong answer leaves the session for another try, until its
+        // attempts run out.
+        Err(error) => {
+            let error = error.to_string();
+            return render_mfa(&storage, &form.oauth, &form.session, Some(&error)).await;
+        }
+    };
+    match redirect_url {
         Ok(redirect_url) => redirect_found(&redirect_url),
         Err(error) => {
             render_page(&storage, &form.oauth, "login", &[], Some(&describe(error))).await
