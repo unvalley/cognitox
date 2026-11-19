@@ -172,6 +172,10 @@ pub enum AppError {
     )]
     SoftwareTokenMfaNotFound,
 
+    /// `UnsupportedOperationException`: not enabled for the app client.
+    #[error("{0}")]
+    UnsupportedOperation(String),
+
     /// The request body could not be mapped onto the operation's input shape.
     #[error("{0}")]
     Serialization(String),
@@ -226,6 +230,9 @@ impl AppError {
                 (StatusCode::BAD_REQUEST, "InvalidParameterException")
             }
             AppError::Serialization(_) => (StatusCode::BAD_REQUEST, "SerializationException"),
+            AppError::UnsupportedOperation(_) => {
+                (StatusCode::BAD_REQUEST, "UnsupportedOperationException")
+            }
             AppError::EnableSoftwareTokenMfa(_) => {
                 (StatusCode::BAD_REQUEST, "EnableSoftwareTokenMFAException")
             }

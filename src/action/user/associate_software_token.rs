@@ -5,7 +5,6 @@
 use chrono::Utc;
 use serde::Deserialize;
 use serde_json::{Value, json};
-use uuid::Uuid;
 
 use crate::{
     error::{AppError, Result},
@@ -25,12 +24,6 @@ struct Request {
     session: Option<String>,
 }
 
-/// Key under which the secret of a token-authorized association waits for
-/// `VerifySoftwareToken`, which that flow calls without a session.
-pub(crate) fn pending_secret_key(user_id: &Uuid) -> String {
-    format!("pending:{user_id}")
-}
-
 pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
     let req: Request = crate::action::io::parse_request(body)?;
 
@@ -43,11 +36,7 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
 
         let secret_code = generate_secret_code();
         storage
-            .save_software_token_session(
-                pending_secret_key(&user_id),
-                &user_id,
-                secret_code.clone(),
-            )
+            .set_pending_software_token_secret(&user_id, secret_code.clone())
             .await;
         // A token-authorized association has no session to return.
         return Ok(secret_only(secret_code));
@@ -59,39 +48,30 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
         ));
     };
 
-    // The session is either an `MFA_SETUP` challenge from sign-in, or the
-    // session of an earlier association the user is repeating.
+    // The only session that can register a device is the `MFA_SETUP`
+    // challenge of a sign-in, which proves the password was presented.
     let invalid_session = || AppError::NotAuthorized("Invalid session for the user.".to_string());
+    let mut pending = storage
+        .get_auth_challenge_session(session)
+        .await
+        .filter(|pending| pending.challenge_name == ChallengeType::MfaSetup)
+        .ok_or_else(invalid_session)?;
+    if pending.expires_at < Utc::now() {
+        storage.delete_auth_challenge_session(session).await;
+        storage.delete_software_token_session(session).await;
+        return Err(AppError::NotAuthorized(
+            "Invalid session for the user, session is expired.".to_string(),
+        ));
+    }
+
+    // Each step of the setup hands out a fresh session.
     let next_session = new_session_token();
-    let user_id = match storage.get_auth_challenge_session(session).await {
-        Some(mut pending) => {
-            if pending.challenge_name != ChallengeType::MfaSetup {
-                return Err(invalid_session());
-            }
-            if pending.expires_at < Utc::now() {
-                storage.delete_auth_challenge_session(session).await;
-                return Err(AppError::NotAuthorized(
-                    "Invalid session for the user, session is expired.".to_string(),
-                ));
-            }
-            // Each step of the setup hands out a fresh session.
-            storage.delete_auth_challenge_session(session).await;
-            storage.delete_software_token_session(session).await;
-            pending.session = next_session.clone();
-            pending.mfa_setup_complete = false;
-            let user_id = pending.user_id;
-            storage.save_auth_challenge_session(pending).await;
-            user_id
-        }
-        None => {
-            let (user_id, _) = storage
-                .get_software_token_session(session)
-                .await
-                .ok_or_else(invalid_session)?;
-            storage.delete_software_token_session(session).await;
-            user_id
-        }
-    };
+    storage.delete_auth_challenge_session(session).await;
+    storage.delete_software_token_session(session).await;
+    pending.session = next_session.clone();
+    pending.mfa_setup_complete = false;
+    let user_id = pending.user_id;
+    storage.save_auth_challenge_session(pending).await;
 
     let secret_code = generate_secret_code();
     storage

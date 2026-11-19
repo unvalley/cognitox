@@ -39,7 +39,10 @@ first factor ──► after_password ──► after_first_factor ──► com
   verifier the next time a password flow succeeds.
 - **`USER_AUTH`** offers the pool's `AllowedFirstAuthFactors` as
   `SELECT_CHALLENGE` unless `PREFERRED_CHALLENGE` names an available one.
-  A one-time code finishes the sign-in; a password continues as above.
+  A one-time code finishes the sign-in, so it is only offered to a verified
+  address or number, and only where nothing calls for a second factor (the
+  pool does not require MFA and the user has none). A password continues as
+  above.
 - **`REFRESH_TOKEN_AUTH`** issues access and ID tokens that keep the
   `origin_jti` and `auth_time` of the sign-in the refresh token came from.
 
@@ -49,7 +52,9 @@ A challenge is a `PendingAuthChallenge` in storage, keyed by its `Session`
 string and bound to the user, app client, pool, and challenge name. It lives
 for the client's `AuthSessionValidity` (3 minutes by default), survives wrong
 answers up to a small limit, and is replaced by a new session whenever the
-sign-in moves to another challenge.
+sign-in moves to another challenge. An answer attempt is claimed under the
+storage lock before the answer is checked, so parallel guesses cannot exceed
+the limit.
 
 `USER_SRP_AUTH` is the exception: Cognito returns no `Session` with
 `PASSWORD_VERIFIER`, and clients hand back the `SECRET_BLOCK` instead, so the
@@ -65,6 +70,13 @@ exchange is keyed by its secret block and is single use.
 With `PreventUserExistenceErrors: ENABLED` an unknown user looks like a wrong
 password. For SRP that means handing out a `PASSWORD_VERIFIER` challenge
 nobody can answer, as Cognito does.
+
+## Outside the state machine
+
+The Hosted UI and `/oauth2/authorize` check passwords themselves
+(`api/oauth2.rs::check_credentials`). They have no MFA pages, so they refuse
+a sign-in the state machine would challenge (`requires_mfa`) instead of
+completing it.
 
 ## Not implemented
 

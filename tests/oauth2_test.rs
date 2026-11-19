@@ -410,15 +410,65 @@ async fn test_authorization_code_flow_returns_json_redirect_for_xhr_login() {
 #[tokio::test]
 async fn test_authorization_code_flow_accepts_email_alias_login() {
     let client = TestClient::new();
-    let (_, client_id, _, password) = setup_user_and_client(&client).await;
+    let (_, pool_body) = client
+        .request(
+            "CreateUserPool",
+            json!({ "PoolName": "AliasPool", "AliasAttributes": ["email"] }),
+        )
+        .await;
+    let pool_id = pool_body["UserPool"]["Id"].as_str().unwrap().to_string();
+    let (_, client_body) = client
+        .request(
+            "CreateUserPoolClient",
+            json!({
+                "UserPoolId": pool_id,
+                "ClientName": "OAuthClient",
+                "AllowedOAuthFlows": ["code"],
+                "AllowedOAuthScopes": ["openid", "email"],
+                "AllowedOAuthFlowsUserPoolClient": true,
+                "CallbackURLs": ["https://example.com/callback"]
+            }),
+        )
+        .await;
+    let client_id = client_body["UserPoolClient"]["ClientId"].as_str().unwrap();
+    for (username, email, verified) in [
+        ("verified", "verified@example.com", "true"),
+        ("unverified", "unverified@example.com", "false"),
+    ] {
+        client
+            .cognito_request(
+                "AdminCreateUser",
+                json!({
+                    "UserPoolId": pool_id,
+                    "Username": username,
+                    "UserAttributes": [
+                        {"Name": "email", "Value": email},
+                        {"Name": "email_verified", "Value": verified}
+                    ]
+                }),
+            )
+            .await;
+        client
+            .cognito_request(
+                "AdminSetUserPassword",
+                json!({
+                    "UserPoolId": pool_id,
+                    "Username": username,
+                    "Password": "Test123!",
+                    "Permanent": true
+                }),
+            )
+            .await;
+    }
+    let authorize_url = |email: &str| {
+        format!(
+            "/oauth2/authorize?response_type=code&client_id={client_id}&redirect_uri={}&scope={}&username={email}&password={}",
+            "https://example.com/callback", "openid%20email", "Test123!"
+        )
+    };
 
-    let auth_url = format!(
-        "/oauth2/authorize?response_type=code&client_id={}&redirect_uri={}&scope={}&username={}&password={}",
-        client_id, "https://example.com/callback", "openid%20email", "test@example.com", password
-    );
-
-    let response = client.get(&auth_url).await;
-
+    // A verified address is an alias of the username...
+    let response = client.get(&authorize_url("verified@example.com")).await;
     assert_eq!(response.status(), StatusCode::FOUND);
     let location = response
         .headers()
@@ -427,6 +477,10 @@ async fn test_authorization_code_flow_accepts_email_alias_login() {
         .to_str()
         .unwrap();
     assert!(location.contains("code="));
+
+    // ...an unverified one is not, here as in the user pools API.
+    let response = client.get(&authorize_url("unverified@example.com")).await;
+    assert_ne!(response.status(), StatusCode::FOUND);
 }
 
 #[tokio::test]
@@ -2843,4 +2897,65 @@ async fn test_code_grant_requires_the_redirect_uri() {
         response.json::<serde_json::Value>().await.unwrap()["error"],
         "invalid_grant"
     );
+}
+
+#[tokio::test]
+async fn test_oauth_grants_stay_within_their_scopes_and_respect_mfa() {
+    let client = TestClient::new();
+    let (pool_id, client_id, username, password) = setup_user_and_client(&client).await;
+    let tokens = oauth_tokens(&client, &client_id, &username, &password).await;
+
+    // The grant has OpenID scopes only, so it cannot call the self-service
+    // API, and redeeming its refresh token there does not change that.
+    let refused = |body: serde_json::Value| {
+        assert_eq!(body["__type"], "NotAuthorizedException");
+        assert_eq!(
+            body["message"],
+            "Access Token does not have required scopes"
+        );
+    };
+    let (_, body) = client
+        .request("GetUser", json!({"AccessToken": tokens["access_token"]}))
+        .await;
+    refused(body);
+    let refreshed = client
+        .cognito_request(
+            "InitiateAuth",
+            json!({
+                "ClientId": client_id,
+                "AuthFlow": "REFRESH_TOKEN_AUTH",
+                "AuthParameters": {"REFRESH_TOKEN": tokens["refresh_token"]}
+            }),
+        )
+        .await;
+    let access_token = &refreshed["AuthenticationResult"]["AccessToken"];
+    assert_eq!(
+        jwt_claims(access_token)["scope"],
+        jwt_claims(&tokens["access_token"])["scope"]
+    );
+    let (_, body) = client
+        .request("GetUser", json!({"AccessToken": access_token}))
+        .await;
+    refused(body);
+
+    // A user pool that requires MFA does not hand out a code for a password
+    // alone; the hosted pages have no MFA step to offer.
+    client
+        .cognito_request(
+            "SetUserPoolMfaConfig",
+            json!({
+                "UserPoolId": pool_id,
+                "MfaConfiguration": "ON",
+                "SoftwareTokenMfaConfiguration": {"Enabled": true}
+            }),
+        )
+        .await;
+    let response = client
+        .get(&format!(
+            "/oauth2/authorize?response_type=code&client_id={client_id}&redirect_uri={}&scope=openid&username={username}&password={}",
+            "https://example.com/callback",
+            urlencoding::encode(&password)
+        ))
+        .await;
+    assert_ne!(response.status(), StatusCode::FOUND);
 }

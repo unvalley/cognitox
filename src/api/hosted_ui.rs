@@ -13,6 +13,9 @@ use axum::{
     response::{Html, IntoResponse, Response},
 };
 use chrono::{Duration, Utc};
+
+use super::oauth2::{SignInError, requires_mfa};
+use crate::types::UsernameAttribute;
 use serde::Deserialize;
 use tera::{Context, Tera};
 use uuid::Uuid;
@@ -918,6 +921,12 @@ pub async fn new_password_submit(
     };
     storage.delete_auth_challenge_session(&form.session).await;
 
+    // The new password is set; an MFA challenge would come next.
+    if requires_mfa(&storage, &request.pool, &user).await {
+        let error = SignInError::MfaUnsupported.message();
+        return render_page(&storage, &form.oauth, "login", &[], Some(error)).await;
+    }
+
     match complete_authorization(&storage, &request, &user).await {
         Ok(redirect_url) => redirect_found(&redirect_url),
         Err(error) => {
@@ -994,6 +1003,21 @@ pub async fn signup_submit(
     if let Err(e) = set_user_password(&mut user, &form.password) {
         tracing::error!("Failed to hash password: {}", e);
         return render_page(&storage, &form.oauth, "signup", &[], Some("Internal error")).await;
+    }
+
+    // An address users sign in with can belong to one user only.
+    let email_signs_in = pool
+        .username_attributes
+        .as_deref()
+        .unwrap_or_default()
+        .contains(&UsernameAttribute::Email);
+    if email_signs_in
+        && storage
+            .sign_in_value_taken(&client.user_pool_id, "email", &form.email, &user_id, false)
+            .await
+    {
+        let error = "An account with the given email already exists.";
+        return render_page(&storage, &form.oauth, "signup", &[], Some(error)).await;
     }
 
     if storage

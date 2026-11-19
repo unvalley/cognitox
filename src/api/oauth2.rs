@@ -34,8 +34,8 @@ use crate::{
     },
     storage::Storage,
     types::{
-        AuthorizationCode, ClientId, OAuthFlow, RefreshToken, RefreshTokenRotationFeature, User,
-        UserPool, UserPoolClient, UserPoolId, UserStatus,
+        AuthorizationCode, ClientId, MfaConfiguration, OAuthFlow, RefreshToken,
+        RefreshTokenRotationFeature, User, UserPool, UserPoolClient, UserPoolId, UserStatus,
     },
 };
 
@@ -202,25 +202,6 @@ fn html_escape(value: &str) -> String {
         .replace('\'', "&#39;")
 }
 
-async fn get_user_by_username_or_email(
-    storage: &Storage,
-    user_pool_id: &UserPoolId,
-    username_or_email: &str,
-) -> Option<User> {
-    if let Some(user) = storage
-        .get_user_by_username(user_pool_id, username_or_email)
-        .await
-    {
-        return Some(user);
-    }
-
-    storage
-        .list_users(user_pool_id)
-        .await
-        .into_iter()
-        .find(|user| user.email.as_deref() == Some(username_or_email))
-}
-
 /// The parameters of an authorization request as they arrive, from the
 /// authorize endpoint or from a managed login form.
 pub(crate) struct AuthorizationParams<'a> {
@@ -320,6 +301,13 @@ pub(crate) async fn validate_authorization_request(
         }
         _ => client.allowed_oauth_scopes.clone(),
     };
+    // Tokens without a scope would read as user pools API tokens.
+    if scopes.is_empty() {
+        return Err(oauth_error(
+            "invalid_scope",
+            "The app client allows no OAuth scopes",
+        ));
+    }
 
     // S256 is the only PKCE method Cognito supports.
     if let Some(method) = params.code_challenge_method
@@ -363,6 +351,8 @@ pub(crate) enum SignInError {
     IncorrectCredentials,
     Disabled,
     TemporaryPasswordExpired,
+    /// The sign-in needs an MFA challenge the hosted pages cannot present.
+    MfaUnsupported,
 }
 
 impl SignInError {
@@ -373,6 +363,9 @@ impl SignInError {
             Self::Disabled => "User is disabled.",
             Self::TemporaryPasswordExpired => {
                 "Temporary password has expired and must be reset by an administrator."
+            }
+            Self::MfaUnsupported => {
+                "This sign-in requires MFA, which the cognitox hosted pages do not support yet. Sign in through the user pools API."
             }
         }
     }
@@ -398,7 +391,10 @@ pub(crate) async fn check_credentials(
     username: &str,
     password: &str,
 ) -> Result<SignIn, SignInError> {
-    let user = get_user_by_username_or_email(storage, &pool.id, username)
+    // The same names the user pools API accepts: the username, the sub, a
+    // sign-in attribute, or a verified alias.
+    let user = storage
+        .get_user_by_username(&pool.id, username)
         .await
         .ok_or(SignInError::IncorrectCredentials)?;
     if !user.enabled {
@@ -428,8 +424,20 @@ pub(crate) async fn check_credentials(
                 Ok(SignIn::NewPasswordRequired(user))
             }
         }
+        _ if requires_mfa(storage, pool, &user).await => Err(SignInError::MfaUnsupported),
         _ => Ok(SignIn::Complete(user)),
     }
+}
+
+/// Whether Cognito would follow the password with an MFA challenge: the
+/// user has a factor enabled, or the user pool requires one.
+///
+/// The hosted pages have no MFA step yet. Signing such a user in with the
+/// password alone would hand out tokens Cognito would not, so the hosted
+/// sign-in refuses instead.
+pub(crate) async fn requires_mfa(storage: &Storage, pool: &UserPool, user: &User) -> bool {
+    pool.mfa_configuration == Some(MfaConfiguration::On)
+        || !storage.list_user_auth_factors(&user.id).await.is_empty()
 }
 
 /// Tokens issued to a user through the OAuth 2.0 endpoints.

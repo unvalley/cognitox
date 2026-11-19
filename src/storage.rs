@@ -172,17 +172,22 @@ impl UserNaming {
         }
     }
 
-    /// Whether `name` addresses `user` other than by its exact username.
-    fn names(&self, user: &User, name: &str) -> bool {
-        (!self.case_sensitive && self.same(&user.username, name))
-            || self.username_attributes.iter().any(|attribute| {
-                let value = match attribute {
-                    UsernameAttribute::Email => user.email.as_deref(),
-                    UsernameAttribute::PhoneNumber => user.phone_number.as_deref(),
-                };
-                value.is_some_and(|value| self.same(value, name))
-            })
-            || self.is_alias_of(user, name)
+    /// Whether `name` is the username in another case, in a pool that
+    /// ignores case.
+    fn is_username_of(&self, user: &User, name: &str) -> bool {
+        !self.case_sensitive && self.same(&user.username, name)
+    }
+
+    /// Whether `name` is the email address or phone number the user signs
+    /// in with (`UsernameAttributes`).
+    fn is_sign_in_attribute_of(&self, user: &User, name: &str) -> bool {
+        self.username_attributes.iter().any(|attribute| {
+            let value = match attribute {
+                UsernameAttribute::Email => user.email.as_deref(),
+                UsernameAttribute::PhoneNumber => user.phone_number.as_deref(),
+            };
+            value.is_some_and(|value| self.same(value, name))
+        })
     }
 
     fn is_alias_of(&self, user: &User, alias: &str) -> bool {
@@ -222,6 +227,11 @@ struct PrincipalStore {
     /// `origin_jti` values whose access and ID tokens `RevokeToken` voided.
     #[serde(default)]
     revoked_origin_jtis: HashSet<String>,
+    /// TOTP secrets handed out by a token-authorized AssociateSoftwareToken
+    /// that the user has yet to verify. Kept apart from the session map so
+    /// that no `Session` value can reach them.
+    #[serde(default)]
+    pending_software_token_secrets: HashMap<UserId, String>,
     /// New attribute values waiting for their verification code, in user
     /// pools that verify an email address or phone number before changing it.
     #[serde(default)]
@@ -236,6 +246,18 @@ impl PrincipalStore {
         self.revoked_refresh_tokens.insert(revoked.token.clone());
         if let Some(origin_jti) = &revoked.origin_jti {
             self.revoked_origin_jtis.insert(origin_jti.clone());
+            // Rotation leaves several refresh tokens of one sign-in; they
+            // all end with it.
+            let family: Vec<String> = self
+                .refresh_tokens
+                .values()
+                .filter(|other| other.origin_jti.as_ref() == Some(origin_jti))
+                .map(|other| other.token.clone())
+                .collect();
+            for sibling in family {
+                self.refresh_tokens.remove(&sibling);
+                self.revoked_refresh_tokens.insert(sibling);
+            }
         }
         Some(revoked)
     }
@@ -332,9 +354,13 @@ fn decode_snapshot(content: &str) -> Result<PersistedStorageState, String> {
         .decode(snapshot.payload.as_bytes())
         .map_err(|e| format!("Invalid snapshot payload encoding: {e}"))?;
 
+    // bincode is positional: a version 1 snapshot only decodes while it
+    // holds none of the records whose types have gained fields since.
     if snapshot.version == LEGACY_SNAPSHOT_VERSION {
-        return bincode::deserialize::<PersistedStorageState>(&payload)
-            .map_err(|e| format!("Failed to deserialize snapshot payload: {e}"));
+        let mut state = bincode::deserialize::<PersistedStorageState>(&payload)
+            .map_err(|e| format!("Failed to deserialize snapshot payload: {e}"))?;
+        keep_pre_revision_1_behavior(&mut state);
+        return Ok(state);
     }
 
     let mut state = rmp_serde::from_slice::<PersistedStorageState>(&payload)
@@ -735,6 +761,7 @@ impl Storage {
             .retain(|_, (uid, _)| !user_id_set.contains(uid));
         for uid in &user_ids {
             principal_store.software_token_secrets.remove(uid);
+            principal_store.pending_software_token_secrets.remove(uid);
         }
         principal_store
             .authorization_codes
@@ -1197,11 +1224,62 @@ impl Storage {
             return Some(user.clone());
         }
 
-        store
-            .users
-            .values()
-            .find(|user| &user.user_pool_id == user_pool_id && naming.names(user, username))
-            .cloned()
+        // Sign-in names are kept unique on write. Should older data hold a
+        // collision anyway, resolve it the same way every time: the username
+        // before an attribute, the earlier user before the later.
+        let in_pool = || {
+            store
+                .users
+                .values()
+                .filter(|user| &user.user_pool_id == user_pool_id)
+        };
+        let earliest = |matches: &mut dyn Iterator<Item = &User>| {
+            matches
+                .min_by_key(|user| (user.creation_date, user.id))
+                .cloned()
+        };
+        earliest(&mut in_pool().filter(|user| naming.is_username_of(user, username)))
+            .or_else(|| {
+                earliest(
+                    &mut in_pool().filter(|user| naming.is_sign_in_attribute_of(user, username)),
+                )
+            })
+            .or_else(|| earliest(&mut in_pool().filter(|user| naming.is_alias_of(user, username))))
+    }
+
+    /// Whether another user of the pool already signs in with `value` as its
+    /// `attribute` (`email`, `phone_number`, or `preferred_username`).
+    /// `verified_only` limits the check to addresses and numbers that are
+    /// verified, which is when they act as aliases.
+    pub async fn sign_in_value_taken(
+        &self,
+        user_pool_id: &UserPoolId,
+        attribute: &str,
+        value: &str,
+        except: &UserId,
+        verified_only: bool,
+    ) -> bool {
+        let Some(naming) = self.user_naming(user_pool_id).await else {
+            return false;
+        };
+        let store = self.principal_store.read().await;
+        store.users.values().any(|user| {
+            &user.user_pool_id == user_pool_id
+                && &user.id != except
+                && (!verified_only
+                    || attribute == "preferred_username"
+                    || user.attribute_verified(attribute))
+                && match attribute {
+                    "email" => user.email.as_deref(),
+                    "phone_number" => user.phone_number.as_deref(),
+                    name => user
+                        .attributes
+                        .iter()
+                        .find(|candidate| candidate.name == name)
+                        .and_then(|candidate| candidate.value.as_deref()),
+                }
+                .is_some_and(|existing| naming.same(existing, value))
+        })
     }
 
     /// Look up the user that owns `alias` through one of the user pool's
@@ -1286,6 +1364,7 @@ impl Storage {
                 .software_token_sessions
                 .retain(|_, (user_id, _)| user_id != id);
             principal_store.software_token_secrets.remove(id);
+            principal_store.pending_software_token_secrets.remove(id);
             principal_store
                 .refresh_tokens
                 .retain(|_, token| &token.user_id != id);
@@ -1530,6 +1609,24 @@ impl Storage {
     pub async fn delete_software_token_session(&self, session: &str) {
         let mut store = self.principal_store.write().await;
         store.software_token_sessions.remove(session);
+    }
+
+    /// Remember the secret a signed-in user is about to verify.
+    pub async fn set_pending_software_token_secret(&self, user_id: &UserId, secret: String) {
+        let mut store = self.principal_store.write().await;
+        store
+            .pending_software_token_secrets
+            .insert(*user_id, secret);
+    }
+
+    pub async fn get_pending_software_token_secret(&self, user_id: &UserId) -> Option<String> {
+        let store = self.principal_store.read().await;
+        store.pending_software_token_secrets.get(user_id).cloned()
+    }
+
+    pub async fn clear_pending_software_token_secret(&self, user_id: &UserId) {
+        let mut store = self.principal_store.write().await;
+        store.pending_software_token_secrets.remove(user_id);
     }
 
     pub async fn save_software_token_secret(&self, user_id: &UserId, secret: String) {

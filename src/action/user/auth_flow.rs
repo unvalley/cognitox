@@ -28,14 +28,15 @@ use crate::{
         RefreshTokenRotationFeature, SrpChallengeState, User, UserAttribute, UserPool,
         UserPoolClient, UserStatus,
     },
-    validation::validate_password_against_policy,
+    validation::{validate_email, validate_password_against_policy, validate_phone_number},
 };
 
 use super::helpers::{
     AttributeWriter, EMAIL_OTP_FACTOR, SMS_MFA_FACTOR, SOFTWARE_TOKEN_MFA_FACTOR,
-    apply_user_attribute_updates, generate_numeric_code, mask_email, mask_phone_number,
-    preferred_mfa_setting, set_user_password, store_srp_verifier, validate_attribute_write,
-    verify_password, verify_secret_hash,
+    apply_user_attribute_updates, attribute_is_fixed, ensure_sign_in_names_free,
+    generate_numeric_code, mask_email, mask_phone_number, preferred_mfa_setting, set_user_password,
+    store_srp_verifier, upsert_user_attribute, validate_attribute_write, verify_password,
+    verify_secret_hash,
 };
 use super::verify_software_token::is_valid_totp_code;
 
@@ -280,7 +281,15 @@ pub(crate) async fn initiate_auth(
             )
             .await?;
             let session = TokenSession::resumed(stored.origin_jti.clone(), stored.auth_time);
-            let result = issue_tokens(ctx, &user, &session, None).await?;
+            let result = authentication_result(
+                ctx.storage,
+                ctx.client,
+                &user,
+                &session,
+                &stored.scope,
+                None,
+            )
+            .await?;
             Ok(authenticated(result))
         }
         AuthFlow::UserAuth => {
@@ -355,14 +364,53 @@ pub(crate) async fn respond_to_auth_challenge(
                         })
                 })
                 .collect();
-            // The app client's write permissions apply here as anywhere.
+            // The challenge fills in attributes; it is not a way around the
+            // rules for changing them. The app client's write permissions
+            // apply, a required or immutable attribute that has a value
+            // keeps it, and a sign-in name has to be free.
             validate_attribute_write(
                 ctx.pool,
                 AttributeWriter::Client(Some(ctx.client)),
                 &updates,
                 false,
             )?;
+            for update in &updates {
+                let current = user
+                    .attributes
+                    .iter()
+                    .find(|attribute| attribute.name == update.name)
+                    .and_then(|attribute| attribute.value.as_deref());
+                if current.is_some()
+                    && current != update.value.as_deref()
+                    && attribute_is_fixed(ctx.pool, &update.name)
+                {
+                    return Err(AppError::InvalidParameter(format!(
+                        "user.{}: Attribute cannot be updated.",
+                        update.name
+                    )));
+                }
+                match (update.name.as_str(), update.value.as_deref()) {
+                    ("email", Some(value)) => validate_email(value)?,
+                    ("phone_number", Some(value)) => validate_phone_number(value)?,
+                    _ => {}
+                }
+            }
+            ensure_sign_in_names_free(ctx.storage, ctx.pool, &user.id, &updates).await?;
+            let (old_email, old_phone) = (user.email.clone(), user.phone_number.clone());
             apply_user_attribute_updates(&mut user, updates);
+            // A changed address or number has not been verified.
+            for (changed, verified_attribute) in [
+                (user.email != old_email, "email_verified"),
+                (user.phone_number != old_phone, "phone_number_verified"),
+            ] {
+                if changed {
+                    upsert_user_attribute(
+                        &mut user.attributes,
+                        verified_attribute,
+                        Some("false".to_string()),
+                    );
+                }
+            }
             set_user_password(&mut user, new_password)?;
             user.user_status = UserStatus::Confirmed;
             user.last_modified_date = Utc::now();
@@ -378,6 +426,7 @@ pub(crate) async fn respond_to_auth_challenge(
         ChallengeType::SoftwareTokenMfa => {
             let code = required(responses, "SOFTWARE_TOKEN_MFA_CODE")?;
             let secret = ctx.storage.get_software_token_secret(&user.id).await;
+            let attempt = claim_attempt(ctx, &pending).await?;
             let valid = match secret {
                 Some(secret) => {
                     is_valid_totp_code(&secret, code, Utc::now().timestamp()).unwrap_or(false)
@@ -385,7 +434,7 @@ pub(crate) async fn respond_to_auth_challenge(
                 None => false,
             };
             if !valid {
-                return Err(wrong_answer(ctx, &pending, CODE_MISMATCH).await);
+                return Err(wrong_answer(ctx, &pending, attempt, CODE_MISMATCH).await);
             }
             ctx.storage.delete_auth_challenge_session(session).await;
             complete(ctx, &user).await
@@ -401,8 +450,9 @@ pub(crate) async fn respond_to_auth_challenge(
                 Some(code) if challenge_name == ChallengeType::EmailOtp => code,
                 _ => required(responses, key)?,
             };
+            let attempt = claim_attempt(ctx, &pending).await?;
             if pending.code.as_deref() != Some(code.trim()) {
-                return Err(wrong_answer(ctx, &pending, CODE_MISMATCH).await);
+                return Err(wrong_answer(ctx, &pending, attempt, CODE_MISMATCH).await);
             }
             ctx.storage.delete_auth_challenge_session(session).await;
             complete(ctx, &user).await
@@ -448,10 +498,11 @@ pub(crate) async fn respond_to_auth_challenge(
         }
         ChallengeType::Password => {
             let password = required(responses, "PASSWORD")?;
+            let attempt = claim_attempt(ctx, &pending).await?;
             let user = match check_password(ctx, user, password).await {
                 Ok(user) => user,
                 Err(error) => {
-                    wrong_answer(ctx, &pending, INCORRECT_CREDENTIALS).await;
+                    wrong_answer(ctx, &pending, attempt, INCORRECT_CREDENTIALS).await;
                     return Err(error);
                 }
             };
@@ -541,21 +592,35 @@ async fn names_user(ctx: &AuthContext<'_>, user: &User, username: &str) -> bool 
         .is_some_and(|found| found.id == user.id)
 }
 
-/// Count a wrong answer against the session and build the error to return.
-async fn wrong_answer(
-    ctx: &AuthContext<'_>,
-    pending: &PendingAuthChallenge,
-    message: &str,
-) -> AppError {
-    let attempts = ctx
+/// Take one of the session's answer attempts before looking at the answer,
+/// so that answers sent in parallel cannot all be tried against one session.
+async fn claim_attempt(ctx: &AuthContext<'_>, pending: &PendingAuthChallenge) -> Result<u32> {
+    let invalid = || AppError::NotAuthorized(INVALID_SESSION.to_string());
+    let attempt = ctx
         .storage
         .update_auth_challenge_session(&pending.session, |pending| {
             pending.failed_attempts += 1;
             pending.failed_attempts
         })
         .await
-        .unwrap_or(MAX_CHALLENGE_ATTEMPTS);
-    if attempts >= MAX_CHALLENGE_ATTEMPTS {
+        .ok_or_else(invalid)?;
+    if attempt > MAX_CHALLENGE_ATTEMPTS {
+        ctx.storage
+            .delete_auth_challenge_session(&pending.session)
+            .await;
+        return Err(invalid());
+    }
+    Ok(attempt)
+}
+
+/// The error for a wrong answer; the session ends with its last attempt.
+async fn wrong_answer(
+    ctx: &AuthContext<'_>,
+    pending: &PendingAuthChallenge,
+    attempt: u32,
+    message: &str,
+) -> AppError {
+    if attempt >= MAX_CHALLENGE_ATTEMPTS {
         ctx.storage
             .delete_auth_challenge_session(&pending.session)
             .await;
@@ -766,7 +831,7 @@ async fn after_password(ctx: &AuthContext<'_>, user: User, user_auth: bool) -> R
             );
             parameters.insert(
                 "userAttributes".to_string(),
-                json!(user_attributes_json(&user)),
+                json!(user_attributes_json(ctx.client, &user)),
             );
             return Ok(challenge(
                 ctx,
@@ -815,12 +880,18 @@ fn missing_required_attributes(pool: &UserPool, user: &User) -> String {
     serde_json::to_string(&missing).unwrap_or_else(|_| "[]".to_string())
 }
 
-/// `userAttributes`: the user's attributes as a JSON object string.
-fn user_attributes_json(user: &User) -> String {
+/// `userAttributes`: the attributes of the user that the app client can
+/// read, as a JSON object string.
+fn user_attributes_json(client: &UserPoolClient, user: &User) -> String {
+    let readable = |name: &str| {
+        client.read_attributes.is_empty()
+            || client.read_attributes.iter().any(|allowed| allowed == name)
+    };
     let attributes: Map<String, Value> = user
         .attributes
         .iter()
         .filter(|attribute| !matches!(attribute.name.as_str(), "sub" | "preferred_mfa_setting"))
+        .filter(|attribute| readable(&attribute.name))
         .filter_map(|attribute| Some((attribute.name.clone(), json!(attribute.value.clone()?))))
         .collect();
     Value::Object(attributes).to_string()
@@ -871,7 +942,9 @@ async fn after_first_factor(ctx: &AuthContext<'_>, user: User, user_auth: bool) 
         .await);
     }
 
-    if let Some(preferred) = preferred_mfa_setting(&user, &[]) {
+    if let Some(preferred) =
+        preferred_mfa_setting(&user, &[]).filter(|preferred| factors.contains(preferred))
+    {
         return mfa_challenge(ctx, &user, &preferred).await;
     }
     if let [only] = factors.as_slice() {
@@ -1001,6 +1074,16 @@ async fn available_first_factors(ctx: &AuthContext<'_>, user: &User) -> Vec<Chal
         .and_then(|policy| policy.allowed_first_auth_factors.clone())
         .unwrap_or_else(|| vec![FirstAuthFactor::Password]);
 
+    // A one-time code finishes the sign-in by itself, so it is only on offer
+    // where nothing calls for a second factor, and only to an address or
+    // number the user has proven.
+    let passwordless = ctx.pool.mfa_configuration != Some(MfaConfiguration::On)
+        && ctx
+            .storage
+            .list_user_auth_factors(&user.id)
+            .await
+            .is_empty();
+
     let mut available = Vec::new();
     for factor in allowed {
         match factor {
@@ -1008,10 +1091,10 @@ async fn available_first_factors(ctx: &AuthContext<'_>, user: &User) -> Vec<Chal
                 available.push(ChallengeType::PasswordSrp);
                 available.push(ChallengeType::Password);
             }
-            FirstAuthFactor::EmailOtp if user.email.is_some() => {
+            FirstAuthFactor::EmailOtp if passwordless && user.attribute_verified("email") => {
                 available.push(ChallengeType::EmailOtp);
             }
-            FirstAuthFactor::SmsOtp if user.phone_number.is_some() => {
+            FirstAuthFactor::SmsOtp if passwordless && user.attribute_verified("phone_number") => {
                 available.push(ChallengeType::SmsOtp);
             }
             FirstAuthFactor::WebAuthn
@@ -1195,7 +1278,15 @@ async fn complete(ctx: &AuthContext<'_>, user: &User) -> Result<Value> {
     require_confirmed(user)?;
     let session = TokenSession::new(ctx.client.enable_token_revocation);
     let refresh_token = new_refresh_token(ctx, user, &session, Vec::new()).await;
-    let result = issue_tokens(ctx, user, &session, Some(refresh_token)).await?;
+    let result = authentication_result(
+        ctx.storage,
+        ctx.client,
+        user,
+        &session,
+        &[],
+        Some(refresh_token),
+    )
+    .await?;
 
     ctx.storage
         .create_auth_event(AuthEvent {
@@ -1245,16 +1336,6 @@ pub(crate) async fn group_claims(storage: &Storage, user: &User) -> GroupClaims 
     GroupClaims::from_groups(groups)
 }
 
-/// Build an `AuthenticationResult` for the user pools API.
-async fn issue_tokens(
-    ctx: &AuthContext<'_>,
-    user: &User,
-    session: &TokenSession,
-    refresh_token: Option<String>,
-) -> Result<Value> {
-    authentication_result(ctx.storage, ctx.client, user, session, refresh_token).await
-}
-
 /// Access and ID tokens (and optionally a refresh token) in the shape of
 /// `AuthenticationResultType`.
 pub(crate) async fn authentication_result(
@@ -1262,8 +1343,13 @@ pub(crate) async fn authentication_result(
     client: &UserPoolClient,
     user: &User,
     session: &TokenSession,
+    granted_scopes: &[String],
     refresh_token: Option<String>,
 ) -> Result<Value> {
+    // A refresh token from the OAuth 2.0 endpoints keeps the scopes it was
+    // granted, whichever API redeems it. Tokens from user pools API
+    // authentication have none stored and get the user-admin scope.
+    let oauth = !granted_scopes.is_empty();
     let groups = group_claims(storage, user).await;
     let access_expiry = resolve_access_token_expiry(client);
 
@@ -1273,9 +1359,8 @@ pub(crate) async fn authentication_result(
         user_pool_id: &client.user_pool_id,
         groups: &groups,
         session,
-        // User pools API authentication grants only the user-admin scope.
-        scopes: &[],
-        oauth: false,
+        scopes: granted_scopes,
+        oauth,
         expiry: access_expiry,
     })
     .map_err(AppError::Internal)?;
@@ -1288,7 +1373,7 @@ pub(crate) async fn authentication_result(
         nonce: None,
         access_token: None,
         readable_attributes: &client.read_attributes,
-        oauth_scopes: None,
+        oauth_scopes: oauth.then_some(granted_scopes),
         expiry: resolve_id_token_expiry(client),
     })
     .map_err(AppError::Internal)?;

@@ -14,7 +14,6 @@ use crate::{
     types::ChallengeType,
 };
 
-use super::associate_software_token::pending_secret_key;
 use super::auth_flow::new_session_token;
 use super::helpers::{SOFTWARE_TOKEN_MFA_FACTOR, verify_and_extract_active_user_id};
 
@@ -40,44 +39,60 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
     let well_formed = req.user_code.len() == 6 && req.user_code.chars().all(|c| c.is_ascii_digit());
 
     if let Some(session) = req.session.as_deref() {
+        // The session is the `MFA_SETUP` challenge AssociateSoftwareToken
+        // continued; it lives, and tolerates wrong codes, as any challenge.
+        let invalid_session =
+            || AppError::NotAuthorized("Invalid session for the user.".to_string());
+        let mut pending = storage
+            .get_auth_challenge_session(session)
+            .await
+            .filter(|pending| pending.challenge_name == ChallengeType::MfaSetup)
+            .ok_or_else(invalid_session)?;
         let (user_id, secret) = storage
             .get_software_token_session(session)
             .await
-            .ok_or_else(|| AppError::NotAuthorized("Invalid session for the user.".to_string()))?;
+            .filter(|(user_id, _)| *user_id == pending.user_id)
+            .ok_or_else(invalid_session)?;
+        if pending.expires_at < Utc::now() {
+            storage.delete_auth_challenge_session(session).await;
+            storage.delete_software_token_session(session).await;
+            return Err(AppError::NotAuthorized(
+                "Invalid session for the user, session is expired.".to_string(),
+            ));
+        }
         storage
             .get_user(&user_id)
             .await
             .ok_or(AppError::UserNotFound)?;
 
+        let attempts = storage
+            .update_auth_challenge_session(session, |pending| {
+                pending.failed_attempts += 1;
+                pending.failed_attempts
+            })
+            .await
+            .ok_or_else(invalid_session)?;
         if !well_formed || !is_valid_totp_code(&secret, &req.user_code, Utc::now().timestamp())? {
+            if attempts >= MAX_SETUP_ATTEMPTS {
+                storage.delete_auth_challenge_session(session).await;
+                storage.delete_software_token_session(session).await;
+            }
             return Err(code_mismatch());
         }
 
+        // The device is verified: the factor becomes active, and a new
+        // session lets the client finish with RespondToAuthChallenge.
         storage.delete_software_token_session(session).await;
+        storage.delete_auth_challenge_session(session).await;
         storage.save_software_token_secret(&user_id, secret).await;
-
-        // During sign-in the session is an `MFA_SETUP` challenge: the factor
-        // becomes active, and a new session lets the client finish with
-        // RespondToAuthChallenge.
-        let next_session = match storage.get_auth_challenge_session(session).await {
-            Some(mut pending) if pending.challenge_name == ChallengeType::MfaSetup => {
-                storage.delete_auth_challenge_session(session).await;
-                storage
-                    .add_user_auth_factor(&user_id, SOFTWARE_TOKEN_MFA_FACTOR)
-                    .await;
-                pending.session = new_session_token();
-                pending.mfa_setup_complete = true;
-                let next_session = pending.session.clone();
-                storage.save_auth_challenge_session(pending).await;
-                next_session
-            }
-            _ => {
-                storage
-                    .add_user_auth_factor(&user_id, SOFTWARE_TOKEN_MFA_FACTOR)
-                    .await;
-                session.to_string()
-            }
-        };
+        storage
+            .add_user_auth_factor(&user_id, SOFTWARE_TOKEN_MFA_FACTOR)
+            .await;
+        pending.session = new_session_token();
+        pending.mfa_setup_complete = true;
+        pending.failed_attempts = 0;
+        let next_session = pending.session.clone();
+        storage.save_auth_challenge_session(pending).await;
 
         return Ok(json!({
             "Status": "SUCCESS",
@@ -98,10 +113,9 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
 
     // The secret AssociateSoftwareToken just handed out, or the one already
     // verified when the user checks a code again.
-    let pending_key = pending_secret_key(&user_id);
-    let pending = storage.get_software_token_session(&pending_key).await;
+    let pending = storage.get_pending_software_token_secret(&user_id).await;
     let secret = match &pending {
-        Some((_, secret)) => secret.clone(),
+        Some(secret) => secret.clone(),
         None => storage
             .get_software_token_secret(&user_id)
             .await
@@ -115,7 +129,7 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
     // The token is verified. It starts to count as an MFA factor when
     // SetUserMFAPreference enables it.
     if pending.is_some() {
-        storage.delete_software_token_session(&pending_key).await;
+        storage.clear_pending_software_token_secret(&user_id).await;
         storage.save_software_token_secret(&user_id, secret).await;
     }
 
@@ -123,6 +137,9 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
         "Status": "SUCCESS"
     }))
 }
+
+/// Wrong codes an `MFA_SETUP` session tolerates before it is discarded.
+const MAX_SETUP_ATTEMPTS: u32 = 3;
 
 fn decode_base32_secret(secret: &str) -> Result<Vec<u8>> {
     let mut buffer = 0u32;

@@ -340,6 +340,22 @@ const NON_CLAIM_ATTRIBUTES: &[&str] = &[
     "phone_number_verified",
     // Emulator bookkeeping stored next to the real attributes.
     "preferred_mfa_setting",
+    // Claims of the token itself, which an attribute must not shadow.
+    "aud",
+    "iss",
+    "iat",
+    "exp",
+    "auth_time",
+    "token_use",
+    "jti",
+    "origin_jti",
+    "event_id",
+    "nonce",
+    "at_hash",
+    "cognito:username",
+    "cognito:groups",
+    "cognito:roles",
+    "cognito:preferred_role",
 ];
 
 fn attribute_is_true(user: &User, name: &str) -> bool {

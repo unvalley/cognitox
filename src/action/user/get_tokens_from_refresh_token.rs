@@ -97,8 +97,15 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
     };
 
     let session = TokenSession::resumed(stored_token.origin_jti.clone(), stored_token.auth_time);
-    let authentication_result =
-        authentication_result(storage, &client, &user, &session, rotated).await?;
+    let authentication_result = authentication_result(
+        storage,
+        &client,
+        &user,
+        &session,
+        &stored_token.scope,
+        rotated,
+    )
+    .await?;
 
     Ok(json!({
         "AuthenticationResult": authentication_result,

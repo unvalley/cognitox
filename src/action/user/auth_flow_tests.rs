@@ -1435,3 +1435,319 @@ async fn a_contact_used_for_mfa_does_not_recover_the_account() {
         "EMAIL"
     );
 }
+
+/// Sign in, register a TOTP device, and make it the preferred factor.
+async fn enable_totp(fixture: &Fixture, username: &str) -> String {
+    let signed_in = fixture.password_sign_in(username, PASSWORD).await.unwrap();
+    let access_token = &signed_in["AuthenticationResult"]["AccessToken"];
+    let associated =
+        associate_software_token::handler(&fixture.storage, json!({"AccessToken": access_token}))
+            .await
+            .unwrap();
+    let secret = associated["SecretCode"].as_str().unwrap().to_string();
+    verify_software_token::handler(
+        &fixture.storage,
+        json!({
+            "AccessToken": access_token,
+            "UserCode": generate_totp_code(&secret, Utc::now().timestamp()).unwrap(),
+        }),
+    )
+    .await
+    .unwrap();
+    set_user_mfa_preference::handler(
+        &fixture.storage,
+        json!({
+            "AccessToken": access_token,
+            "SoftwareTokenMfaSettings": {"Enabled": true, "PreferredMfa": true},
+        }),
+    )
+    .await
+    .unwrap();
+    secret
+}
+
+#[tokio::test]
+async fn a_pending_totp_secret_cannot_be_reached_through_a_session() {
+    let fixture = Fixture::default().await;
+    fixture.confirmed_user("alice", json!([])).await;
+    let signed_in = fixture.password_sign_in("alice", PASSWORD).await.unwrap();
+    let tokens = &signed_in["AuthenticationResult"];
+    let sub = claims(&tokens["AccessToken"])["sub"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    associate_software_token::handler(
+        &fixture.storage,
+        json!({"AccessToken": tokens["AccessToken"]}),
+    )
+    .await
+    .unwrap();
+
+    // Neither a made-up session nor one built from the user's sub registers
+    // a device for the user.
+    for session in [
+        "made-up-session-value".to_string(),
+        format!("pending:{sub}"),
+    ] {
+        not_authorized(
+            associate_software_token::handler(&fixture.storage, json!({"Session": session})).await,
+            "Invalid session for the user.",
+        );
+        not_authorized(
+            verify_software_token::handler(
+                &fixture.storage,
+                json!({"Session": session, "UserCode": "123456"}),
+            )
+            .await,
+            "Invalid session for the user.",
+        );
+    }
+}
+
+#[tokio::test]
+async fn a_disabled_factor_is_no_longer_challenged() {
+    let fixture = Fixture::default().await;
+    fixture.confirmed_user("alice", json!([])).await;
+    enable_totp(&fixture, "alice").await;
+    let challenge = fixture.password_sign_in("alice", PASSWORD).await.unwrap();
+    assert_eq!(challenge["ChallengeName"], "SOFTWARE_TOKEN_MFA");
+
+    // Reach in as an administrator would and turn the factor off.
+    crate::action::user::admin_set_user_mfa_preference::handler(
+        &fixture.storage,
+        json!({
+            "UserPoolId": fixture.pool_id,
+            "Username": "alice",
+            "SoftwareTokenMfaSettings": {"Enabled": false},
+        }),
+    )
+    .await
+    .unwrap();
+    assert_tokens(&fixture.password_sign_in("alice", PASSWORD).await.unwrap());
+}
+
+#[tokio::test]
+async fn one_time_codes_are_not_a_way_around_mfa_or_verification() {
+    let fixture = Fixture::new(
+        json!({
+            "Policies": {
+                "SignInPolicy": {"AllowedFirstAuthFactors": ["PASSWORD", "EMAIL_OTP"]}
+            }
+        }),
+        json!({}),
+    )
+    .await;
+    let choices = |challenge: Value| challenge["AvailableChallenges"].clone();
+
+    // A verified address can receive a sign-in code...
+    fixture.confirmed_user("alice", json!([])).await;
+    let offered = fixture
+        .initiate("USER_AUTH", json!({"USERNAME": "alice"}))
+        .await
+        .unwrap();
+    assert_eq!(
+        choices(offered),
+        json!(["PASSWORD_SRP", "PASSWORD", "EMAIL_OTP"])
+    );
+
+    // ...but not once the user has a second factor, which a code alone
+    // would skip.
+    enable_totp(&fixture, "alice").await;
+    let offered = fixture
+        .initiate(
+            "USER_AUTH",
+            json!({"USERNAME": "alice", "PREFERRED_CHALLENGE": "EMAIL_OTP"}),
+        )
+        .await
+        .unwrap();
+    assert_eq!(offered["ChallengeName"], "SELECT_CHALLENGE");
+    assert_eq!(choices(offered), json!(["PASSWORD_SRP", "PASSWORD"]));
+
+    // An address nobody verified gets no code either.
+    admin_create_user::handler(
+        &fixture.storage,
+        json!({
+            "UserPoolId": fixture.pool_id,
+            "Username": "bob",
+            "UserAttributes": [{"Name": "email", "Value": "bob@example.com"}],
+        }),
+    )
+    .await
+    .unwrap();
+    let offered = fixture
+        .initiate("USER_AUTH", json!({"USERNAME": "bob"}))
+        .await
+        .unwrap();
+    assert_eq!(choices(offered), json!(["PASSWORD_SRP", "PASSWORD"]));
+}
+
+#[tokio::test]
+async fn new_password_challenge_cannot_rewrite_fixed_attributes() {
+    let fixture = Fixture::new(
+        json!({
+            "Schema": [{"Name": "tenant", "AttributeDataType": "String", "Mutable": false}]
+        }),
+        json!({"ReadAttributes": ["email"]}),
+    )
+    .await;
+    admin_create_user::handler(
+        &fixture.storage,
+        json!({
+            "UserPoolId": fixture.pool_id,
+            "Username": "bob",
+            "TemporaryPassword": "TempPass123!",
+            "UserAttributes": [
+                {"Name": "email", "Value": "bob@example.com"},
+                {"Name": "email_verified", "Value": "true"},
+                {"Name": "custom:tenant", "Value": "a"}
+            ],
+        }),
+    )
+    .await
+    .unwrap();
+    let challenge = fixture
+        .password_sign_in("bob", "TempPass123!")
+        .await
+        .unwrap();
+    let session = challenge["Session"].as_str();
+
+    // The challenge shows only what the app client may read.
+    let shown: Value = serde_json::from_str(
+        challenge["ChallengeParameters"]["userAttributes"]
+            .as_str()
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(shown, json!({"email": "bob@example.com"}));
+
+    assert!(matches!(
+        fixture
+            .respond(
+                "NEW_PASSWORD_REQUIRED",
+                session,
+                json!({
+                    "USERNAME": "bob",
+                    "NEW_PASSWORD": "Brand-New-Password4!",
+                    "userAttributes.custom:tenant": "b",
+                }),
+            )
+            .await,
+        Err(AppError::InvalidParameter(message))
+            if message == "user.custom:tenant: Attribute cannot be updated."
+    ));
+
+    // A new address is accepted, as unverified.
+    let result = fixture
+        .respond(
+            "NEW_PASSWORD_REQUIRED",
+            session,
+            json!({
+                "USERNAME": "bob",
+                "NEW_PASSWORD": "Brand-New-Password4!",
+                "userAttributes.email": "robert@example.com",
+            }),
+        )
+        .await
+        .unwrap();
+    let id = claims(&assert_tokens(&result)["IdToken"]);
+    assert_eq!(id["email"], "robert@example.com");
+    let pool_id = UserPoolId::new(fixture.pool_id.clone()).unwrap();
+    let bob = fixture
+        .storage
+        .get_user_by_username(&pool_id, "bob")
+        .await
+        .unwrap();
+    assert!(!bob.attribute_verified("email"));
+}
+
+#[tokio::test]
+async fn a_sign_in_address_belongs_to_one_user() {
+    let fixture = Fixture::new(json!({"UsernameAttributes": ["email"]}), json!({})).await;
+    for email in ["victim@example.com", "mallory@example.com"] {
+        let signed_up = sign_up::handler(
+            &fixture.storage,
+            json!({"ClientId": fixture.client_id, "Username": email, "Password": PASSWORD}),
+        )
+        .await
+        .unwrap();
+        let user_id = uuid::Uuid::parse_str(signed_up["UserSub"].as_str().unwrap()).unwrap();
+        crate::action::user::test_support::confirm_with_code(
+            &fixture.storage,
+            &fixture.client_id,
+            &user_id,
+        )
+        .await;
+    }
+
+    let mallory = fixture
+        .password_sign_in("mallory@example.com", PASSWORD)
+        .await
+        .unwrap();
+    let result = crate::action::user::update_user_attributes::handler(
+        &fixture.storage,
+        json!({
+            "AccessToken": mallory["AuthenticationResult"]["AccessToken"],
+            "UserAttributes": [{"Name": "email", "Value": "victim@example.com"}],
+        }),
+    )
+    .await;
+    assert!(matches!(result, Err(AppError::AliasExists("email"))));
+
+    // The victim still signs in as themselves.
+    let victim = fixture
+        .password_sign_in("victim@example.com", PASSWORD)
+        .await
+        .unwrap();
+    assert_eq!(
+        claims(&assert_tokens(&victim)["IdToken"])["email"],
+        "victim@example.com"
+    );
+}
+
+#[tokio::test]
+async fn developer_only_attributes_are_not_for_users() {
+    let fixture = Fixture::new(
+        json!({
+            "Schema": [{
+                "Name": "role",
+                "AttributeDataType": "String",
+                "DeveloperOnlyAttribute": true
+            }]
+        }),
+        json!({}),
+    )
+    .await;
+    fixture.confirmed_user("alice", json!([])).await;
+    let signed_in = fixture.password_sign_in("alice", PASSWORD).await.unwrap();
+
+    not_authorized(
+        crate::action::user::update_user_attributes::handler(
+            &fixture.storage,
+            json!({
+                "AccessToken": signed_in["AuthenticationResult"]["AccessToken"],
+                "UserAttributes": [{"Name": "dev:custom:role", "Value": "admin"}],
+            }),
+        )
+        .await,
+        "A client attempted to write unauthorized attribute",
+    );
+}
+
+#[tokio::test]
+async fn revoke_token_needs_revocation_enabled() {
+    let fixture = Fixture::new(json!({}), json!({"EnableTokenRevocation": false})).await;
+    fixture.confirmed_user("alice", json!([])).await;
+    let signed_in = fixture.password_sign_in("alice", PASSWORD).await.unwrap();
+
+    assert!(matches!(
+        revoke_token::handler(
+            &fixture.storage,
+            json!({
+                "ClientId": fixture.client_id,
+                "Token": signed_in["AuthenticationResult"]["RefreshToken"],
+            }),
+        )
+        .await,
+        Err(AppError::UnsupportedOperation(_))
+    ));
+}

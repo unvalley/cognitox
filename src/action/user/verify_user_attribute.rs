@@ -13,7 +13,8 @@ use crate::{
 };
 
 use super::helpers::{
-    apply_user_attribute_updates, normalize_confirmation_code, verify_and_extract_active_user_id,
+    apply_user_attribute_updates, ensure_alias_free, normalize_confirmation_code,
+    verify_and_extract_active_user_id,
 };
 
 #[derive(Debug, Deserialize)]
@@ -78,6 +79,18 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
             }],
         );
     }
+
+    // Once verified the value is a sign-in alias, which must be free.
+    let pool = storage
+        .get_user_pool(&user.user_pool_id)
+        .await
+        .ok_or(AppError::UserPoolNotFound)?;
+    let attribute: &'static str = if req.attribute_name == "email" {
+        "email"
+    } else {
+        "phone_number"
+    };
+    ensure_alias_free(storage, &pool, &user, attribute).await?;
 
     // Code is valid, mark the attribute as verified
     // Remove existing verified attribute if present

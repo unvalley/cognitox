@@ -103,6 +103,20 @@ pub(crate) async fn apply_user_mfa_preferences(
         }
     }
 
+    // Turning a factor off also ends its being the preferred one.
+    let current_preference = user
+        .attributes
+        .iter()
+        .find(|attribute| attribute.name == "preferred_mfa_setting")
+        .and_then(|attribute| attribute.value.clone());
+    let enabled_factors = storage.list_user_auth_factors(&user.id).await;
+    if current_preference
+        .as_ref()
+        .is_some_and(|preferred| !enabled_factors.contains(preferred))
+    {
+        remove_user_attribute(&mut user.attributes, "preferred_mfa_setting");
+    }
+
     if let Some(factor) = preferred_factor {
         storage.add_user_auth_factor(&user.id, factor).await;
         upsert_user_attribute(

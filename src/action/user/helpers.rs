@@ -210,7 +210,9 @@ pub fn validate_attribute_write(
         let name = attribute.name.as_str();
 
         if let AttributeWriter::Client(client) = writer {
+            // Developer-only attributes are for administrators.
             let writable = !CLIENT_READ_ONLY_ATTRIBUTES.contains(&name)
+                && !name.starts_with("dev:")
                 && client.is_none_or(|client| {
                     client.write_attributes.is_empty()
                         || client
@@ -236,6 +238,89 @@ pub fn validate_attribute_write(
                 "user.{name}: Attribute cannot be updated."
             )));
         }
+    }
+    Ok(())
+}
+
+/// Whether the schema fixes an attribute once it has a value: it is
+/// immutable, or required.
+pub fn attribute_is_fixed(pool: &UserPool, name: &str) -> bool {
+    schema_attribute(pool, name)
+        .is_some_and(|schema| schema.mutable == Some(false) || schema.required == Some(true))
+}
+
+/// Refuse an attribute change that would let two users sign in under the
+/// same name: the email address or phone number of a `UsernameAttributes`
+/// pool, or a `preferred_username` alias.
+///
+/// An email or phone alias is different: it only acts as a sign-in name once
+/// verified, so it is checked then ([`ensure_alias_free`]).
+pub async fn ensure_sign_in_names_free(
+    storage: &Storage,
+    pool: &UserPool,
+    user_id: &Uuid,
+    updates: &[UserAttribute],
+) -> crate::error::Result<()> {
+    let username_attributes = pool.username_attributes.as_deref().unwrap_or_default();
+    let alias_attributes = pool.alias_attributes.as_deref().unwrap_or_default();
+    for update in updates {
+        let Some(value) = update.value.as_deref() else {
+            continue;
+        };
+        let (name, signs_in): (&'static str, bool) = match update.name.as_str() {
+            "email" => (
+                "email",
+                username_attributes.contains(&UsernameAttribute::Email),
+            ),
+            "phone_number" => (
+                "phone_number",
+                username_attributes.contains(&UsernameAttribute::PhoneNumber),
+            ),
+            "preferred_username" => (
+                "preferred_username",
+                alias_attributes.contains(&AliasAttribute::PreferredUsername),
+            ),
+            _ => continue,
+        };
+        if signs_in
+            && storage
+                .sign_in_value_taken(&pool.id, name, value, user_id, false)
+                .await
+        {
+            return Err(AppError::AliasExists(name));
+        }
+    }
+    Ok(())
+}
+
+/// Refuse to verify an email address or phone number that is already
+/// another user's verified alias.
+pub async fn ensure_alias_free(
+    storage: &Storage,
+    pool: &UserPool,
+    user: &User,
+    attribute: &'static str,
+) -> crate::error::Result<()> {
+    let alias = match attribute {
+        "email" => AliasAttribute::Email,
+        _ => AliasAttribute::PhoneNumber,
+    };
+    let value = match alias {
+        AliasAttribute::Email => user.email.as_deref(),
+        _ => user.phone_number.as_deref(),
+    };
+    let is_alias = pool
+        .alias_attributes
+        .as_deref()
+        .unwrap_or_default()
+        .contains(&alias);
+    if let Some(value) = value
+        && is_alias
+        && storage
+            .sign_in_value_taken(&pool.id, attribute, value, &user.id, true)
+            .await
+    {
+        return Err(AppError::AliasExists(attribute));
     }
     Ok(())
 }

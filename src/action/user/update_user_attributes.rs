@@ -15,9 +15,9 @@ use crate::{
 };
 
 use super::helpers::{
-    AttributeWriter, apply_user_attribute_updates, generate_confirmation_code, mask_email,
-    mask_phone_number, upsert_user_attribute, validate_attribute_write,
-    verify_access_token_with_client,
+    AttributeWriter, apply_user_attribute_updates, ensure_sign_in_names_free,
+    generate_confirmation_code, mask_email, mask_phone_number, upsert_user_attribute,
+    validate_attribute_write, verify_access_token_with_client,
 };
 
 #[derive(Debug, Deserialize)]
@@ -88,6 +88,8 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
         &req.user_attributes,
         true,
     )?;
+
+    ensure_sign_in_names_free(storage, &pool, &user.id, &req.user_attributes).await?;
 
     for new_attr in &req.user_attributes {
         match new_attr.name.as_str() {

@@ -46,6 +46,12 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
         }
     }
 
+    if !client.enable_token_revocation {
+        return Err(AppError::UnsupportedOperation(
+            "Token revocation is not enabled for this client".to_string(),
+        ));
+    }
+
     // Get and validate the refresh token
     let refresh_token = storage
         .get_refresh_token(&req.token)

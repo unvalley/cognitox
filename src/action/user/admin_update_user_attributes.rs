@@ -15,7 +15,8 @@ use crate::{
 };
 
 use super::helpers::{
-    AttributeWriter, apply_user_attribute_updates, upsert_user_attribute, validate_attribute_write,
+    AttributeWriter, apply_user_attribute_updates, ensure_alias_free, ensure_sign_in_names_free,
+    upsert_user_attribute, validate_attribute_write,
 };
 
 #[derive(Debug, Deserialize)]
@@ -43,6 +44,7 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
         .ok_or(AppError::UserNotFound)?;
 
     validate_attribute_write(&pool, AttributeWriter::Admin, &req.user_attributes, true)?;
+    ensure_sign_in_names_free(storage, &pool, &user.id, &req.user_attributes).await?;
 
     for new_attr in &req.user_attributes {
         match new_attr.name.as_str() {
@@ -75,6 +77,14 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
             "phone_number_verified",
             Some("false".to_string()),
         );
+    }
+
+    // An address or number an administrator marks verified becomes an alias,
+    // which only one user can hold.
+    for attribute in ["email", "phone_number"] {
+        if user.attribute_verified(attribute) {
+            ensure_alias_free(storage, &pool, &user, attribute).await?;
+        }
     }
 
     user.last_modified_date = Utc::now();
