@@ -67,7 +67,7 @@ mod tests {
     async fn test_admin_delete_user_attributes_success() {
         let storage = Storage::new();
 
-        let pool = create_user_pool::handler(&storage, json!({"PoolName": "test"}))
+        let pool = create_user_pool::handler(&storage, json!({"PoolName": "test", "Schema": [{"Name": "role", "AttributeDataType": "String"}]}))
             .await
             .unwrap();
         let pool_id = pool["UserPool"]["Id"].as_str().unwrap();

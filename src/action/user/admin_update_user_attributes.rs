@@ -14,7 +14,9 @@ use crate::{
     validation::{validate_email, validate_phone_number},
 };
 
-use super::helpers::{apply_user_attribute_updates, upsert_user_attribute};
+use super::helpers::{
+    AttributeWriter, apply_user_attribute_updates, upsert_user_attribute, validate_attribute_write,
+};
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "PascalCase")]
@@ -30,7 +32,7 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
     let req: Request = parse_request(body)?;
     let _ = &req.client_metadata;
 
-    storage
+    let pool = storage
         .get_user_pool(&req.user_pool_id)
         .await
         .ok_or(AppError::UserPoolNotFound)?;
@@ -39,6 +41,8 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
         .get_user_by_username(&req.user_pool_id, &req.username)
         .await
         .ok_or(AppError::UserNotFound)?;
+
+    validate_attribute_write(&pool, AttributeWriter::Admin, &req.user_attributes, true)?;
 
     for new_attr in &req.user_attributes {
         match new_attr.name.as_str() {
@@ -92,7 +96,7 @@ mod tests {
     async fn test_admin_update_user_attributes_success() {
         let storage = Storage::new();
 
-        let pool = create_user_pool::handler(&storage, json!({"PoolName": "test"}))
+        let pool = create_user_pool::handler(&storage, json!({"PoolName": "test", "Schema": [{"Name": "role", "AttributeDataType": "String"}]}))
             .await
             .unwrap();
         let pool_id = pool["UserPool"]["Id"].as_str().unwrap();

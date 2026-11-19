@@ -220,6 +220,10 @@ struct PrincipalStore {
     /// `origin_jti` values whose access and ID tokens `RevokeToken` voided.
     #[serde(default)]
     revoked_origin_jtis: HashSet<String>,
+    /// New attribute values waiting for their verification code, in user
+    /// pools that verify an email address or phone number before changing it.
+    #[serde(default)]
+    pending_attribute_updates: HashMap<(UserId, String), String>,
 }
 
 impl PrincipalStore {
@@ -1150,6 +1154,9 @@ impl Storage {
             principal_store.confirmation_codes.remove(id);
             principal_store.password_reset_codes.remove(id);
             principal_store
+                .pending_attribute_updates
+                .retain(|(user_id, _), _| user_id != id);
+            principal_store
                 .devices
                 .retain(|(user_id, _), _| user_id != id);
             principal_store.user_auth_factors.remove(id);
@@ -1277,6 +1284,26 @@ impl Storage {
     pub async fn delete_confirmation_code(&self, user_id: &UserId) {
         let mut store = self.principal_store.write().await;
         store.confirmation_codes.remove(user_id);
+    }
+
+    /// Hold a new attribute value until its verification code comes back.
+    pub async fn set_pending_attribute_update(&self, user_id: &UserId, name: &str, value: String) {
+        let mut store = self.principal_store.write().await;
+        store
+            .pending_attribute_updates
+            .insert((*user_id, name.to_string()), value);
+    }
+
+    /// Take the attribute value that was waiting for verification, if any.
+    pub async fn take_pending_attribute_update(
+        &self,
+        user_id: &UserId,
+        name: &str,
+    ) -> Option<String> {
+        let mut store = self.principal_store.write().await;
+        store
+            .pending_attribute_updates
+            .remove(&(*user_id, name.to_string()))
     }
 
     // ==================== Refresh Token Operations ====================

@@ -11,8 +11,8 @@ use crate::{
 };
 
 use super::helpers::{
-    build_mfa_options, build_user_attributes, preferred_mfa_setting,
-    verify_and_extract_active_user_id,
+    build_mfa_options, build_user_attributes, preferred_mfa_setting, readable_attributes,
+    verify_access_token_with_client,
 };
 
 #[derive(Debug, Deserialize)]
@@ -24,7 +24,7 @@ struct Request {
 pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
     let req: Request = crate::action::io::parse_request(body)?;
 
-    let user_id = verify_and_extract_active_user_id(storage, &req.access_token).await?;
+    let (user_id, client) = verify_access_token_with_client(storage, &req.access_token).await?;
 
     let user = storage
         .get_user(&user_id)
@@ -35,7 +35,7 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
 
     Ok(json!({
         "Username": user.username,
-        "UserAttributes": build_user_attributes(&user),
+        "UserAttributes": readable_attributes(client.as_ref(), build_user_attributes(&user)),
         "MFAOptions": build_mfa_options(&user, &user_mfa_setting_list),
         "PreferredMfaSetting": preferred_mfa_setting,
         "UserMFASettingList": user_mfa_setting_list

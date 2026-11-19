@@ -19,9 +19,10 @@ use crate::{
 };
 
 use super::helpers::{
-    confirmation_delivery, find_user_attribute_value, generate_confirmation_code,
-    new_user_identity, remove_user_attribute, set_user_password, sync_user_profile_attributes,
-    upsert_user_attribute, username_taken, verify_secret_hash,
+    AttributeWriter, confirmation_delivery, find_user_attribute_value, generate_confirmation_code,
+    new_user_identity, remove_user_attribute, require_schema_attributes, set_user_password,
+    sync_user_profile_attributes, upsert_user_attribute, username_taken, validate_attribute_write,
+    verify_secret_hash,
 };
 
 #[derive(Debug, Deserialize)]
@@ -103,6 +104,12 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
         ));
     }
     validate_password_against_policy(&pool, &req.password)?;
+    validate_attribute_write(
+        &pool,
+        AttributeWriter::Client(Some(&client)),
+        req.user_attributes.as_deref().unwrap_or_default(),
+        false,
+    )?;
 
     if storage
         .get_user_by_username(&client.user_pool_id, &req.username)
@@ -120,6 +127,7 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
     let user_id = Uuid::new_v4();
     let mut attributes = req.user_attributes.unwrap_or_default();
     let username = new_user_identity(&pool, &user_id, &req.username, &mut attributes)?;
+    require_schema_attributes(&pool, &attributes)?;
 
     let mut user = User {
         id: user_id,

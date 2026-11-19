@@ -61,7 +61,7 @@ mod tests {
     use serde_json::json;
 
     async fn setup_and_get_token(storage: &Storage) -> String {
-        let pool = create_user_pool::handler(storage, json!({"PoolName": "test"}))
+        let pool = create_user_pool::handler(storage, json!({"PoolName": "test", "Schema": [{"Name": "role", "AttributeDataType": "String"}]}))
             .await
             .unwrap();
         let pool_id = pool["UserPool"]["Id"].as_str().unwrap();

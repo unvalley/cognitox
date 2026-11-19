@@ -13,7 +13,8 @@ use crate::{
     storage::Storage,
     types::{
         AliasAttribute, AutoVerifiedAttribute, Device, PreventUserExistenceErrors,
-        RecoveryMechanismName, User, UserAttribute, UserPool, UserPoolClient, UsernameAttribute,
+        RecoveryMechanismName, SchemaAttributeType, User, UserAttribute, UserPool, UserPoolClient,
+        UsernameAttribute,
     },
     validation::{validate_email, validate_phone_number},
 };
@@ -144,6 +145,142 @@ pub fn build_code_delivery_details(
             "AttributeName": "phone_number"
         })
     })
+}
+
+/// Attributes of the OpenID Connect standard set that every user pool has.
+const STANDARD_ATTRIBUTES: &[&str] = &[
+    "address",
+    "birthdate",
+    "email",
+    "email_verified",
+    "family_name",
+    "gender",
+    "given_name",
+    "locale",
+    "middle_name",
+    "name",
+    "nickname",
+    "phone_number",
+    "phone_number_verified",
+    "picture",
+    "preferred_username",
+    "profile",
+    "sub",
+    "updated_at",
+    "website",
+    "zoneinfo",
+];
+
+/// Attributes only Cognito or an administrator sets.
+const CLIENT_READ_ONLY_ATTRIBUTES: &[&str] = &[
+    "sub",
+    "email_verified",
+    "phone_number_verified",
+    "identities",
+];
+
+/// Who is writing user attributes.
+#[derive(Clone, Copy)]
+pub enum AttributeWriter<'a> {
+    /// A user, through an app client whose `WriteAttributes` apply.
+    Client(Option<&'a UserPoolClient>),
+    /// An administrator, who may also set the verification flags.
+    Admin,
+}
+
+fn schema_attribute<'a>(pool: &'a UserPool, name: &str) -> Option<&'a SchemaAttributeType> {
+    let unprefixed = name
+        .strip_prefix("custom:")
+        .or_else(|| name.strip_prefix("dev:custom:"));
+    pool.schema_attributes.iter().flatten().find(|attribute| {
+        attribute.name == name || unprefixed.is_some_and(|short| attribute.name == short)
+    })
+}
+
+/// Check attributes a caller wants to set against the user pool's schema
+/// and the app client's write permissions. `updating` is true when the user
+/// already exists, which is when immutable attributes are off limits.
+pub fn validate_attribute_write(
+    pool: &UserPool,
+    writer: AttributeWriter<'_>,
+    attributes: &[UserAttribute],
+    updating: bool,
+) -> crate::error::Result<()> {
+    for attribute in attributes {
+        let name = attribute.name.as_str();
+
+        if let AttributeWriter::Client(client) = writer {
+            let writable = !CLIENT_READ_ONLY_ATTRIBUTES.contains(&name)
+                && client.is_none_or(|client| {
+                    client.write_attributes.is_empty()
+                        || client
+                            .write_attributes
+                            .iter()
+                            .any(|allowed| allowed == name)
+                });
+            if !writable {
+                return Err(AppError::NotAuthorized(
+                    "A client attempted to write unauthorized attribute".to_string(),
+                ));
+            }
+        }
+
+        let schema = schema_attribute(pool, name);
+        if schema.is_none() && !STANDARD_ATTRIBUTES.contains(&name) {
+            return Err(AppError::InvalidParameter(format!(
+                "Attributes did not conform to the schema: Type for attribute {{{name}}} could not be determined"
+            )));
+        }
+        if updating && schema.is_some_and(|schema| schema.mutable == Some(false)) {
+            return Err(AppError::InvalidParameter(format!(
+                "user.{name}: Attribute cannot be updated."
+            )));
+        }
+    }
+    Ok(())
+}
+
+/// The schema's required attributes a new user was not given.
+pub fn require_schema_attributes(
+    pool: &UserPool,
+    attributes: &[UserAttribute],
+) -> crate::error::Result<()> {
+    let missing: Vec<String> = pool
+        .schema_attributes
+        .iter()
+        .flatten()
+        .filter(|schema| schema.required == Some(true) && schema.name != "sub")
+        .filter(|schema| {
+            !attributes
+                .iter()
+                .any(|attribute| attribute.name == schema.name && attribute.value.is_some())
+        })
+        .map(|schema| format!("{}: The attribute is required", schema.name))
+        .collect();
+    if missing.is_empty() {
+        Ok(())
+    } else {
+        Err(AppError::InvalidParameter(format!(
+            "Attributes did not conform to the schema: {}",
+            missing.join("\n")
+        )))
+    }
+}
+
+/// The attributes an app client may read: all of them unless it lists
+/// `ReadAttributes`. `sub` is always readable.
+pub fn readable_attributes(client: Option<&UserPoolClient>, attributes: Vec<Value>) -> Vec<Value> {
+    let Some(client) = client.filter(|client| !client.read_attributes.is_empty()) else {
+        return attributes;
+    };
+    attributes
+        .into_iter()
+        .filter(|attribute| {
+            attribute["Name"].as_str().is_some_and(|name| {
+                name == "sub" || client.read_attributes.iter().any(|allowed| allowed == name)
+            })
+        })
+        .collect()
 }
 
 /// Settle how a new user is named.
@@ -368,6 +505,24 @@ pub fn hides_user_existence(client: &UserPoolClient) -> bool {
 /// Scope every access token issued by the user pools API carries, and the
 /// one Cognito requires for token-authorized user pools API operations.
 pub const USER_ADMIN_SCOPE: &str = "aws.cognito.signin.user.admin";
+
+/// Like [`verify_and_extract_active_user_id`], also returning the app client
+/// the token was issued to, whose `ReadAttributes` and `WriteAttributes`
+/// bound what the caller may see and change.
+pub async fn verify_access_token_with_client(
+    storage: &Storage,
+    token: &str,
+) -> crate::error::Result<(Uuid, Option<UserPoolClient>)> {
+    let user_id = verify_and_extract_active_user_id(storage, token).await?;
+    let client = match jwt::decode_access_token(token) {
+        Ok(token_data) => match token_data.claims.client_id.parse() {
+            Ok(client_id) => storage.get_user_pool_client(&client_id).await,
+            Err(_) => None,
+        },
+        Err(_) => None,
+    };
+    Ok((user_id, client))
+}
 
 /// Authorize a token-authenticated user pools API call the way Cognito does:
 /// the access token must be valid, unexpired, not revoked, and carry the

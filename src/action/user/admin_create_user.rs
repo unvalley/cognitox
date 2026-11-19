@@ -20,8 +20,9 @@ use crate::{
 };
 
 use super::helpers::{
-    build_user_attributes, find_user_attribute_value, new_user_identity, set_user_password,
-    sync_user_profile_attributes, upsert_user_attribute, username_taken,
+    AttributeWriter, build_user_attributes, find_user_attribute_value, new_user_identity,
+    set_user_password, sync_user_profile_attributes, upsert_user_attribute, username_taken,
+    validate_attribute_write,
 };
 
 #[derive(Debug, Deserialize)]
@@ -79,6 +80,12 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
     if let Some(password) = &req.temporary_password {
         validate_password_against_policy(&pool, password)?;
     }
+    validate_attribute_write(
+        &pool,
+        AttributeWriter::Admin,
+        req.user_attributes.as_deref().unwrap_or_default(),
+        false,
+    )?;
 
     let existing = storage
         .get_user_by_username(&req.user_pool_id, &req.username)
