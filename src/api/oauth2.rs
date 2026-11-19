@@ -735,10 +735,13 @@ pub async fn token(
             if auth_code.client_id != client.client_id {
                 return Err(invalid_grant("Client ID mismatch"));
             }
-            if let Some(redirect_uri) = &req.redirect_uri
-                && redirect_uri != &auth_code.redirect_uri
-            {
-                return Err(invalid_grant("Redirect URI mismatch"));
+            // The token request has to repeat the redirect URI the code
+            // was issued for.
+            if req.redirect_uri.as_ref() != Some(&auth_code.redirect_uri) {
+                return Err(match req.redirect_uri {
+                    Some(_) => invalid_grant("Redirect URI mismatch"),
+                    None => oauth_error("invalid_request", "Missing redirect_uri parameter"),
+                });
             }
 
             // Validate PKCE if code_challenge was provided

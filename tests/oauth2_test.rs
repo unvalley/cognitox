@@ -2801,3 +2801,46 @@ async fn test_client_credentials_without_scope_grants_every_client_scope() {
         .await;
     expect_token_error(response, "invalid_scope").await;
 }
+
+#[tokio::test]
+async fn test_code_grant_requires_the_redirect_uri() {
+    let client = TestClient::new();
+    let (_, client_id, username, password) = setup_user_and_client(&client).await;
+
+    // Leaving the redirect URI out is a malformed request...
+    let code = request_authorization_code(&client, &client_id, &username, &password).await;
+    let response = client
+        .post_form(
+            "/oauth2/token",
+            &[
+                ("grant_type", "authorization_code"),
+                ("code", &code),
+                ("client_id", &client_id),
+            ],
+        )
+        .await;
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(
+        response.json::<serde_json::Value>().await.unwrap()["error"],
+        "invalid_request"
+    );
+
+    // ...and one the code was not issued for does not redeem it.
+    let code = request_authorization_code(&client, &client_id, &username, &password).await;
+    let response = client
+        .post_form(
+            "/oauth2/token",
+            &[
+                ("grant_type", "authorization_code"),
+                ("code", &code),
+                ("client_id", &client_id),
+                ("redirect_uri", "https://example.com/other"),
+            ],
+        )
+        .await;
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(
+        response.json::<serde_json::Value>().await.unwrap()["error"],
+        "invalid_grant"
+    );
+}
