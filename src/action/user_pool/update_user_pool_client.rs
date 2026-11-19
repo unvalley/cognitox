@@ -7,7 +7,8 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 use super::create_user_pool_client::{
-    UserPoolClientConfigInput, build_client_response, validate_user_pool_client_configuration,
+    UserPoolClientConfigInput, apply_client_configuration, build_client_response,
+    validate_user_pool_client_configuration,
 };
 use crate::{
     action::io::parse_request,
@@ -123,174 +124,23 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
                 return Err(AppError::UserPoolClientNotFound);
             }
 
-            let callback_urls = config
-                .callback_urls
-                .clone()
-                .unwrap_or_else(|| client.callback_urls.clone());
-            let logout_urls = config
-                .logout_urls
-                .clone()
-                .unwrap_or_else(|| client.logout_urls.clone());
-            let default_redirect_uri = config
-                .default_redirect_uri
-                .as_deref()
-                .or(client.default_redirect_uri.as_deref());
-            let allowed_oauth_flows_user_pool_client = config
-                .allowed_o_auth_flows_user_pool_client
-                .unwrap_or(client.allowed_oauth_flows_user_pool_client);
-            let validation_config = UserPoolClientConfigInput {
-                allowed_o_auth_flows: config
-                    .allowed_o_auth_flows
-                    .clone()
-                    .or_else(|| Some(client.allowed_oauth_flows.clone())),
-                allowed_o_auth_scopes: config
-                    .allowed_o_auth_scopes
-                    .clone()
-                    .or_else(|| Some(client.allowed_oauth_scopes.clone())),
-                allowed_o_auth_flows_user_pool_client: Some(allowed_oauth_flows_user_pool_client),
-                callback_urls: Some(callback_urls.clone()),
-                logout_urls: Some(logout_urls.clone()),
-                default_redirect_uri: default_redirect_uri.map(str::to_owned),
-                supported_identity_providers: config
-                    .supported_identity_providers
-                    .clone()
-                    .or_else(|| Some(client.supported_identity_providers.clone())),
-                read_attributes: config
-                    .read_attributes
-                    .clone()
-                    .or_else(|| Some(client.read_attributes.clone())),
-                write_attributes: config
-                    .write_attributes
-                    .clone()
-                    .or_else(|| Some(client.write_attributes.clone())),
-                analytics_configuration: config
-                    .analytics_configuration
-                    .clone()
-                    .or_else(|| client.analytics_configuration.clone()),
-                explicit_auth_flows: config
-                    .explicit_auth_flows
-                    .clone()
-                    .or_else(|| Some(client.explicit_auth_flows.clone())),
-                auth_session_validity: config
-                    .auth_session_validity
-                    .or(client.auth_session_validity),
-                access_token_validity: config
-                    .access_token_validity
-                    .or(client.access_token_validity),
-                id_token_validity: config.id_token_validity.or(client.id_token_validity),
-                refresh_token_validity: config
-                    .refresh_token_validity
-                    .or(client.refresh_token_validity),
-                token_validity_units: config
-                    .token_validity_units
-                    .clone()
-                    .or_else(|| client.token_validity_units.clone()),
-                refresh_token_rotation: config
-                    .refresh_token_rotation
-                    .clone()
-                    .or_else(|| client.refresh_token_rotation.clone()),
-                enable_token_revocation: config
-                    .enable_token_revocation
-                    .or(Some(client.enable_token_revocation)),
-                prevent_user_existence_errors: config
-                    .prevent_user_existence_errors
-                    .or(client.prevent_user_existence_errors),
-                enable_propagate_additional_user_context_data: config
-                    .enable_propagate_additional_user_context_data
-                    .or(Some(client.enable_propagate_additional_user_context_data)),
-            };
+            // "If you don't provide a value for an attribute, Amazon Cognito
+            // sets it to its default value": the request is the client's
+            // whole configuration, validated on its own.
             validate_user_pool_client_configuration(
-                &validation_config,
-                &callback_urls,
-                &logout_urls,
-                default_redirect_uri,
+                &config,
+                config.callback_urls.as_deref().unwrap_or_default(),
+                config.logout_urls.as_deref().unwrap_or_default(),
+                config.default_redirect_uri.as_deref(),
                 client.client_secret.is_some(),
             )?;
 
+            // The identity of the client stays: its ID, secret, creation
+            // date, and, unless the request renames it, its name.
             if let Some(name) = client_name {
                 client.client_name = name;
             }
-
-            if let Some(flows) = config.allowed_o_auth_flows {
-                client.allowed_oauth_flows = flows;
-            }
-
-            if let Some(scopes) = config.allowed_o_auth_scopes {
-                client.allowed_oauth_scopes = scopes;
-            }
-
-            if let Some(allowed) = config.allowed_o_auth_flows_user_pool_client {
-                client.allowed_oauth_flows_user_pool_client = allowed;
-            }
-
-            if let Some(urls) = config.callback_urls {
-                client.callback_urls = urls;
-            }
-
-            if let Some(urls) = config.logout_urls {
-                client.logout_urls = urls;
-            }
-
-            if let Some(uri) = config.default_redirect_uri {
-                client.default_redirect_uri = Some(uri);
-            }
-
-            if let Some(providers) = config.supported_identity_providers {
-                client.supported_identity_providers = providers;
-            }
-
-            if let Some(attributes) = config.read_attributes {
-                client.read_attributes = attributes;
-            }
-
-            if let Some(attributes) = config.write_attributes {
-                client.write_attributes = attributes;
-            }
-
-            if let Some(analytics_configuration) = config.analytics_configuration {
-                client.analytics_configuration = Some(analytics_configuration);
-            }
-
-            if let Some(flows) = config.explicit_auth_flows {
-                client.explicit_auth_flows = flows;
-            }
-
-            if let Some(auth_session_validity) = config.auth_session_validity {
-                client.auth_session_validity = Some(auth_session_validity);
-            }
-
-            if let Some(validity) = config.access_token_validity {
-                client.access_token_validity = Some(validity);
-            }
-
-            if let Some(validity) = config.id_token_validity {
-                client.id_token_validity = Some(validity);
-            }
-
-            if let Some(validity) = config.refresh_token_validity {
-                client.refresh_token_validity = Some(validity);
-            }
-
-            if let Some(units) = config.token_validity_units {
-                client.token_validity_units = Some(units);
-            }
-
-            if let Some(refresh_token_rotation) = config.refresh_token_rotation {
-                client.refresh_token_rotation = Some(refresh_token_rotation);
-            }
-
-            if let Some(enabled) = config.enable_token_revocation {
-                client.enable_token_revocation = enabled;
-            }
-
-            if let Some(prevent) = config.prevent_user_existence_errors {
-                client.prevent_user_existence_errors = Some(prevent);
-            }
-
-            if let Some(enabled) = config.enable_propagate_additional_user_context_data {
-                client.enable_propagate_additional_user_context_data = enabled;
-            }
-
+            apply_client_configuration(client, config);
             client.last_modified_date = Utc::now();
 
             Ok(build_client_response(client))
@@ -471,5 +321,129 @@ mod tests {
         );
         assert_eq!(client["AuthSessionValidity"], 12);
         assert_eq!(client["RefreshTokenRotation"]["Feature"], "DISABLED");
+    }
+
+    #[tokio::test]
+    async fn test_update_user_pool_client_resets_what_the_request_leaves_out() {
+        let storage = Storage::new();
+
+        let pool = create_user_pool::handler(&storage, json!({"PoolName": "test-pool"}))
+            .await
+            .unwrap();
+        let pool_id = pool["UserPool"]["Id"].as_str().unwrap();
+
+        let created = create_user_pool_client::handler(
+            &storage,
+            json!({
+                "UserPoolId": pool_id,
+                "ClientName": "original-name",
+                "GenerateSecret": true,
+                "ExplicitAuthFlows": ["ALLOW_USER_PASSWORD_AUTH", "ALLOW_REFRESH_TOKEN_AUTH"],
+                "AllowedOAuthFlowsUserPoolClient": true,
+                "AllowedOAuthFlows": ["code"],
+                "AllowedOAuthScopes": ["openid"],
+                "CallbackURLs": ["https://example.com/callback"],
+                "ReadAttributes": ["email"],
+                "AccessTokenValidity": 2,
+                "RefreshTokenValidity": 7,
+                "AuthSessionValidity": 10,
+                "EnableTokenRevocation": false,
+                "PreventUserExistenceErrors": "ENABLED"
+            }),
+        )
+        .await
+        .unwrap();
+        let created = &created["UserPoolClient"];
+
+        let updated = handler(
+            &storage,
+            json!({
+                "UserPoolId": pool_id,
+                "ClientId": created["ClientId"],
+                "ReadAttributes": ["name"]
+            }),
+        )
+        .await
+        .unwrap();
+        let updated = &updated["UserPoolClient"];
+
+        // What identifies the client is kept.
+        for kept in ["ClientId", "ClientSecret", "ClientName", "CreationDate"] {
+            assert_eq!(updated[kept], created[kept], "{kept} should be kept");
+        }
+        assert_eq!(updated["ReadAttributes"], json!(["name"]));
+
+        // Everything else the request did not mention is back to its default.
+        assert_eq!(
+            updated["ExplicitAuthFlows"],
+            json!([
+                "ALLOW_CUSTOM_AUTH",
+                "ALLOW_USER_SRP_AUTH",
+                "ALLOW_REFRESH_TOKEN_AUTH"
+            ])
+        );
+        assert_eq!(updated["AllowedOAuthFlowsUserPoolClient"], false);
+        assert_eq!(updated["RefreshTokenValidity"], 30);
+        assert_eq!(updated["AuthSessionValidity"], 3);
+        assert_eq!(updated["EnableTokenRevocation"], true);
+        for reset in [
+            "AllowedOAuthFlows",
+            "AllowedOAuthScopes",
+            "CallbackURLs",
+            "AccessTokenValidity",
+            "PreventUserExistenceErrors",
+        ] {
+            assert!(updated.get(reset).is_none(), "{reset} should be reset");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_update_user_pool_client_validates_the_request_on_its_own() {
+        let storage = Storage::new();
+
+        let pool = create_user_pool::handler(&storage, json!({"PoolName": "test-pool"}))
+            .await
+            .unwrap();
+        let pool_id = pool["UserPool"]["Id"].as_str().unwrap();
+
+        let created = create_user_pool_client::handler(
+            &storage,
+            json!({
+                "UserPoolId": pool_id,
+                "ClientName": "original-name",
+                "AllowedOAuthFlowsUserPoolClient": true,
+                "AllowedOAuthFlows": ["code"],
+                "CallbackURLs": ["https://example.com/callback"]
+            }),
+        )
+        .await
+        .unwrap();
+
+        // The stored AllowedOAuthFlowsUserPoolClient does not carry over, so
+        // OAuth settings without it are refused and nothing changes.
+        let result = handler(
+            &storage,
+            json!({
+                "UserPoolId": pool_id,
+                "ClientId": created["UserPoolClient"]["ClientId"],
+                "CallbackURLs": ["https://example.com/other"]
+            }),
+        )
+        .await;
+        assert!(matches!(result, Err(AppError::InvalidParameter(_))));
+
+        let described = crate::action::user_pool::describe_user_pool_client::handler(
+            &storage,
+            json!({
+                "UserPoolId": pool_id,
+                "ClientId": created["UserPoolClient"]["ClientId"]
+            }),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            described["UserPoolClient"]["CallbackURLs"],
+            json!(["https://example.com/callback"])
+        );
     }
 }

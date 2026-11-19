@@ -3,10 +3,13 @@
 //! <https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_ListUserPools.html>
 
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{Value, json};
 
 use crate::{
-    action::io::{parse_request, to_response_value},
+    action::{
+        io::{parse_request, to_response_value},
+        pagination::{paginate, required_page_size},
+    },
     error::Result,
     storage::Storage,
     types::{UserPool, UserPoolId},
@@ -15,24 +18,27 @@ use crate::{
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "PascalCase")]
 struct Request {
-    max_results: Option<u32>,
+    max_results: Option<i32>,
     next_token: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "PascalCase")]
 struct Response {
+    #[serde(skip_serializing_if = "Option::is_none")]
     next_token: Option<String>,
     user_pools: Vec<UserPoolView>,
 }
 
+/// `UserPoolDescriptionType`
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "PascalCase")]
 struct UserPoolView {
     id: UserPoolId,
     name: String,
-    creation_date: i64,
+    lambda_config: Value,
     last_modified_date: i64,
+    creation_date: i64,
 }
 
 impl From<UserPool> for UserPoolView {
@@ -40,52 +46,30 @@ impl From<UserPool> for UserPoolView {
         Self {
             id: pool.id,
             name: pool.name,
-            creation_date: pool.creation_date.timestamp(),
+            lambda_config: pool.lambda_config.unwrap_or_else(|| json!({})),
             last_modified_date: pool.last_modified_date.timestamp(),
+            creation_date: pool.creation_date.timestamp(),
         }
     }
 }
 
 pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
     let req: Request = parse_request(body)?;
-
-    let max_results = req.max_results.unwrap_or(60) as usize;
-    if max_results == 0 {
-        return Err(crate::error::AppError::InvalidParameter(
-            "MaxResults must be greater than 0".to_string(),
-        ));
-    }
+    // Unlike the other list operations, ListUserPools requires MaxResults.
+    let max_results = required_page_size(req.max_results, "maxResults", 1, 60)?;
 
     let mut pools = storage.list_user_pools().await;
     pools.sort_by(|a, b| a.id.as_str().cmp(b.id.as_str()));
 
-    let start = req
-        .next_token
-        .as_deref()
-        .map(|token| {
-            token.parse::<usize>().map_err(|_| {
-                crate::error::AppError::InvalidParameter("Invalid NextToken".to_string())
-            })
-        })
-        .transpose()?
-        .unwrap_or(0);
-
-    if start > pools.len() {
-        return Err(crate::error::AppError::InvalidParameter(
-            "Invalid NextToken".to_string(),
-        ));
-    }
-
-    let end = (start + max_results).min(pools.len());
-
-    let user_pools = pools[start..end]
+    let page = paginate(pools.len(), max_results, req.next_token.as_deref())?;
+    let user_pools = pools[page.start..page.end]
         .iter()
         .cloned()
         .map(UserPoolView::from)
         .collect();
 
     to_response_value(Response {
-        next_token: (end < pools.len()).then(|| end.to_string()),
+        next_token: page.next_token,
         user_pools,
     })
 }
@@ -100,11 +84,35 @@ mod tests {
     async fn test_list_user_pools_empty() {
         let storage = Storage::new();
 
-        let result = handler(&storage, json!({})).await;
+        let result = handler(&storage, json!({"MaxResults": 60})).await;
 
         assert!(result.is_ok());
         let body = result.unwrap();
         assert_eq!(body["UserPools"].as_array().unwrap().len(), 0);
+        assert!(body.get("NextToken").is_none());
+    }
+
+    #[tokio::test]
+    async fn test_list_user_pools_requires_max_results_in_range() {
+        let storage = Storage::new();
+
+        let message = |result: Result<Value>| match result {
+            Err(crate::error::AppError::InvalidParameter(message)) => message,
+            other => panic!("expected InvalidParameterException, got {other:?}"),
+        };
+
+        assert_eq!(
+            message(handler(&storage, json!({})).await),
+            "1 validation error detected: Value null at 'maxResults' failed to satisfy constraint: Member must not be null"
+        );
+        assert_eq!(
+            message(handler(&storage, json!({"MaxResults": 61})).await),
+            "1 validation error detected: Value '61' at 'maxResults' failed to satisfy constraint: Member must have value less than or equal to 60"
+        );
+        assert_eq!(
+            message(handler(&storage, json!({"MaxResults": 0})).await),
+            "1 validation error detected: Value '0' at 'maxResults' failed to satisfy constraint: Member must have value greater than or equal to 1"
+        );
     }
 
     #[tokio::test]
@@ -119,11 +127,31 @@ mod tests {
             .await
             .unwrap();
 
-        let result = handler(&storage, json!({})).await;
+        let result = handler(&storage, json!({"MaxResults": 60})).await;
 
         assert!(result.is_ok());
         let body = result.unwrap();
-        assert_eq!(body["UserPools"].as_array().unwrap().len(), 2);
+        let pools = body["UserPools"].as_array().unwrap();
+        assert_eq!(pools.len(), 2);
+        // `UserPoolDescriptionType`: nothing but these members.
+        let mut members: Vec<&str> = pools[0]
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(String::as_str)
+            .collect();
+        members.sort_unstable();
+        assert_eq!(
+            members,
+            [
+                "CreationDate",
+                "Id",
+                "LambdaConfig",
+                "LastModifiedDate",
+                "Name"
+            ]
+        );
+        assert_eq!(pools[0]["LambdaConfig"], json!({}));
     }
 
     #[tokio::test]
@@ -166,6 +194,7 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(second["UserPools"].as_array().unwrap().len(), 1);
-        assert!(second["NextToken"].is_null());
+        // The last page carries no token at all.
+        assert!(second.get("NextToken").is_none());
     }
 }

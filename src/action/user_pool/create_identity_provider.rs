@@ -141,10 +141,9 @@ mod tests {
         )
         .await;
 
-        assert!(result.is_err());
-        assert!(matches!(
-            result.unwrap_err(),
-            AppError::IdentityProviderAlreadyExists
-        ));
+        let error = result.unwrap_err();
+        assert!(matches!(error, AppError::IdentityProviderAlreadyExists));
+        // Cognito has an exception of its own for this.
+        assert_eq!(error.status_and_type().1, "DuplicateProviderException");
     }
 }

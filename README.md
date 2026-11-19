@@ -193,6 +193,7 @@ cognitox aims to fail locally where Cognito would fail in AWS:
 - **MFA** -- a user's MFA preference, or a pool with `MfaConfiguration: ON`, adds the `SOFTWARE_TOKEN_MFA`, `SMS_MFA`, `EMAIL_OTP`, `SELECT_MFA_TYPE`, or `MFA_SETUP` challenge to sign-in.
 - **Errors** -- client errors are HTTP 400 with Cognito's `__type` and message (`NotAuthorizedException: Incorrect username or password.`), plus the `x-amzn-errortype` and `x-amzn-requestid` headers.
 - **Tokens** -- ID tokens carry the user's attributes, `cognito:groups`, and `cognito:roles`; access and ID tokens share `origin_jti` and `event_id`, and `RevokeToken` voids the tokens of one sign-in.
+- **Resource defaults and updates** -- a user pool or app client created with only a name reads back with Cognito's defaults (`DescribeUserPool` returns the default policies, `SchemaAttributes`, `Arn`, and so on). `UpdateUserPool` and `UpdateUserPoolClient` replace the configuration: a setting the request leaves out returns to its default, so send the full configuration as you would to Cognito. `ListUserPools` requires `MaxResults`.
 
 ## API Coverage
 
