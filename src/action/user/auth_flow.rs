@@ -31,9 +31,10 @@ use crate::{
 };
 
 use super::helpers::{
-    EMAIL_OTP_FACTOR, SMS_MFA_FACTOR, SOFTWARE_TOKEN_MFA_FACTOR, apply_user_attribute_updates,
-    generate_numeric_code, mask_email, mask_phone_number, preferred_mfa_setting, set_user_password,
-    store_srp_verifier, verify_password, verify_secret_hash,
+    AttributeWriter, EMAIL_OTP_FACTOR, SMS_MFA_FACTOR, SOFTWARE_TOKEN_MFA_FACTOR,
+    apply_user_attribute_updates, generate_numeric_code, mask_email, mask_phone_number,
+    preferred_mfa_setting, set_user_password, store_srp_verifier, validate_attribute_write,
+    verify_password, verify_secret_hash,
 };
 use super::verify_software_token::is_valid_totp_code;
 
@@ -326,6 +327,13 @@ pub(crate) async fn respond_to_auth_challenge(
                         })
                 })
                 .collect();
+            // The app client's write permissions apply here as anywhere.
+            validate_attribute_write(
+                ctx.pool,
+                AttributeWriter::Client(Some(ctx.client)),
+                &updates,
+                false,
+            )?;
             apply_user_attribute_updates(&mut user, updates);
             set_user_password(&mut user, new_password)?;
             user.user_status = UserStatus::Confirmed;

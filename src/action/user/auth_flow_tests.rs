@@ -366,12 +366,49 @@ async fn srp_with_a_temporary_password_asks_for_a_new_one() {
         .unwrap();
     let tokens = assert_tokens(&result);
     assert_eq!(claims(&tokens["IdToken"])["name"], "Bob");
+    // An administrator did not vouch for the address, so it is unverified.
+    assert_eq!(claims(&tokens["IdToken"])["email_verified"], false);
 
     assert_tokens(
         &fixture
             .srp_sign_in("bob", "Brand-New-Password4!")
             .await
             .unwrap(),
+    );
+}
+
+#[tokio::test]
+async fn new_password_challenge_cannot_write_protected_attributes() {
+    let fixture = Fixture::default().await;
+    admin_create_user::handler(
+        &fixture.storage,
+        json!({
+            "UserPoolId": fixture.pool_id,
+            "Username": "bob",
+            "TemporaryPassword": "TempPass123!",
+            "UserAttributes": [{"Name": "email", "Value": "bob@example.com"}],
+        }),
+    )
+    .await
+    .unwrap();
+    let challenge = fixture
+        .password_sign_in("bob", "TempPass123!")
+        .await
+        .unwrap();
+
+    not_authorized(
+        fixture
+            .respond(
+                "NEW_PASSWORD_REQUIRED",
+                challenge["Session"].as_str(),
+                json!({
+                    "USERNAME": "bob",
+                    "NEW_PASSWORD": "Brand-New-Password4!",
+                    "userAttributes.email_verified": "true",
+                }),
+            )
+            .await,
+        "A client attempted to write unauthorized attribute",
     );
 }
 
