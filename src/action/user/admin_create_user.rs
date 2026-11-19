@@ -20,8 +20,8 @@ use crate::{
 };
 
 use super::helpers::{
-    build_user_attributes, find_user_attribute_value, set_user_password,
-    sync_user_profile_attributes, upsert_user_attribute,
+    build_user_attributes, find_user_attribute_value, new_user_identity, set_user_password,
+    sync_user_profile_attributes, upsert_user_attribute, username_taken,
 };
 
 #[derive(Debug, Deserialize)]
@@ -87,11 +87,17 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
         return resend_invitation(storage, existing, req.temporary_password).await;
     }
     if existing.is_some() {
-        return Err(AppError::UserAlreadyExists);
+        return Err(username_taken(
+            &pool,
+            &req.username,
+            AppError::UserAccountAlreadyExists,
+        ));
     }
 
     let now = Utc::now();
     let user_id = Uuid::new_v4();
+    let mut attributes = req.user_attributes.unwrap_or_default();
+    let username = new_user_identity(&pool, &user_id, &req.username, &mut attributes)?;
     let password = req
         .temporary_password
         .unwrap_or_else(|| generate_temporary_password(&pool));
@@ -99,13 +105,13 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
     let mut user = User {
         id: user_id,
         user_pool_id: req.user_pool_id.clone(),
-        username: req.username.clone(),
+        username,
         email: None,
         phone_number: None,
         password_hash: String::new(),
         enabled: true,
         user_status: UserStatus::ForceChangePassword,
-        attributes: req.user_attributes.unwrap_or_default(),
+        attributes,
         creation_date: now,
         last_modified_date: now,
         srp_salt: None,
@@ -159,7 +165,7 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
     let created = storage
         .try_create_user(user)
         .await
-        .ok_or(AppError::UserAlreadyExists)?;
+        .ok_or(AppError::UserAccountAlreadyExists)?;
 
     Ok(json!({
         "User": user_view(&created)
@@ -341,7 +347,10 @@ mod tests {
         .await;
 
         assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), AppError::UserAlreadyExists));
+        assert!(matches!(
+            result.unwrap_err(),
+            AppError::UserAccountAlreadyExists
+        ));
     }
 
     #[tokio::test]

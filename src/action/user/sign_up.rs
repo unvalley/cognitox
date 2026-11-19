@@ -20,8 +20,8 @@ use crate::{
 
 use super::helpers::{
     confirmation_delivery, find_user_attribute_value, generate_confirmation_code,
-    remove_user_attribute, set_user_password, sync_user_profile_attributes, upsert_user_attribute,
-    verify_secret_hash,
+    new_user_identity, remove_user_attribute, set_user_password, sync_user_profile_attributes,
+    upsert_user_attribute, username_taken, verify_secret_hash,
 };
 
 #[derive(Debug, Deserialize)]
@@ -109,22 +109,28 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
         .await
         .is_some()
     {
-        return Err(AppError::UserAlreadyExists);
+        return Err(username_taken(
+            &pool,
+            &req.username,
+            AppError::UserAlreadyExists,
+        ));
     }
 
     let now = Utc::now();
     let user_id = Uuid::new_v4();
+    let mut attributes = req.user_attributes.unwrap_or_default();
+    let username = new_user_identity(&pool, &user_id, &req.username, &mut attributes)?;
 
     let mut user = User {
         id: user_id,
         user_pool_id: client.user_pool_id.clone(),
-        username: req.username.clone(),
+        username,
         email: None,
         phone_number: None,
         password_hash: String::new(),
         enabled: true,
         user_status: UserStatus::Unconfirmed,
-        attributes: req.user_attributes.unwrap_or_default(),
+        attributes,
         creation_date: now,
         last_modified_date: now,
         srp_salt: None,

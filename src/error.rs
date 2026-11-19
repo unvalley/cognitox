@@ -95,6 +95,11 @@ pub enum AppError {
     #[error("User already exists")]
     UserAlreadyExists,
 
+    /// `UsernameExistsException` with a message naming the sign-in
+    /// attribute that is taken.
+    #[error("{0}")]
+    UsernameExists(String),
+
     /// `UsernameExistsException` as AdminCreateUser words it.
     #[error("User account already exists")]
     UserAccountAlreadyExists,
@@ -225,9 +230,9 @@ impl AppError {
             AppError::SoftwareTokenMfaNotFound => {
                 (StatusCode::BAD_REQUEST, "SoftwareTokenMFANotFoundException")
             }
-            AppError::UserAlreadyExists | AppError::UserAccountAlreadyExists => {
-                (StatusCode::BAD_REQUEST, "UsernameExistsException")
-            }
+            AppError::UserAlreadyExists
+            | AppError::UserAccountAlreadyExists
+            | AppError::UsernameExists(_) => (StatusCode::BAD_REQUEST, "UsernameExistsException"),
             AppError::AliasExists(_) => (StatusCode::BAD_REQUEST, "AliasExistsException"),
             AppError::UnsupportedUserState(_) => {
                 (StatusCode::BAD_REQUEST, "UnsupportedUserStateException")

@@ -21,11 +21,11 @@ use tracing::error;
 
 use crate::config::{StorageConfig, StorageMode};
 use crate::types::{
-    AuthEvent, AuthorizationCode, BrandingId, ClientId, ConfirmationCode, Device, DomainPrefix,
-    FederatedUserLink, Group, GroupName, IdentityProvider, ManagedLoginBranding, PasswordResetCode,
-    PendingAuthChallenge, ProviderUserIdentifier, RefreshToken, ResourceServer, TermsDocument,
-    UiCustomization, User, UserId, UserImportJob, UserPool, UserPoolClient, UserPoolDomain,
-    UserPoolId, WebAuthnCredential,
+    AliasAttribute, AuthEvent, AuthorizationCode, BrandingId, ClientId, ConfirmationCode, Device,
+    DomainPrefix, FederatedUserLink, Group, GroupName, IdentityProvider, ManagedLoginBranding,
+    PasswordResetCode, PendingAuthChallenge, ProviderUserIdentifier, RefreshToken, ResourceServer,
+    TermsDocument, UiCustomization, User, UserId, UserImportJob, UserPool, UserPoolClient,
+    UserPoolDomain, UserPoolId, UsernameAttribute, WebAuthnCredential,
 };
 
 // ==================== Persistence Backend Trait ====================
@@ -152,6 +152,43 @@ struct PoolStore {
     ui_customizations: HashMap<(UserPoolId, Option<ClientId>), UiCustomization>,
     risk_configurations: HashMap<(UserPoolId, Option<ClientId>), Value>,
     log_delivery_configurations: HashMap<UserPoolId, Vec<Value>>,
+}
+
+/// The ways a user pool lets its users be named.
+struct UserNaming {
+    case_sensitive: bool,
+    username_attributes: Vec<UsernameAttribute>,
+    alias_attributes: Vec<AliasAttribute>,
+}
+
+impl UserNaming {
+    fn same(&self, left: &str, right: &str) -> bool {
+        if self.case_sensitive {
+            left == right
+        } else {
+            left.to_lowercase() == right.to_lowercase()
+        }
+    }
+
+    /// Whether `name` addresses `user` other than by its exact username.
+    fn names(&self, user: &User, name: &str) -> bool {
+        (!self.case_sensitive && self.same(&user.username, name))
+            || self.username_attributes.iter().any(|attribute| {
+                let value = match attribute {
+                    UsernameAttribute::Email => user.email.as_deref(),
+                    UsernameAttribute::PhoneNumber => user.phone_number.as_deref(),
+                };
+                value.is_some_and(|value| self.same(value, name))
+            })
+            || self.is_alias_of(user, name)
+    }
+
+    fn is_alias_of(&self, user: &User, alias: &str) -> bool {
+        self.alias_attributes.iter().any(|attribute| {
+            user.alias_value(*attribute)
+                .is_some_and(|value| self.same(value, alias))
+        })
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -1009,9 +1046,11 @@ impl Storage {
         store.users.get(id).map(f)
     }
 
-    /// Look up a user by username, or by one of the user pool's alias
-    /// attributes (`AliasAttributes`), which Cognito accepts wherever a
-    /// `Username` is expected.
+    /// Look up a user by any name Cognito accepts where a `Username` is
+    /// expected: the username itself, the `sub`, a sign-in attribute of a
+    /// `UsernameAttributes` pool, or a verified alias (`AliasAttributes`).
+    /// Names compare without regard to case unless the user pool is case
+    /// sensitive.
     pub async fn get_user_by_username(
         &self,
         user_pool_id: &UserPoolId,
@@ -1026,31 +1065,47 @@ impl Storage {
                 return store.users.get(user_id).cloned();
             }
         }
-        self.get_user_by_alias(user_pool_id, username).await
+
+        let naming = self.user_naming(user_pool_id).await?;
+        let store = self.principal_store.read().await;
+
+        if let Ok(user_id) = uuid::Uuid::parse_str(username)
+            && let Some(user) = store.users.get(&user_id)
+            && &user.user_pool_id == user_pool_id
+        {
+            return Some(user.clone());
+        }
+
+        store
+            .users
+            .values()
+            .find(|user| &user.user_pool_id == user_pool_id && naming.names(user, username))
+            .cloned()
     }
 
     /// Look up the user that owns `alias` through one of the user pool's
     /// alias attributes.
     pub async fn get_user_by_alias(&self, user_pool_id: &UserPoolId, alias: &str) -> Option<User> {
-        let alias_attributes = {
-            let store = self.pool_store.read().await;
-            store
-                .user_pools
-                .get(user_pool_id)?
-                .alias_attributes
-                .clone()?
-        };
+        let naming = self.user_naming(user_pool_id).await?;
         let store = self.principal_store.read().await;
         store
             .users
             .values()
-            .find(|user| {
-                &user.user_pool_id == user_pool_id
-                    && alias_attributes
-                        .iter()
-                        .any(|attribute| user.alias_value(*attribute) == Some(alias))
-            })
+            .find(|user| &user.user_pool_id == user_pool_id && naming.is_alias_of(user, alias))
             .cloned()
+    }
+
+    async fn user_naming(&self, user_pool_id: &UserPoolId) -> Option<UserNaming> {
+        let store = self.pool_store.read().await;
+        let pool = store.user_pools.get(user_pool_id)?;
+        Some(UserNaming {
+            case_sensitive: pool
+                .username_configuration
+                .as_ref()
+                .is_none_or(|configuration| configuration.case_sensitive),
+            username_attributes: pool.username_attributes.clone().unwrap_or_default(),
+            alias_attributes: pool.alias_attributes.clone().unwrap_or_default(),
+        })
     }
 
     pub async fn update_user(&self, user: User) -> Option<User> {

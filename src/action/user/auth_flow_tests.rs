@@ -1097,3 +1097,168 @@ async fn user_auth_needs_the_client_to_allow_it() {
             if message == "USER_AUTH flow not enabled for this client"
     ));
 }
+
+#[tokio::test]
+async fn email_as_username_makes_the_sub_the_username() {
+    let fixture = Fixture::new(json!({"UsernameAttributes": ["email"]}), json!({})).await;
+
+    let signed_up = sign_up::handler(
+        &fixture.storage,
+        json!({
+            "ClientId": fixture.client_id,
+            "Username": "alice@example.com",
+            "Password": PASSWORD,
+        }),
+    )
+    .await
+    .unwrap();
+    let sub = signed_up["UserSub"].as_str().unwrap().to_string();
+    assert_eq!(signed_up["CodeDeliveryDetails"]["Destination"], "a***@e***");
+
+    // The address is taken, however it is spelled.
+    assert!(matches!(
+        sign_up::handler(
+            &fixture.storage,
+            json!({
+                "ClientId": fixture.client_id,
+                "Username": "alice@example.com",
+                "Password": PASSWORD,
+            }),
+        )
+        .await,
+        Err(AppError::UsernameExists(message))
+            if message == "An account with the given email already exists."
+    ));
+    assert!(matches!(
+        sign_up::handler(
+            &fixture.storage,
+            json!({
+                "ClientId": fixture.client_id,
+                "Username": "alice",
+                "Password": PASSWORD,
+            }),
+        )
+        .await,
+        Err(AppError::InvalidParameter(message)) if message == "Username should be an email."
+    ));
+
+    let user_id = uuid::Uuid::parse_str(&sub).unwrap();
+    crate::action::user::test_support::confirm_with_code(
+        &fixture.storage,
+        &fixture.client_id,
+        &user_id,
+    )
+    .await;
+
+    // Sign-in takes the email address; the tokens and SRP speak of the sub.
+    let result = fixture
+        .password_sign_in("alice@example.com", PASSWORD)
+        .await
+        .unwrap();
+    let tokens = assert_tokens(&result);
+    let id = claims(&tokens["IdToken"]);
+    assert_eq!(id["cognito:username"], sub.as_str());
+    assert_eq!(id["email"], "alice@example.com");
+    assert_eq!(claims(&tokens["AccessToken"])["username"], sub.as_str());
+
+    let client = SrpClient::new();
+    let challenge = fixture
+        .initiate(
+            "USER_SRP_AUTH",
+            json!({"USERNAME": "alice@example.com", "SRP_A": client.public_hex()}),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        challenge["ChallengeParameters"]["USER_ID_FOR_SRP"],
+        sub.as_str()
+    );
+    assert_tokens(
+        &fixture
+            .srp_sign_in("alice@example.com", PASSWORD)
+            .await
+            .unwrap(),
+    );
+
+    // The sub works wherever a username does.
+    assert_tokens(&fixture.password_sign_in(&sub, PASSWORD).await.unwrap());
+    let user = get_user::handler(
+        &fixture.storage,
+        json!({"AccessToken": tokens["AccessToken"]}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(user["Username"], sub.as_str());
+}
+
+#[tokio::test]
+async fn usernames_ignore_case_unless_the_pool_is_case_sensitive() {
+    let insensitive = Fixture::new(
+        json!({"UsernameConfiguration": {"CaseSensitive": false}}),
+        json!({}),
+    )
+    .await;
+    insensitive.confirmed_user("Alice", json!([])).await;
+    assert_tokens(
+        &insensitive
+            .password_sign_in("alice", PASSWORD)
+            .await
+            .unwrap(),
+    );
+    assert_tokens(&insensitive.srp_sign_in("ALICE", PASSWORD).await.unwrap());
+    assert!(matches!(
+        sign_up::handler(
+            &insensitive.storage,
+            json!({
+                "ClientId": insensitive.client_id,
+                "Username": "ALICE",
+                "Password": PASSWORD,
+            }),
+        )
+        .await,
+        Err(AppError::UserAlreadyExists)
+    ));
+
+    let sensitive = Fixture::new(
+        json!({"UsernameConfiguration": {"CaseSensitive": true}}),
+        json!({}),
+    )
+    .await;
+    sensitive.confirmed_user("Alice", json!([])).await;
+    assert!(matches!(
+        sensitive.password_sign_in("alice", PASSWORD).await,
+        Err(AppError::UserNotFound)
+    ));
+}
+
+#[tokio::test]
+async fn email_alias_pools_refuse_email_shaped_usernames() {
+    let fixture = Fixture::new(json!({"AliasAttributes": ["email"]}), json!({})).await;
+    assert!(matches!(
+        sign_up::handler(
+            &fixture.storage,
+            json!({
+                "ClientId": fixture.client_id,
+                "Username": "alice@example.com",
+                "Password": PASSWORD,
+            }),
+        )
+        .await,
+        Err(AppError::InvalidParameter(message))
+            if message == "Username cannot be of email format, since user pool is configured for email alias."
+    ));
+
+    // Once the address is verified it signs the user in.
+    fixture
+        .confirmed_user(
+            "alice",
+            json!([{"Name": "email", "Value": "alice@example.com"}]),
+        )
+        .await;
+    let result = fixture
+        .password_sign_in("alice@example.com", PASSWORD)
+        .await
+        .unwrap();
+    let tokens = assert_tokens(&result);
+    assert_eq!(claims(&tokens["IdToken"])["cognito:username"], "alice");
+}

@@ -28,28 +28,32 @@ const MAX_USERNAME_LENGTH: usize = 128;
 /// Maximum confirmation/reset code length
 const MAX_CODE_LENGTH: usize = 2048;
 
-/// Validate username is not empty and within bounds
+/// Validate a `Username` member against Cognito's shape constraints:
+/// 1 to 128 characters of letters, marks, symbols, numbers, and punctuation.
 pub fn validate_username(username: &str) -> Result<()> {
-    let trimmed = username.trim();
+    let violation = |constraint: &str| {
+        Err(AppError::InvalidParameter(format!(
+            "1 validation error detected: Value '{username}' at 'username' failed to satisfy constraint: {constraint}"
+        )))
+    };
 
-    if trimmed.is_empty() {
-        return Err(AppError::InvalidParameter(
-            "Username cannot be empty".to_string(),
+    if username.is_empty() {
+        return violation("Member must have length greater than or equal to 1");
+    }
+
+    if username.chars().count() > MAX_USERNAME_LENGTH {
+        return violation(&format!(
+            "Member must have length less than or equal to {MAX_USERNAME_LENGTH}"
         ));
     }
 
-    if trimmed.len() > MAX_USERNAME_LENGTH {
-        return Err(AppError::InvalidParameter(format!(
-            "Username cannot exceed {} characters",
-            MAX_USERNAME_LENGTH
-        )));
-    }
-
-    // Username should not contain spaces (AWS Cognito rule)
-    if trimmed.contains(' ') {
-        return Err(AppError::InvalidParameter(
-            "Username cannot contain spaces".to_string(),
-        ));
+    if username
+        .chars()
+        .any(|ch| ch.is_whitespace() || ch.is_control())
+    {
+        return violation(
+            "Member must satisfy regular expression pattern: [\\p{L}\\p{M}\\p{S}\\p{N}\\p{P}]+",
+        );
     }
 
     Ok(())

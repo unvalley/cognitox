@@ -12,9 +12,10 @@ use crate::{
     jwt, srp,
     storage::Storage,
     types::{
-        AutoVerifiedAttribute, Device, PreventUserExistenceErrors, RecoveryMechanismName, User,
-        UserAttribute, UserPool, UserPoolClient,
+        AliasAttribute, AutoVerifiedAttribute, Device, PreventUserExistenceErrors,
+        RecoveryMechanismName, User, UserAttribute, UserPool, UserPoolClient, UsernameAttribute,
     },
+    validation::{validate_email, validate_phone_number},
 };
 
 pub const SOFTWARE_TOKEN_MFA_FACTOR: &str = "SOFTWARE_TOKEN_MFA";
@@ -143,6 +144,75 @@ pub fn build_code_delivery_details(
             "AttributeName": "phone_number"
         })
     })
+}
+
+/// Settle how a new user is named.
+///
+/// In a user pool that signs users in with their email address or phone
+/// number (`UsernameAttributes`), the requested username is that address or
+/// number: it becomes the attribute, and the user's actual username is the
+/// `sub`. Otherwise the requested username is the username, which must not
+/// look like an email address when email is an alias.
+pub fn new_user_identity(
+    pool: &UserPool,
+    user_id: &Uuid,
+    requested: &str,
+    attributes: &mut Vec<UserAttribute>,
+) -> crate::error::Result<String> {
+    let looks_like_email = requested.contains('@') && validate_email(requested).is_ok();
+    let looks_like_phone = validate_phone_number(requested).is_ok();
+
+    let username_attributes = pool.username_attributes.as_deref().unwrap_or_default();
+    if username_attributes.is_empty() {
+        let email_is_alias = pool
+            .alias_attributes
+            .as_deref()
+            .unwrap_or_default()
+            .contains(&AliasAttribute::Email);
+        if email_is_alias && looks_like_email {
+            return Err(AppError::InvalidParameter(
+                "Username cannot be of email format, since user pool is configured for email alias."
+                    .to_string(),
+            ));
+        }
+        return Ok(requested.to_string());
+    }
+
+    let accepts_email = username_attributes.contains(&UsernameAttribute::Email);
+    let accepts_phone = username_attributes.contains(&UsernameAttribute::PhoneNumber);
+    let attribute = if accepts_email && looks_like_email {
+        "email"
+    } else if accepts_phone && looks_like_phone {
+        "phone_number"
+    } else {
+        return Err(AppError::InvalidParameter(
+            match (accepts_email, accepts_phone) {
+                (true, true) => "Username should be either an email or a phone number.",
+                (true, false) => "Username should be an email.",
+                _ => "Username should be a phone number.",
+            }
+            .to_string(),
+        ));
+    };
+    upsert_user_attribute(attributes, attribute, Some(requested.to_string()));
+    Ok(user_id.to_string())
+}
+
+/// `UsernameExistsException` for a sign-up that collides with an existing
+/// user, worded for how the user pool names its users.
+pub fn username_taken(pool: &UserPool, requested: &str, default: AppError) -> AppError {
+    let username_attributes = pool.username_attributes.as_deref().unwrap_or_default();
+    if username_attributes.is_empty() {
+        return default;
+    }
+    let attribute = if requested.contains('@') {
+        "email"
+    } else {
+        "phone_number"
+    };
+    AppError::UsernameExists(format!(
+        "An account with the given {attribute} already exists."
+    ))
 }
 
 /// Where a sign-up confirmation code goes: the attribute the user pool
