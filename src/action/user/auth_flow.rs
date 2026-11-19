@@ -385,7 +385,11 @@ pub(crate) async fn respond_to_auth_challenge(
                 ChallengeType::EmailOtp => "EMAIL_OTP_CODE",
                 _ => "SMS_OTP_CODE",
             };
-            let code = required(responses, key)?;
+            // The API reference also names the email code `EMAIL_MFA_CODE`.
+            let code = match optional(responses, "EMAIL_MFA_CODE") {
+                Some(code) if challenge_name == ChallengeType::EmailOtp => code,
+                _ => required(responses, key)?,
+            };
             if pending.code.as_deref() != Some(code.trim()) {
                 return Err(wrong_answer(ctx, &pending, CODE_MISMATCH).await);
             }
@@ -393,7 +397,12 @@ pub(crate) async fn respond_to_auth_challenge(
             complete(ctx, &user).await
         }
         ChallengeType::SelectMfaType => {
-            let answer = required(responses, "ANSWER")?;
+            // The API reference calls the email factor `EMAIL_MFA` here;
+            // the challenge and the SDKs call it `EMAIL_OTP`.
+            let answer = match required(responses, "ANSWER")? {
+                "EMAIL_MFA" => EMAIL_OTP_FACTOR,
+                answer => answer,
+            };
             if !pending.choices.iter().any(|choice| choice == answer) {
                 return Err(AppError::InvalidParameter(format!(
                     "Invalid ANSWER {answer} for SELECT_MFA_TYPE"
@@ -956,7 +965,14 @@ async fn email_otp_challenge(ctx: &AuthContext<'_>, user: &User, user_auth: bool
 /// "Send" a one-time code. Nothing leaves the emulator; the code is logged
 /// at debug level like every other code it generates.
 fn deliver_code(user: &User, purpose: &str, destination: &str) -> String {
-    let code = generate_numeric_code();
+    use rand::Rng;
+
+    // Cognito's sign-in one-time passwords are eight digits; the codes of
+    // SMS MFA, like confirmation codes, are six.
+    let code = match purpose {
+        "SMS_MFA" => generate_numeric_code(),
+        _ => format!("{:08}", rand::thread_rng().gen_range(0..100_000_000)),
+    };
     tracing::debug!(
         "{purpose} code for {} (to {destination}): {code}",
         user.username

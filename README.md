@@ -213,7 +213,7 @@ See [spec/README.md](spec/README.md).
 
 - **Auth flows** -- `USER_SRP_AUTH`, `USER_PASSWORD_AUTH`, `ADMIN_USER_PASSWORD_AUTH` (`ADMIN_NO_SRP_AUTH`), `REFRESH_TOKEN_AUTH`, and the choice-based `USER_AUTH` flow (password, SRP, email and SMS one-time codes) are supported. `CUSTOM_AUTH` needs Lambda triggers and returns `NotImplementedException`, as do passkey (`WEB_AUTHN`) sign-in and device SRP.
 - **Lambda triggers** -- not supported (no pre/post auth hooks)
-- **Email/SMS delivery** -- nothing is sent. Confirmation, password reset, and MFA codes are six digits, as Cognito's are; they are persisted in the data file and emitted only at debug log level (`RUST_LOG=cognitox=debug`).
+- **Email/SMS delivery** -- nothing is sent. Confirmation, password reset, and SMS MFA codes are six digits and sign-in one-time passwords (`EMAIL_OTP`, `SMS_OTP`) eight, as Cognito's are; they are persisted in the data file and emitted only at debug log level (`RUST_LOG=cognitox=debug`).
 - **Account lockout** -- failed sign-in attempts are not rate limited; only a challenge session ends after repeated wrong answers.
 - **Advanced security features** -- risk configuration is stored but not evaluated
 

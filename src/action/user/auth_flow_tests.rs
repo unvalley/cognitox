@@ -1052,6 +1052,8 @@ async fn user_auth_offers_the_pools_first_factors() {
     );
     let session = challenge["Session"].as_str().unwrap();
     let code = fixture.delivered_code(session).await;
+    // Sign-in one-time passwords are eight digits.
+    assert_eq!(code.len(), 8);
     assert_tokens(
         &fixture
             .respond(
