@@ -11,7 +11,10 @@ use crate::{
     error::AppError,
     jwt, srp,
     storage::Storage,
-    types::{AutoVerifiedAttribute, Device, User, UserAttribute, UserPool, UserPoolClient},
+    types::{
+        AutoVerifiedAttribute, Device, PreventUserExistenceErrors, RecoveryMechanismName, User,
+        UserAttribute, UserPool, UserPoolClient,
+    },
 };
 
 pub const SOFTWARE_TOKEN_MFA_FACTOR: &str = "SOFTWARE_TOKEN_MFA";
@@ -166,14 +169,87 @@ pub fn confirmation_delivery(pool: &UserPool, user: &User) -> Option<Value> {
     }
 }
 
-pub fn require_code_delivery_details(user: &User) -> crate::error::Result<Value> {
-    build_code_delivery_details(user.email.as_deref(), user.phone_number.as_deref()).ok_or_else(
-        || {
-            AppError::InvalidParameter(
-                "User does not have an email or phone_number attribute".to_string(),
-            )
-        },
-    )
+/// Where a password reset code goes.
+///
+/// Cognito only delivers to a verified email address or phone number, in the
+/// order of the user pool's `AccountRecoverySetting` (the phone number first
+/// when the pool has none). `honor_admin_only` is false for the admin reset,
+/// which works even when users may not recover their own accounts.
+pub fn recovery_delivery(
+    pool: &UserPool,
+    user: &User,
+    honor_admin_only: bool,
+) -> crate::error::Result<Value> {
+    let mut mechanisms: Vec<(i32, RecoveryMechanismName)> = pool
+        .account_recovery_setting
+        .as_ref()
+        .and_then(|setting| setting.recovery_mechanisms.as_ref())
+        .filter(|mechanisms| !mechanisms.is_empty())
+        .map(|mechanisms| {
+            mechanisms
+                .iter()
+                .map(|mechanism| (mechanism.priority.unwrap_or(i32::MAX), mechanism.name))
+                .collect()
+        })
+        .unwrap_or_else(|| {
+            vec![
+                (1, RecoveryMechanismName::VerifiedPhoneNumber),
+                (2, RecoveryMechanismName::VerifiedEmail),
+            ]
+        });
+    mechanisms.sort_by_key(|(priority, _)| *priority);
+
+    let admin_only = mechanisms
+        .iter()
+        .all(|(_, name)| *name == RecoveryMechanismName::AdminOnly);
+    if admin_only {
+        if honor_admin_only {
+            return Err(AppError::NotAuthorized(
+                "Contact administrator to reset password.".to_string(),
+            ));
+        }
+        mechanisms = vec![
+            (1, RecoveryMechanismName::VerifiedPhoneNumber),
+            (2, RecoveryMechanismName::VerifiedEmail),
+        ];
+    }
+
+    for (_, name) in mechanisms {
+        let details = match name {
+            RecoveryMechanismName::VerifiedEmail if user.attribute_verified("email") => {
+                build_code_delivery_details(user.email.as_deref(), None)
+            }
+            RecoveryMechanismName::VerifiedPhoneNumber
+                if user.attribute_verified("phone_number") =>
+            {
+                build_code_delivery_details(None, user.phone_number.as_deref())
+            }
+            _ => None,
+        };
+        if let Some(details) = details {
+            return Ok(details);
+        }
+    }
+
+    Err(AppError::InvalidParameter(
+        "Cannot reset password for the user as there is no registered/verified email or phone_number"
+            .to_string(),
+    ))
+}
+
+/// The `CodeDeliveryDetails` Cognito makes up for a user that does not
+/// exist when the app client hides user existence.
+pub fn simulated_code_delivery(username: &str) -> Value {
+    let destination = if username.contains('@') {
+        mask_email(username)
+    } else {
+        mask_email(&format!("{username}@example.com"))
+    };
+    json!({
+        "Destination": destination,
+        "DeliveryMedium": "EMAIL",
+        "AttributeName": "email"
+    })
 }
 
 pub(crate) fn calculate_secret_hash(
@@ -211,6 +287,12 @@ pub fn verify_secret_hash(
     }
 
     Ok(())
+}
+
+/// Whether the app client reports a missing user as a generic failure
+/// (`PreventUserExistenceErrors: ENABLED`).
+pub fn hides_user_existence(client: &UserPoolClient) -> bool {
+    client.prevent_user_existence_errors == Some(PreventUserExistenceErrors::Enabled)
 }
 
 /// Scope every access token issued by the user pools API carries, and the

@@ -60,3 +60,5 @@ pub mod verify_user_attribute;
 
 #[cfg(test)]
 mod auth_flow_tests;
+#[cfg(test)]
+pub(crate) mod test_support;

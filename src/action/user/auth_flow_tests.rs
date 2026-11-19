@@ -78,6 +78,17 @@ impl Fixture {
 
     /// Sign up and confirm a user with the code the emulator "sent".
     async fn confirmed_user(&self, username: &str, attributes: Value) {
+        // The confirmation code goes to the email address.
+        let mut attributes = attributes.as_array().cloned().unwrap_or_default();
+        if !attributes
+            .iter()
+            .any(|attribute| attribute["Name"] == "email")
+        {
+            attributes.push(json!({
+                "Name": "email",
+                "Value": format!("{username}@example.com"),
+            }));
+        }
         let signed_up = sign_up::handler(
             &self.storage,
             json!({

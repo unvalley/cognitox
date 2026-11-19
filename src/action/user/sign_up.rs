@@ -158,16 +158,20 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
         .await
         .ok_or(AppError::UserAlreadyExists)?;
 
-    let code = generate_confirmation_code();
-    let confirmation = ConfirmationCode {
-        user_id,
-        attribute_name: None,
-        code: code.clone(),
-        expires_at: now + Duration::hours(24),
-    };
-    storage.save_confirmation_code(confirmation).await;
+    // A code only goes out when the user pool verifies an attribute the
+    // user has. Otherwise an administrator has to confirm the user.
+    if code_delivery_details.is_some() {
+        let code = generate_confirmation_code();
+        let confirmation = ConfirmationCode {
+            user_id,
+            attribute_name: None,
+            code: code.clone(),
+            expires_at: now + Duration::hours(24),
+        };
+        storage.save_confirmation_code(confirmation).await;
 
-    tracing::debug!("SignUp confirmation code for {}: {}", req.username, code);
+        tracing::debug!("SignUp confirmation code for {}: {}", req.username, code);
+    }
 
     let mut response = json!({
         "UserConfirmed": false,

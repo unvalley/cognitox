@@ -925,23 +925,28 @@ impl User {
             .and_then(|attribute| attribute.value.as_deref())
     }
 
+    /// Whether `email` or `phone_number` has been verified, by a code the
+    /// user returned or by an administrator setting `<attribute>_verified`.
+    pub fn attribute_verified(&self, attribute: &str) -> bool {
+        self.attribute_value(&format!("{attribute}_verified")) == Some("true")
+    }
+
     /// The value this user can be addressed by through `alias`, as a
     /// substitute for the username.
     ///
-    /// Cognito only resolves verified email addresses and phone numbers. The
-    /// emulator delivers no verification codes on sign-up and issues tokens
-    /// that claim both as verified, so a value counts as verified unless its
-    /// `*_verified` attribute is explicitly `false` (which attribute updates
-    /// set while a new value awaits verification).
+    /// Cognito only resolves verified email addresses and phone numbers.
     pub fn alias_value(&self, alias: AliasAttribute) -> Option<&str> {
-        let (value, verified_attribute) = match alias {
-            AliasAttribute::Email => (self.email.as_deref(), "email_verified"),
-            AliasAttribute::PhoneNumber => (self.phone_number.as_deref(), "phone_number_verified"),
-            AliasAttribute::PreferredUsername => {
-                return self.attribute_value("preferred_username");
-            }
-        };
-        value.filter(|_| self.attribute_value(verified_attribute) != Some("false"))
+        match alias {
+            AliasAttribute::Email => self
+                .email
+                .as_deref()
+                .filter(|_| self.attribute_verified("email")),
+            AliasAttribute::PhoneNumber => self
+                .phone_number
+                .as_deref()
+                .filter(|_| self.attribute_verified("phone_number")),
+            AliasAttribute::PreferredUsername => self.attribute_value("preferred_username"),
+        }
     }
 }
 

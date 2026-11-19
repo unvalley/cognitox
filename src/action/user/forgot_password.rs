@@ -15,7 +15,8 @@ use crate::{
 };
 
 use super::helpers::{
-    generate_confirmation_code, require_code_delivery_details, verify_secret_hash,
+    generate_confirmation_code, hides_user_existence, recovery_delivery, simulated_code_delivery,
+    verify_secret_hash,
 };
 
 #[derive(Debug, Deserialize)]
@@ -50,20 +51,38 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
         .ok_or(AppError::UserPoolClientNotFound)?;
     verify_secret_hash(&client, &req.username, req.secret_hash.as_deref())?;
 
-    let user = storage
+    let pool = storage
+        .get_user_pool(&client.user_pool_id)
+        .await
+        .ok_or(AppError::UserPoolNotFound)?;
+
+    let Some(user) = storage
         .get_user_by_username(&client.user_pool_id, &req.username)
         .await
-        .ok_or(AppError::UserNotFound)?;
+    else {
+        // An app client that hides user existence pretends a code went out.
+        return if hides_user_existence(&client) {
+            Ok(json!({
+                "CodeDeliveryDetails": simulated_code_delivery(&req.username)
+            }))
+        } else {
+            Err(AppError::UserNotFound)
+        };
+    };
 
     if !user.enabled {
         return Err(AppError::UserDisabled);
     }
 
-    if user.user_status == UserStatus::Unconfirmed {
-        return Err(AppError::UserNotConfirmed);
+    // A user who has yet to replace a temporary password has no password
+    // of their own to recover.
+    if user.user_status == UserStatus::ForceChangePassword {
+        return Err(AppError::NotAuthorized(
+            "User password cannot be reset in the current state.".to_string(),
+        ));
     }
 
-    let code_delivery_details = require_code_delivery_details(&user)?;
+    let code_delivery_details = recovery_delivery(&pool, &user, true)?;
 
     let code = generate_confirmation_code();
     let reset_code = PasswordResetCode {
@@ -73,6 +92,8 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
     };
 
     storage.save_password_reset_code(reset_code).await;
+
+    tracing::debug!("ForgotPassword code for {}: {}", req.username, code);
 
     Ok(json!({
         "CodeDeliveryDetails": code_delivery_details
@@ -88,9 +109,12 @@ mod tests {
     use crate::action::user_pool::{create_user_pool, create_user_pool_client};
 
     async fn setup_pool_and_client(storage: &Storage) -> (String, String) {
-        let pool = create_user_pool::handler(storage, json!({"PoolName": "test"}))
-            .await
-            .unwrap();
+        let pool = create_user_pool::handler(
+            storage,
+            json!({"PoolName": "test", "AutoVerifiedAttributes": ["email", "phone_number"]}),
+        )
+        .await
+        .unwrap();
         let pool_id = pool["UserPool"]["Id"].as_str().unwrap().to_string();
 
         let client = create_user_pool_client::handler(
@@ -133,7 +157,7 @@ mod tests {
 
         let user_sub = sign_up_result["UserSub"].as_str().unwrap();
         let user_id = uuid::Uuid::parse_str(user_sub).unwrap();
-        storage.confirm_user(&user_id).await;
+        crate::action::user::test_support::confirm_with_code(&storage, &client_id, &user_id).await;
 
         let result = handler(
             &storage,
@@ -147,12 +171,7 @@ mod tests {
         assert!(result.is_ok());
         let body = result.unwrap();
         assert_eq!(body["CodeDeliveryDetails"]["DeliveryMedium"], "EMAIL");
-        assert!(
-            body["CodeDeliveryDetails"]["Destination"]
-                .as_str()
-                .unwrap()
-                .contains("***")
-        );
+        assert_eq!(body["CodeDeliveryDetails"]["Destination"], "t***@e***");
 
         // Verify password reset code was saved
         let reset_code = storage.get_password_reset_code(&user_id).await;
@@ -220,7 +239,12 @@ mod tests {
         )
         .await;
 
-        assert!(matches!(result, Err(AppError::UserNotConfirmed)));
+        // An unconfirmed user has no verified address to send the code to.
+        assert!(matches!(
+            result,
+            Err(AppError::InvalidParameter(message))
+                if message == "Cannot reset password for the user as there is no registered/verified email or phone_number"
+        ));
     }
 
     #[tokio::test]
@@ -244,7 +268,7 @@ mod tests {
 
         let user_sub = sign_up_result["UserSub"].as_str().unwrap();
         let user_id = uuid::Uuid::parse_str(user_sub).unwrap();
-        storage.confirm_user(&user_id).await;
+        crate::action::user::test_support::confirm_with_code(&storage, &client_id, &user_id).await;
 
         let result = handler(
             &storage,
@@ -293,5 +317,66 @@ mod tests {
         .await;
 
         assert!(matches!(result, Err(AppError::InvalidParameter(_))));
+    }
+
+    #[tokio::test]
+    async fn test_forgot_password_hides_unknown_users_when_the_client_asks() {
+        let storage = Storage::new();
+        let (pool_id, _client_id) = setup_pool_and_client(&storage).await;
+        let client = create_user_pool_client::handler(
+            &storage,
+            json!({
+                "UserPoolId": pool_id,
+                "ClientName": "quiet-client",
+                "PreventUserExistenceErrors": "ENABLED"
+            }),
+        )
+        .await
+        .unwrap();
+
+        let body = handler(
+            &storage,
+            json!({
+                "ClientId": client["UserPoolClient"]["ClientId"],
+                "Username": "nobody@example.com"
+            }),
+        )
+        .await
+        .unwrap();
+        assert_eq!(body["CodeDeliveryDetails"]["DeliveryMedium"], "EMAIL");
+        assert_eq!(body["CodeDeliveryDetails"]["Destination"], "n***@e***");
+    }
+
+    #[tokio::test]
+    async fn test_forgot_password_refuses_a_temporary_password() {
+        let storage = Storage::new();
+        let (pool_id, client_id) = setup_pool_and_client(&storage).await;
+        crate::action::user::admin_create_user::handler(
+            &storage,
+            json!({
+                "UserPoolId": pool_id,
+                "Username": "invited",
+                "UserAttributes": [
+                    {"Name": "email", "Value": "invited@example.com"},
+                    {"Name": "email_verified", "Value": "true"}
+                ]
+            }),
+        )
+        .await
+        .unwrap();
+
+        let result = handler(
+            &storage,
+            json!({
+                "ClientId": client_id,
+                "Username": "invited"
+            }),
+        )
+        .await;
+        assert!(matches!(
+            result,
+            Err(AppError::NotAuthorized(message))
+                if message == "User password cannot be reset in the current state."
+        ));
     }
 }

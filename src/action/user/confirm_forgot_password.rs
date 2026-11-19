@@ -14,7 +14,9 @@ use crate::{
     validation::{validate_confirmation_code, validate_password_against_policy, validate_username},
 };
 
-use super::helpers::{normalize_confirmation_code, set_user_password, verify_secret_hash};
+use super::helpers::{
+    hides_user_existence, normalize_confirmation_code, set_user_password, verify_secret_hash,
+};
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "PascalCase")]
@@ -59,7 +61,11 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
     let mut user = storage
         .get_user_by_username(&client.user_pool_id, &req.username)
         .await
-        .ok_or(AppError::UserNotFound)?;
+        .ok_or(if hides_user_existence(&client) {
+            AppError::ExpiredCode
+        } else {
+            AppError::UserNotFound
+        })?;
 
     if !user.enabled {
         return Err(AppError::UserDisabled);
@@ -69,10 +75,11 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
         return Err(AppError::UserNotConfirmed);
     }
 
+    // No reset was requested, or its code was already used.
     let reset_code = storage
         .get_password_reset_code(&user.id)
         .await
-        .ok_or(AppError::InvalidConfirmationCode)?;
+        .ok_or(AppError::ExpiredCode)?;
 
     // Normalize codes for comparison (removes dashes, converts to uppercase)
     if normalize_confirmation_code(&reset_code.code)
@@ -108,9 +115,12 @@ mod tests {
     use crate::types::{UserPoolId, UserStatus};
 
     async fn setup_pool_and_client(storage: &Storage) -> (String, String) {
-        let pool = create_user_pool::handler(storage, json!({"PoolName": "test"}))
-            .await
-            .unwrap();
+        let pool = create_user_pool::handler(
+            storage,
+            json!({"PoolName": "test", "AutoVerifiedAttributes": ["email", "phone_number"]}),
+        )
+        .await
+        .unwrap();
         let pool_id = pool["UserPool"]["Id"].as_str().unwrap().to_string();
 
         let client = create_user_pool_client::handler(
@@ -153,7 +163,7 @@ mod tests {
 
         let user_sub = sign_up_result["UserSub"].as_str().unwrap();
         let user_id = uuid::Uuid::parse_str(user_sub).unwrap();
-        storage.confirm_user(&user_id).await;
+        crate::action::user::test_support::confirm_with_code(&storage, &client_id, &user_id).await;
 
         // Request password reset
         forgot_password::handler(
@@ -222,7 +232,7 @@ mod tests {
 
         let user_sub = sign_up_result["UserSub"].as_str().unwrap();
         let user_id = uuid::Uuid::parse_str(user_sub).unwrap();
-        storage.confirm_user(&user_id).await;
+        crate::action::user::test_support::confirm_with_code(&storage, &client_id, &user_id).await;
 
         // Request password reset
         forgot_password::handler(
@@ -271,7 +281,7 @@ mod tests {
 
         let user_sub = sign_up_result["UserSub"].as_str().unwrap();
         let user_id = uuid::Uuid::parse_str(user_sub).unwrap();
-        storage.confirm_user(&user_id).await;
+        crate::action::user::test_support::confirm_with_code(&storage, &client_id, &user_id).await;
 
         forgot_password::handler(
             &storage,
@@ -326,7 +336,7 @@ mod tests {
             .get_user_by_username(&pool_id_typed, "resetuser")
             .await
             .unwrap();
-        storage.confirm_user(&user.id).await;
+        crate::action::user::test_support::confirm_with_code(&storage, &client_id, &user.id).await;
 
         admin_reset_user_password::handler(
             &storage,

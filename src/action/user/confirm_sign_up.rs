@@ -129,9 +129,12 @@ mod tests {
     use crate::types::UserPoolId;
 
     async fn setup_pool_and_client(storage: &Storage) -> (String, String) {
-        let pool = create_user_pool::handler(storage, json!({"PoolName": "test"}))
-            .await
-            .unwrap();
+        let pool = create_user_pool::handler(
+            storage,
+            json!({"PoolName": "test", "AutoVerifiedAttributes": ["email", "phone_number"]}),
+        )
+        .await
+        .unwrap();
         let pool_id = pool["UserPool"]["Id"].as_str().unwrap().to_string();
 
         let client = create_user_pool_client::handler(
@@ -163,7 +166,10 @@ mod tests {
             json!({
                 "ClientId": client_id,
                 "Username": "testuser",
-                "Password": "Password123!"
+                "Password": "Password123!",
+                "UserAttributes": [
+                    {"Name": "email", "Value": "test@example.com"}
+                ]
             }),
         )
         .await
@@ -207,7 +213,10 @@ mod tests {
             json!({
                 "ClientId": client_id,
                 "Username": "testuser",
-                "Password": "Password123!"
+                "Password": "Password123!",
+                "UserAttributes": [
+                    {"Name": "email", "Value": "test@example.com"}
+                ]
             }),
         )
         .await
@@ -254,7 +263,10 @@ mod tests {
             json!({
                 "ClientId": client_id,
                 "Username": "testuser",
-                "Password": "Password123!"
+                "Password": "Password123!",
+                "UserAttributes": [
+                    {"Name": "email", "Value": "test@example.com"}
+                ]
             }),
         )
         .await
@@ -294,7 +306,10 @@ mod tests {
             json!({
                 "ClientId": client_id,
                 "Username": "testuser",
-                "Password": "Password123!"
+                "Password": "Password123!",
+                "UserAttributes": [
+                    {"Name": "email", "Value": "test@example.com"}
+                ]
             }),
         )
         .await

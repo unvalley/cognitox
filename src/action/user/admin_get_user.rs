@@ -123,6 +123,7 @@ mod tests {
                 "Username": "testuser",
                 "UserAttributes": [
                     {"Name": "email", "Value": "test@example.com"},
+                    {"Name": "email_verified", "Value": "true"},
                     {"Name": "preferred_username", "Value": "tester"}
                 ]
             }),
