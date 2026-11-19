@@ -6,6 +6,10 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 use crate::{
+    action::{
+        pagination::{page_size, paginate},
+        user::helpers::build_user_attributes,
+    },
     error::{AppError, Result},
     storage::Storage,
     types::UserPoolId,
@@ -16,17 +20,13 @@ use crate::{
 struct Request {
     user_pool_id: UserPoolId,
     group_name: String,
-    #[serde(default = "default_limit")]
-    limit: i32,
+    limit: Option<i32>,
     next_token: Option<String>,
-}
-
-fn default_limit() -> i32 {
-    60
 }
 
 pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
     let req: Request = crate::action::io::parse_request(body)?;
+    let limit = page_size(req.limit, "limit", 0, 60)?;
 
     storage
         .get_user_pool(&req.user_pool_id)
@@ -38,48 +38,22 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
         .await
         .ok_or(AppError::GroupNotFound)?;
 
-    if req.limit <= 0 {
-        return Err(AppError::InvalidParameter(
-            "Limit must be greater than 0".to_string(),
-        ));
-    }
-
     let mut users = storage
         .get_users_in_group(&req.user_pool_id, &req.group_name)
         .await;
     users.sort_by(|a, b| a.username.cmp(&b.username));
 
-    let start = req
-        .next_token
-        .as_deref()
-        .map(|token| {
-            token
-                .parse::<usize>()
-                .map_err(|_| AppError::InvalidParameter("Invalid NextToken".to_string()))
-        })
-        .transpose()?
-        .unwrap_or(0);
-
-    if start > users.len() {
-        return Err(AppError::InvalidParameter("Invalid NextToken".to_string()));
-    }
-
-    let end = (start + req.limit as usize).min(users.len());
-    let users_json: Vec<Value> = users[start..end]
+    let page = paginate(users.len(), limit, req.next_token.as_deref())?;
+    let users_json: Vec<Value> = users[page.start..page.end]
         .iter()
         .map(|u| {
             json!({
                 "Username": u.username,
-                "Enabled": u.enabled,
-                "UserStatus": u.user_status,
+                "Attributes": build_user_attributes(u),
                 "UserCreateDate": u.creation_date.timestamp(),
                 "UserLastModifiedDate": u.last_modified_date.timestamp(),
-                "Attributes": u.attributes.iter().map(|a| {
-                    json!({
-                        "Name": a.name,
-                        "Value": a.value
-                    })
-                }).collect::<Vec<_>>()
+                "Enabled": u.enabled,
+                "UserStatus": u.user_status
             })
         })
         .collect();
@@ -87,8 +61,8 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
     let mut response = json!({
         "Users": users_json
     });
-    if end < users.len() {
-        response["NextToken"] = json!(end.to_string());
+    if let Some(next_token) = page.next_token {
+        response["NextToken"] = json!(next_token);
     }
 
     Ok(response)
@@ -283,5 +257,99 @@ mod tests {
 
         assert_eq!(second["Users"].as_array().unwrap().len(), 1);
         assert!(second.get("NextToken").is_none());
+    }
+
+    #[tokio::test]
+    async fn test_list_users_in_group_returns_user_type_items() {
+        let storage = Storage::new();
+
+        let pool = create_user_pool::handler(&storage, json!({"PoolName": "test-pool"}))
+            .await
+            .unwrap();
+        let pool_id = pool["UserPool"]["Id"].as_str().unwrap();
+
+        create_group::handler(
+            &storage,
+            json!({
+                "UserPoolId": pool_id,
+                "GroupName": "admins"
+            }),
+        )
+        .await
+        .unwrap();
+        let created = admin_create_user::handler(
+            &storage,
+            json!({
+                "UserPoolId": pool_id,
+                "Username": "testuser",
+                "TemporaryPassword": "TempPass123!",
+                "UserAttributes": [{"Name": "email", "Value": "test@example.com"}]
+            }),
+        )
+        .await
+        .unwrap();
+        admin_add_user_to_group::handler(
+            &storage,
+            json!({
+                "UserPoolId": pool_id,
+                "Username": "testuser",
+                "GroupName": "admins"
+            }),
+        )
+        .await
+        .unwrap();
+
+        let body = handler(
+            &storage,
+            json!({
+                "UserPoolId": pool_id,
+                "GroupName": "admins"
+            }),
+        )
+        .await
+        .unwrap();
+        assert!(body.get("NextToken").is_none());
+
+        let user = &body["Users"][0];
+        assert_eq!(user["Username"], "testuser");
+        assert_eq!(user["Enabled"], true);
+        assert_eq!(user["UserStatus"], "FORCE_CHANGE_PASSWORD");
+        assert!(user["UserCreateDate"].is_number());
+        assert!(user["UserLastModifiedDate"].is_number());
+        // The same attributes AdminCreateUser reported, `sub` included.
+        assert_eq!(user["Attributes"], created["User"]["Attributes"]);
+        let attributes = user["Attributes"].as_array().unwrap();
+        assert!(
+            attributes
+                .iter()
+                .any(|attribute| attribute["Name"] == "sub")
+        );
+        assert!(
+            attributes
+                .iter()
+                .any(|attribute| attribute["Name"] == "email"
+                    && attribute["Value"] == "test@example.com")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_list_users_in_group_limit_is_bounded() {
+        let storage = Storage::new();
+
+        let pool = create_user_pool::handler(&storage, json!({"PoolName": "test-pool"}))
+            .await
+            .unwrap();
+        let pool_id = pool["UserPool"]["Id"].as_str().unwrap();
+
+        let result = handler(
+            &storage,
+            json!({"UserPoolId": pool_id, "GroupName": "admins", "Limit": 61}),
+        )
+        .await;
+        assert!(matches!(
+            result,
+            Err(AppError::InvalidParameter(message))
+                if message == "1 validation error detected: Value '61' at 'limit' failed to satisfy constraint: Member must have value less than or equal to 60"
+        ));
     }
 }

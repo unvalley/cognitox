@@ -7,6 +7,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 use crate::{
+    action::group::build_group_response,
     error::{AppError, Result},
     storage::Storage,
     types::{Group, UserPoolId},
@@ -56,15 +57,7 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
     let created = storage.create_group(group).await;
 
     Ok(json!({
-        "Group": {
-            "GroupName": created.group_name,
-            "UserPoolId": created.user_pool_id,
-            "Description": created.description,
-            "RoleArn": created.role_arn,
-            "Precedence": created.precedence,
-            "CreationDate": created.creation_date.timestamp(),
-            "LastModifiedDate": created.last_modified_date.timestamp()
-        }
+        "Group": build_group_response(&created)
     }))
 }
 
@@ -99,6 +92,9 @@ mod tests {
         assert_eq!(body["Group"]["GroupName"], "admins");
         assert_eq!(body["Group"]["Description"], "Admin group");
         assert_eq!(body["Group"]["Precedence"], 1);
+        // No role was given, so the group has no RoleArn member.
+        assert!(body["Group"].get("RoleArn").is_none());
+        assert!(body["Group"]["CreationDate"].is_number());
     }
 
     #[tokio::test]

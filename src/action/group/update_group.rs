@@ -7,6 +7,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 use crate::{
+    action::group::build_group_response,
     error::{AppError, Result},
     storage::Storage,
     types::UserPoolId,
@@ -54,15 +55,7 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
         .ok_or(AppError::GroupNotFound)?;
 
     Ok(json!({
-        "Group": {
-            "GroupName": updated.group_name,
-            "UserPoolId": updated.user_pool_id,
-            "Description": updated.description,
-            "RoleArn": updated.role_arn,
-            "Precedence": updated.precedence,
-            "CreationDate": updated.creation_date.timestamp(),
-            "LastModifiedDate": updated.last_modified_date.timestamp()
-        }
+        "Group": build_group_response(&updated)
     }))
 }
 

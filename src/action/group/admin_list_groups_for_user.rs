@@ -6,6 +6,10 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 use crate::{
+    action::{
+        group::build_group_response,
+        pagination::{page_size, paginate},
+    },
     error::{AppError, Result},
     storage::Storage,
     types::UserPoolId,
@@ -16,28 +20,18 @@ use crate::{
 struct Request {
     user_pool_id: UserPoolId,
     username: String,
-    #[serde(default = "default_limit")]
-    limit: i32,
+    limit: Option<i32>,
     next_token: Option<String>,
-}
-
-fn default_limit() -> i32 {
-    60
 }
 
 pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
     let req: Request = crate::action::io::parse_request(body)?;
+    let limit = page_size(req.limit, "limit", 0, 60)?;
 
     storage
         .get_user_pool(&req.user_pool_id)
         .await
         .ok_or(AppError::UserPoolNotFound)?;
-
-    if req.limit <= 0 {
-        return Err(AppError::InvalidParameter(
-            "Limit must be greater than 0".to_string(),
-        ));
-    }
 
     let user = storage
         .get_user_by_username(&req.user_pool_id, &req.username)
@@ -47,43 +41,20 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
     let mut group_names = storage.get_groups_for_user(&user.id).await;
     group_names.sort();
 
-    let start = req
-        .next_token
-        .as_deref()
-        .map(|token| {
-            token
-                .parse::<usize>()
-                .map_err(|_| AppError::InvalidParameter("Invalid NextToken".to_string()))
-        })
-        .transpose()?
-        .unwrap_or(0);
-
-    if start > group_names.len() {
-        return Err(AppError::InvalidParameter("Invalid NextToken".to_string()));
-    }
-
-    let end = (start + req.limit as usize).min(group_names.len());
+    let page = paginate(group_names.len(), limit, req.next_token.as_deref())?;
 
     let mut groups_json = Vec::new();
-    for group_name in &group_names[start..end] {
+    for group_name in &group_names[page.start..page.end] {
         if let Some(group) = storage.get_group(&req.user_pool_id, group_name).await {
-            groups_json.push(json!({
-                "GroupName": group.group_name,
-                "UserPoolId": group.user_pool_id,
-                "Description": group.description,
-                "RoleArn": group.role_arn,
-                "Precedence": group.precedence,
-                "CreationDate": group.creation_date.timestamp(),
-                "LastModifiedDate": group.last_modified_date.timestamp()
-            }));
+            groups_json.push(build_group_response(&group));
         }
     }
 
     let mut response = json!({
         "Groups": groups_json
     });
-    if end < group_names.len() {
-        response["NextToken"] = json!(end.to_string());
+    if let Some(next_token) = page.next_token {
+        response["NextToken"] = json!(next_token);
     }
 
     Ok(response)
@@ -301,5 +272,26 @@ mod tests {
 
         assert_eq!(second["Groups"].as_array().unwrap().len(), 1);
         assert!(second.get("NextToken").is_none());
+    }
+
+    #[tokio::test]
+    async fn test_admin_list_groups_for_user_limit_is_bounded() {
+        let storage = Storage::new();
+
+        let pool = create_user_pool::handler(&storage, json!({"PoolName": "test-pool"}))
+            .await
+            .unwrap();
+        let pool_id = pool["UserPool"]["Id"].as_str().unwrap();
+
+        let result = handler(
+            &storage,
+            json!({"UserPoolId": pool_id, "Username": "testuser", "Limit": 61}),
+        )
+        .await;
+        assert!(matches!(
+            result,
+            Err(AppError::InvalidParameter(message))
+                if message == "1 validation error detected: Value '61' at 'limit' failed to satisfy constraint: Member must have value less than or equal to 60"
+        ));
     }
 }

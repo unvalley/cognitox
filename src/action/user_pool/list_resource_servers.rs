@@ -6,7 +6,10 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 use crate::{
-    action::user_pool::create_resource_server::build_resource_server_response,
+    action::{
+        pagination::{page_size, paginate},
+        user_pool::create_resource_server::build_resource_server_response,
+    },
     error::{AppError, Result},
     storage::Storage,
     types::UserPoolId,
@@ -16,12 +19,13 @@ use crate::{
 #[serde(rename_all = "PascalCase")]
 struct Request {
     user_pool_id: UserPoolId,
-    max_results: Option<u32>,
+    max_results: Option<i32>,
     next_token: Option<String>,
 }
 
 pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
     let req: Request = crate::action::io::parse_request(body)?;
+    let max_results = page_size(req.max_results, "maxResults", 1, 50)?;
 
     storage
         .get_user_pool(&req.user_pool_id)
@@ -31,42 +35,24 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
     let mut resource_servers = storage.list_resource_servers(&req.user_pool_id).await;
     resource_servers.sort_by(|a, b| a.identifier.cmp(&b.identifier));
 
-    let max_results = req.max_results.unwrap_or(60) as usize;
-    if max_results == 0 {
-        return Err(AppError::InvalidParameter(
-            "MaxResults must be greater than 0".to_string(),
-        ));
-    }
-
-    let start = req
-        .next_token
-        .as_deref()
-        .map(|token| {
-            token
-                .parse::<usize>()
-                .map_err(|_| AppError::InvalidParameter("Invalid NextToken".to_string()))
-        })
-        .transpose()?
-        .unwrap_or(0);
-
-    if start > resource_servers.len() {
-        return Err(AppError::InvalidParameter("Invalid NextToken".to_string()));
-    }
-
-    let end = (start + max_results).min(resource_servers.len());
-    let list: Vec<Value> = resource_servers[start..end]
+    let page = paginate(
+        resource_servers.len(),
+        max_results,
+        req.next_token.as_deref(),
+    )?;
+    let list: Vec<Value> = resource_servers[page.start..page.end]
         .iter()
         .map(build_resource_server_response)
         .collect();
 
-    Ok(json!({
-        "ResourceServers": list,
-        "NextToken": if end < resource_servers.len() {
-            Value::String(end.to_string())
-        } else {
-            Value::Null
-        }
-    }))
+    let mut response = json!({
+        "ResourceServers": list
+    });
+    if let Some(next_token) = page.next_token {
+        response["NextToken"] = json!(next_token);
+    }
+
+    Ok(response)
 }
 
 #[cfg(test)]
@@ -151,5 +137,40 @@ mod tests {
 
         assert_eq!(first["ResourceServers"].as_array().unwrap().len(), 2);
         assert!(first["NextToken"].as_str().is_some());
+
+        let second = handler(
+            &storage,
+            json!({
+                "UserPoolId": user_pool_id,
+                "MaxResults": 2,
+                "NextToken": first["NextToken"]
+            }),
+        )
+        .await
+        .unwrap();
+        assert_eq!(second["ResourceServers"].as_array().unwrap().len(), 1);
+        assert!(second.get("NextToken").is_none());
+    }
+
+    #[tokio::test]
+    async fn test_list_resource_servers_max_results_is_bounded() {
+        let storage = Storage::new();
+
+        let pool = create_user_pool::handler(&storage, json!({"PoolName": "test-pool"}))
+            .await
+            .unwrap();
+        let user_pool_id = pool["UserPool"]["Id"].as_str().unwrap();
+
+        // This operation pages by at most 50.
+        let result = handler(
+            &storage,
+            json!({"UserPoolId": user_pool_id, "MaxResults": 51}),
+        )
+        .await;
+        assert!(matches!(
+            result,
+            Err(AppError::InvalidParameter(message))
+                if message == "1 validation error detected: Value '51' at 'maxResults' failed to satisfy constraint: Member must have value less than or equal to 50"
+        ));
     }
 }
