@@ -621,6 +621,9 @@ pub async fn token(
                 user_id: user.id,
                 client_id: client_id.clone(),
                 expires_at: Utc::now() + refresh_expiry,
+                origin_jti: None,
+                auth_time: None,
+                scope: auth_code.scope.clone(),
             };
             storage.save_refresh_token(refresh).await;
 
@@ -871,6 +874,7 @@ pub async fn userinfo(
                 &user_id,
                 token_data.claims.iat,
                 token_data.claims.cognitox_iat_ms,
+                token_data.claims.origin_jti.as_deref(),
             )
             .await
     {

@@ -11,19 +11,10 @@ use crate::{
     action::io::parse_request,
     error::{AppError, Result},
     storage::Storage,
-    types::{ClientId, UserStatus},
-    validation::validate_password,
+    types::ClientId,
 };
 
-use super::{
-    auth_flow::{
-        AuthChallengeName, ChallengeResponses, build_auth_response,
-        complete_new_password_challenge, complete_software_token_mfa_challenge,
-        issue_authentication_result, resolve_new_password_challenge,
-        resolve_software_token_mfa_challenge,
-    },
-    helpers::verify_secret_hash,
-};
+use super::auth_flow::{AuthApi, AuthContext, respond_to_auth_challenge};
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "PascalCase")]
@@ -52,11 +43,10 @@ struct Request {
 
 pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
     let req: Request = parse_request(body)?;
+    // Accepted for SDK compatibility; they feed analytics, threat
+    // protection, and Lambda triggers, none of which the emulator runs.
     let _ = (
-        &req.client_id,
-        &req.challenge_responses,
         &req.client_metadata,
-        &req.session,
         req.analytics_metadata
             .as_ref()
             .map(|meta| &meta.analytics_endpoint_id),
@@ -69,124 +59,24 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
         .get_user_pool_client(&req.client_id)
         .await
         .ok_or(AppError::UserPoolClientNotFound)?;
+    let pool = storage
+        .get_user_pool(&client.user_pool_id)
+        .await
+        .ok_or(AppError::UserPoolNotFound)?;
 
-    match AuthChallengeName::parse(&req.challenge_name)? {
-        AuthChallengeName::NewPasswordRequired => {
-            let session = req
-                .session
-                .as_deref()
-                .ok_or_else(|| AppError::InvalidParameter("Session required".to_string()))?;
-            let challenge = resolve_new_password_challenge(
-                storage,
-                session,
-                &req.client_id,
-                &client.user_pool_id,
-            )
-            .await?;
-
-            let responses = req
-                .challenge_responses
-                .as_ref()
-                .ok_or_else(|| {
-                    AppError::InvalidParameter("ChallengeResponses required".to_string())
-                })
-                .map(ChallengeResponses::new)?;
-            let new_password = responses.require("NEW_PASSWORD")?;
-            validate_password(new_password)?;
-
-            let user = storage
-                .get_user(&challenge.user_id)
-                .await
-                .ok_or(AppError::UserNotFound)?;
-            if !user.enabled {
-                return Err(AppError::UserDisabled);
-            }
-            if user.user_status != UserStatus::ForceChangePassword {
-                return Err(AppError::InvalidParameter(
-                    "User is not in FORCE_CHANGE_PASSWORD status".to_string(),
-                ));
-            }
-
-            if let Some(username) = responses.get("USERNAME")
-                && username != user.username
-            {
-                return Err(AppError::InvalidParameter("USERNAME mismatch".to_string()));
-            }
-            verify_secret_hash(&client, &user.username, responses.secret_hash())?;
-
-            let user = complete_new_password_challenge(storage, &user, new_password, Some(session))
-                .await?;
-
-            Ok(build_auth_response(
-                issue_authentication_result(
-                    storage,
-                    &client,
-                    &req.client_id,
-                    &client.user_pool_id,
-                    &user,
-                    true,
-                    false,
-                )
-                .await?,
-            ))
-        }
-        AuthChallengeName::SoftwareTokenMfa => {
-            let session = req
-                .session
-                .as_deref()
-                .ok_or_else(|| AppError::InvalidParameter("Session required".to_string()))?;
-            let challenge = resolve_software_token_mfa_challenge(
-                storage,
-                session,
-                &req.client_id,
-                &client.user_pool_id,
-            )
-            .await?;
-
-            let responses = req
-                .challenge_responses
-                .as_ref()
-                .ok_or_else(|| {
-                    AppError::InvalidParameter("ChallengeResponses required".to_string())
-                })
-                .map(ChallengeResponses::new)?;
-            let code = responses.require("SOFTWARE_TOKEN_MFA_CODE")?;
-
-            let user = storage
-                .get_user(&challenge.user_id)
-                .await
-                .ok_or(AppError::UserNotFound)?;
-            if !user.enabled {
-                return Err(AppError::UserDisabled);
-            }
-            if user.user_status != UserStatus::Confirmed {
-                return Err(AppError::InvalidParameter(
-                    "User is not in CONFIRMED status".to_string(),
-                ));
-            }
-            if let Some(username) = responses.get("USERNAME")
-                && username != user.username
-            {
-                return Err(AppError::InvalidParameter("USERNAME mismatch".to_string()));
-            }
-            verify_secret_hash(&client, &user.username, responses.secret_hash())?;
-
-            let user = complete_software_token_mfa_challenge(storage, &user, code, session).await?;
-
-            Ok(build_auth_response(
-                issue_authentication_result(
-                    storage,
-                    &client,
-                    &req.client_id,
-                    &client.user_pool_id,
-                    &user,
-                    true,
-                    false,
-                )
-                .await?,
-            ))
-        }
-    }
+    let ctx = AuthContext {
+        storage,
+        pool: &pool,
+        client: &client,
+        api: AuthApi::User,
+    };
+    respond_to_auth_challenge(
+        &ctx,
+        &req.challenge_name,
+        req.session.as_deref(),
+        &req.challenge_responses.unwrap_or_default(),
+    )
+    .await
 }
 
 #[cfg(test)]
@@ -208,6 +98,7 @@ mod tests {
             storage,
             json!({
                 "UserPoolId": pool_id,
+                "ExplicitAuthFlows": ["ALLOW_USER_PASSWORD_AUTH", "ALLOW_ADMIN_USER_PASSWORD_AUTH", "ALLOW_USER_SRP_AUTH", "ALLOW_REFRESH_TOKEN_AUTH"],
                 "ClientName": "test-client"
             }),
         )

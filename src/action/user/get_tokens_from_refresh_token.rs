@@ -2,19 +2,19 @@
 //!
 //! <https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_GetTokensFromRefreshToken.html>
 
-use chrono::Utc;
+use chrono::{Duration, Utc};
 use serde::Deserialize;
 use serde_json::{Value, json};
 
 use crate::{
-    action::user::auth_flow::require_refresh_token_auth_flow,
-    error::{AppError, Result},
-    jwt::{
-        generate_access_token, generate_id_token, resolve_access_token_expiry,
-        resolve_id_token_expiry,
+    action::user::auth_flow::{
+        RefreshSecret, authenticate_with_refresh_token, authentication_result, new_session_token,
+        require_refresh_token_auth_flow,
     },
+    error::{AppError, Result},
+    jwt::TokenSession,
     storage::Storage,
-    types::ClientId,
+    types::{ClientId, RefreshToken, RefreshTokenRotationFeature},
 };
 
 #[derive(Debug, Deserialize)]
@@ -57,60 +57,51 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
         }
     }
 
-    let stored_token = storage
-        .get_refresh_token(&req.refresh_token)
-        .await
-        .ok_or(AppError::InvalidRefreshToken)?;
-
-    if stored_token.client_id != req.client_id {
-        return Err(AppError::InvalidRefreshToken);
-    }
-
-    if stored_token.expires_at < Utc::now() {
-        return Err(AppError::InvalidRefreshToken);
-    }
-
-    let user = storage
-        .get_user(&stored_token.user_id)
-        .await
-        .ok_or(AppError::UserNotFound)?;
-
-    if !user.enabled {
-        return Err(AppError::UserDisabled);
-    }
-
-    let groups = storage.get_groups_for_user(&user.id).await;
-
-    let access_expiry = resolve_access_token_expiry(&client);
-    let id_expiry = resolve_id_token_expiry(&client);
-
-    let access_token = generate_access_token(
-        &user,
-        req.client_id.as_str(),
-        &client.user_pool_id,
-        &groups,
-        // OAuth scopes are granted through the OAuth endpoints, not this API.
-        &[],
-        access_expiry,
+    let (user, stored_token) = authenticate_with_refresh_token(
+        storage,
+        &client,
+        &req.refresh_token,
+        RefreshSecret::Verified,
     )
-    .map_err(AppError::Internal)?;
-    let id_token = generate_id_token(
-        &user,
-        req.client_id.as_str(),
-        &client.user_pool_id,
-        &groups,
-        None,
-        id_expiry,
-    )
-    .map_err(AppError::Internal)?;
+    .await?;
+
+    // With refresh token rotation, every exchange hands out a new refresh
+    // token and the presented one stops working once the grace period ends.
+    let rotation = client
+        .refresh_token_rotation
+        .as_ref()
+        .filter(|rotation| rotation.feature == Some(RefreshTokenRotationFeature::Enabled));
+    let rotated = match rotation {
+        Some(rotation) => {
+            let grace =
+                Duration::seconds(i64::from(rotation.retry_grace_period_seconds.unwrap_or(0)));
+            let replacement = new_session_token();
+            storage
+                .save_refresh_token(RefreshToken {
+                    token: replacement.clone(),
+                    ..stored_token.clone()
+                })
+                .await;
+            let retired_at = Utc::now() + grace;
+            if retired_at < stored_token.expires_at {
+                storage
+                    .save_refresh_token(RefreshToken {
+                        expires_at: retired_at,
+                        ..stored_token.clone()
+                    })
+                    .await;
+            }
+            Some(replacement)
+        }
+        None => None,
+    };
+
+    let session = TokenSession::resumed(stored_token.origin_jti.clone(), stored_token.auth_time);
+    let authentication_result =
+        authentication_result(storage, &client, &user, &session, rotated).await?;
 
     Ok(json!({
-        "AuthenticationResult": {
-            "AccessToken": access_token,
-            "IdToken": id_token,
-            "ExpiresIn": access_expiry.num_seconds(),
-            "TokenType": "Bearer"
-        }
+        "AuthenticationResult": authentication_result,
     }))
 }
 
@@ -130,6 +121,7 @@ mod tests {
             storage,
             json!({
                 "UserPoolId": pool_id,
+                "ExplicitAuthFlows": ["ALLOW_USER_PASSWORD_AUTH", "ALLOW_ADMIN_USER_PASSWORD_AUTH", "ALLOW_USER_SRP_AUTH", "ALLOW_REFRESH_TOKEN_AUTH"],
                 "ClientName": "test-client"
             }),
         )
@@ -210,7 +202,7 @@ mod tests {
         let pool_id = pool["UserPool"]["Id"].as_str().unwrap();
         let client = create_user_pool_client::handler(
             &storage,
-            json!({"UserPoolId": pool_id, "ClientName": "test-client"}),
+            json!({"UserPoolId": pool_id, "ClientName": "test-client", "ExplicitAuthFlows": ["ALLOW_USER_PASSWORD_AUTH", "ALLOW_ADMIN_USER_PASSWORD_AUTH", "ALLOW_USER_SRP_AUTH", "ALLOW_REFRESH_TOKEN_AUTH"]}),
         )
         .await
         .unwrap();

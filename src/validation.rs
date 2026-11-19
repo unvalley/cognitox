@@ -7,14 +7,17 @@ use crate::error::{AppError, Result};
 use crate::types::{
     AccountRecoverySetting, AdminCreateUserConfig, AnalyticsConfiguration, DeviceConfiguration,
     EmailConfiguration, EmailMfaConfiguration, ExplicitAuthFlow, InviteMessageTemplate,
-    MfaConfiguration, OAuthFlow, RefreshTokenRotationType, SchemaAttributeType, SmsConfiguration,
-    SmsMfaConfiguration, SoftwareTokenMfaConfiguration, TokenValidityUnit,
-    UserAttributeUpdateSettingsType, UserPoolAddOns, UserPoolId, UserPoolPolicies,
+    MfaConfiguration, OAuthFlow, PasswordPolicy, RefreshTokenRotationType, SchemaAttributeType,
+    SmsConfiguration, SmsMfaConfiguration, SoftwareTokenMfaConfiguration, TokenValidityUnit,
+    UserAttributeUpdateSettingsType, UserPool, UserPoolAddOns, UserPoolId, UserPoolPolicies,
     VerificationMessageTemplate, WebAuthnConfiguration,
 };
 
-/// Minimum password length (AWS default is 6)
-const MIN_PASSWORD_LENGTH: usize = 6;
+/// `PasswordPolicy.MinimumLength` of a user pool created without a policy.
+const DEFAULT_MIN_PASSWORD_LENGTH: i32 = 8;
+
+/// `PasswordPolicy.TemporaryPasswordValidityDays` when unset.
+const DEFAULT_TEMPORARY_PASSWORD_VALIDITY_DAYS: i32 = 7;
 
 /// Maximum password length
 const MAX_PASSWORD_LENGTH: usize = 256;
@@ -52,29 +55,113 @@ pub fn validate_username(username: &str) -> Result<()> {
     Ok(())
 }
 
-/// Validate password meets minimum requirements
-pub fn validate_password(password: &str) -> Result<()> {
-    if password.is_empty() {
+/// Cognito's password policy for a user pool created without one.
+pub fn default_password_policy() -> PasswordPolicy {
+    PasswordPolicy {
+        minimum_length: Some(DEFAULT_MIN_PASSWORD_LENGTH),
+        password_history_size: None,
+        require_lowercase: Some(true),
+        require_numbers: Some(true),
+        require_symbols: Some(true),
+        require_uppercase: Some(true),
+        temporary_password_validity_days: Some(DEFAULT_TEMPORARY_PASSWORD_VALIDITY_DAYS),
+    }
+}
+
+/// Characters Cognito counts as symbols for `RequireSymbols`.
+const PASSWORD_SYMBOLS: &str = "^$*.[]{}()?\"!@#%&/\\,><':;|_~`=+- ";
+
+/// The shape constraint on every password member: no leading or trailing
+/// whitespace, at most 256 characters.
+fn validate_password_shape(password: &str) -> Result<()> {
+    let length = password.chars().count();
+    if length > MAX_PASSWORD_LENGTH {
+        return Err(AppError::InvalidParameter(format!(
+            "1 validation error detected: Value at 'password' failed to satisfy constraint: Member must have length less than or equal to {MAX_PASSWORD_LENGTH}"
+        )));
+    }
+    let edge_is_whitespace = password.chars().next().is_none_or(char::is_whitespace)
+        || password.chars().next_back().is_none_or(char::is_whitespace);
+    if edge_is_whitespace {
         return Err(AppError::InvalidParameter(
-            "Password cannot be empty".to_string(),
+            "1 validation error detected: Value at 'password' failed to satisfy constraint: Member must satisfy regular expression pattern: ^[\\S]+.*[\\S]+$"
+                .to_string(),
         ));
     }
+    Ok(())
+}
 
-    if password.len() < MIN_PASSWORD_LENGTH {
-        return Err(AppError::InvalidParameter(format!(
-            "Password must be at least {} characters",
-            MIN_PASSWORD_LENGTH
-        )));
+/// Enforce a user pool's `PasswordPolicy` on a new password.
+///
+/// A pool without a stored policy is held to Cognito's default.
+pub fn validate_password_against_policy(pool: &UserPool, password: &str) -> Result<()> {
+    validate_password_shape(password)?;
+
+    let default_policy = default_password_policy();
+    let policy = pool
+        .policies
+        .as_ref()
+        .and_then(|policies| policies.password_policy.as_ref())
+        .unwrap_or(&default_policy);
+
+    let violation = |requirement: &str| {
+        Err(AppError::InvalidPassword(format!(
+            "Password did not conform with policy: {requirement}"
+        )))
+    };
+
+    let minimum_length = policy
+        .minimum_length
+        .unwrap_or(DEFAULT_MIN_PASSWORD_LENGTH)
+        .max(0) as usize;
+    if password.chars().count() < minimum_length {
+        return violation("Password not long enough");
     }
-
-    if password.len() > MAX_PASSWORD_LENGTH {
-        return Err(AppError::InvalidParameter(format!(
-            "Password cannot exceed {} characters",
-            MAX_PASSWORD_LENGTH
-        )));
+    if policy.require_uppercase == Some(true) && !password.chars().any(char::is_uppercase) {
+        return violation("Password must have uppercase characters");
+    }
+    if policy.require_lowercase == Some(true) && !password.chars().any(char::is_lowercase) {
+        return violation("Password must have lowercase characters");
+    }
+    if policy.require_numbers == Some(true) && !password.chars().any(|ch| ch.is_ascii_digit()) {
+        return violation("Password must have numeric characters");
+    }
+    if policy.require_symbols == Some(true)
+        && !password.chars().any(|ch| PASSWORD_SYMBOLS.contains(ch))
+    {
+        return violation("Password must have symbol characters");
     }
 
     Ok(())
+}
+
+/// A temporary password that satisfies the user pool's policy, for
+/// `AdminCreateUser` and `AdminResetUserPassword` calls that supply none.
+pub fn generate_temporary_password(pool: &UserPool) -> String {
+    use rand::{Rng, seq::SliceRandom};
+
+    const UPPER: &[u8] = b"ABCDEFGHJKLMNPQRSTUVWXYZ";
+    const LOWER: &[u8] = b"abcdefghijkmnopqrstuvwxyz";
+    const DIGITS: &[u8] = b"23456789";
+    const SYMBOLS: &[u8] = b"!@#$%^&*";
+
+    let minimum_length = pool
+        .policies
+        .as_ref()
+        .and_then(|policies| policies.password_policy.as_ref())
+        .and_then(|policy| policy.minimum_length)
+        .unwrap_or(DEFAULT_MIN_PASSWORD_LENGTH)
+        .max(0) as usize;
+
+    let mut rng = rand::thread_rng();
+    let mut pick = |set: &[u8]| set[rng.gen_range(0..set.len())] as char;
+    let mut password = vec![pick(UPPER), pick(LOWER), pick(DIGITS), pick(SYMBOLS)];
+    while password.len() < minimum_length.max(8) {
+        let set = [UPPER, LOWER, DIGITS][password.len() % 3];
+        password.push(pick(set));
+    }
+    password.shuffle(&mut rand::thread_rng());
+    password.into_iter().collect()
 }
 
 /// Validate email format (basic validation)
@@ -840,16 +927,95 @@ mod tests {
         assert!(validate_username("user name").is_err());
     }
 
-    #[test]
-    fn test_validate_password_valid() {
-        assert!(validate_password("password123").is_ok());
-        assert!(validate_password("123456").is_ok());
+    fn pool_with_policy(policy: Option<PasswordPolicy>) -> UserPool {
+        let mut pool = UserPool::new_for_test(UserPoolId::new("us-east-1_Test").unwrap());
+        pool.policies = policy.map(|password_policy| UserPoolPolicies {
+            password_policy: Some(password_policy),
+            sign_in_policy: None,
+        });
+        pool
+    }
+
+    fn policy_violation(pool: &UserPool, password: &str) -> String {
+        match validate_password_against_policy(pool, password) {
+            Err(AppError::InvalidPassword(message)) => message,
+            other => panic!("expected InvalidPasswordException, got {other:?}"),
+        }
     }
 
     #[test]
-    fn test_validate_password_too_short() {
-        assert!(validate_password("12345").is_err());
-        assert!(validate_password("").is_err());
+    fn test_default_password_policy_is_cognitos() {
+        let pool = pool_with_policy(None);
+        assert!(validate_password_against_policy(&pool, "Password123!").is_ok());
+        assert_eq!(
+            policy_violation(&pool, "Pw1!"),
+            "Password did not conform with policy: Password not long enough"
+        );
+        assert_eq!(
+            policy_violation(&pool, "password123!"),
+            "Password did not conform with policy: Password must have uppercase characters"
+        );
+        assert_eq!(
+            policy_violation(&pool, "PASSWORD123!"),
+            "Password did not conform with policy: Password must have lowercase characters"
+        );
+        assert_eq!(
+            policy_violation(&pool, "Password!!!!"),
+            "Password did not conform with policy: Password must have numeric characters"
+        );
+        assert_eq!(
+            policy_violation(&pool, "Password1234"),
+            "Password did not conform with policy: Password must have symbol characters"
+        );
+    }
+
+    #[test]
+    fn test_password_policy_of_the_pool_is_enforced() {
+        let pool = pool_with_policy(Some(PasswordPolicy {
+            minimum_length: Some(6),
+            password_history_size: None,
+            require_lowercase: Some(false),
+            require_numbers: Some(false),
+            require_symbols: None,
+            require_uppercase: Some(false),
+            temporary_password_validity_days: None,
+        }));
+        assert!(validate_password_against_policy(&pool, "secret").is_ok());
+        assert_eq!(
+            policy_violation(&pool, "short"),
+            "Password did not conform with policy: Password not long enough"
+        );
+    }
+
+    #[test]
+    fn test_password_shape_is_a_validation_error() {
+        let pool = pool_with_policy(None);
+        for password in ["", " Password123!", "Password123! "] {
+            assert!(matches!(
+                validate_password_against_policy(&pool, password),
+                Err(AppError::InvalidParameter(message)) if message.contains("^[\\S]+.*[\\S]+$")
+            ));
+        }
+        assert!(matches!(
+            validate_password_against_policy(&pool, &"Aa1!".repeat(65)),
+            Err(AppError::InvalidParameter(message))
+                if message.contains("length less than or equal to 256")
+        ));
+    }
+
+    #[test]
+    fn test_generated_temporary_password_satisfies_the_policy() {
+        let default_pool = pool_with_policy(None);
+        let long_pool = pool_with_policy(Some(PasswordPolicy {
+            minimum_length: Some(24),
+            ..default_password_policy()
+        }));
+        for pool in [&default_pool, &long_pool] {
+            for _ in 0..20 {
+                let password = generate_temporary_password(pool);
+                assert!(validate_password_against_policy(pool, &password).is_ok());
+            }
+        }
     }
 
     #[test]

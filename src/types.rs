@@ -813,6 +813,83 @@ pub struct UserPoolClient {
     pub enable_propagate_additional_user_context_data: bool,
 }
 
+#[cfg(test)]
+impl UserPool {
+    /// A pool created with nothing but a name, for unit tests.
+    pub(crate) fn new_for_test(id: UserPoolId) -> Self {
+        let now = Utc::now();
+        Self {
+            id,
+            name: "test".to_string(),
+            creation_date: now,
+            last_modified_date: now,
+            account_recovery_setting: None,
+            admin_create_user_config: None,
+            alias_attributes: None,
+            auto_verified_attributes: None,
+            deletion_protection: None,
+            device_configuration: None,
+            email_configuration: None,
+            email_verification_message: None,
+            email_verification_subject: None,
+            lambda_config: None,
+            mfa_configuration: None,
+            sms_mfa_configuration: None,
+            software_token_mfa_configuration: None,
+            email_mfa_configuration: None,
+            webauthn_configuration: None,
+            policies: None,
+            schema_attributes: None,
+            sms_authentication_message: None,
+            sms_configuration: None,
+            sms_verification_message: None,
+            user_attribute_update_settings: None,
+            user_pool_add_ons: None,
+            user_pool_tags: None,
+            user_pool_tier: None,
+            username_attributes: None,
+            username_configuration: None,
+            verification_message_template: None,
+        }
+    }
+}
+
+#[cfg(test)]
+impl UserPoolClient {
+    /// A client with Cognito's defaults, for unit tests.
+    pub(crate) fn new_for_test(client_id: ClientId, user_pool_id: UserPoolId) -> Self {
+        let now = Utc::now();
+        Self {
+            client_id,
+            user_pool_id,
+            client_name: "test-client".to_string(),
+            client_secret: None,
+            creation_date: now,
+            last_modified_date: now,
+            allowed_oauth_flows: Vec::new(),
+            allowed_oauth_scopes: Vec::new(),
+            allowed_oauth_flows_user_pool_client: false,
+            callback_urls: Vec::new(),
+            logout_urls: Vec::new(),
+            default_redirect_uri: None,
+            supported_identity_providers: Vec::new(),
+            read_attributes: Vec::new(),
+            write_attributes: Vec::new(),
+            analytics_configuration: None,
+            explicit_auth_flows: Vec::new(),
+            auth_session_validity: None,
+            access_token_validity: None,
+            id_token_validity: None,
+            refresh_token_validity: None,
+            token_validity_units: None,
+            refresh_token_rotation: None,
+            enable_token_revocation: true,
+            prevent_user_existence_errors: None,
+            enable_propagate_additional_user_context_data: false,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct User {
     pub id: UserId,
@@ -826,6 +903,18 @@ pub struct User {
     pub attributes: Vec<UserAttribute>,
     pub creation_date: DateTime<Utc>,
     pub last_modified_date: DateTime<Utc>,
+    /// Hex SRP salt for the current password. Absent on users whose
+    /// password was set before SRP support; it is derived the next time the
+    /// password is presented in clear.
+    #[serde(default)]
+    pub srp_salt: Option<String>,
+    /// Hex SRP verifier (`g^x mod N`) for the current password.
+    #[serde(default)]
+    pub srp_verifier: Option<String>,
+    /// When the current password was set; bounds the life of a temporary
+    /// password.
+    #[serde(default)]
+    pub password_set_at: Option<DateTime<Utc>>,
 }
 
 impl User {
@@ -916,6 +1005,18 @@ pub struct RefreshToken {
     pub user_id: UserId,
     pub client_id: ClientId,
     pub expires_at: DateTime<Utc>,
+    /// `origin_jti` of the authentication that issued this token. Tokens
+    /// obtained with the refresh token inherit it, which is what lets
+    /// `RevokeToken` invalidate them.
+    #[serde(default)]
+    pub origin_jti: Option<String>,
+    /// `auth_time` of the originating authentication.
+    #[serde(default)]
+    pub auth_time: Option<i64>,
+    /// Scopes granted at the OAuth 2.0 endpoints; empty for user pools API
+    /// authentication.
+    #[serde(default)]
+    pub scope: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -926,6 +1027,35 @@ pub struct PendingAuthChallenge {
     pub client_id: ClientId,
     pub user_pool_id: UserPoolId,
     pub expires_at: DateTime<Utc>,
+    /// Server side of an SRP exchange awaiting `PASSWORD_VERIFIER`.
+    #[serde(default)]
+    pub srp: Option<SrpChallengeState>,
+    /// One-time code the user has to return (`SMS_MFA`, `EMAIL_OTP`,
+    /// `SMS_OTP`).
+    #[serde(default)]
+    pub code: Option<String>,
+    /// Factors on offer in `SELECT_MFA_TYPE`, `MFA_SETUP`, or
+    /// `SELECT_CHALLENGE`.
+    #[serde(default)]
+    pub choices: Vec<String>,
+    /// Set once the user verified a TOTP device during `MFA_SETUP`.
+    #[serde(default)]
+    pub mfa_setup_complete: bool,
+    /// Wrong answers given so far.
+    #[serde(default)]
+    pub failed_attempts: u32,
+    /// Whether the session belongs to the choice-based `USER_AUTH` flow.
+    #[serde(default)]
+    pub user_auth: bool,
+}
+
+/// What the server keeps between `SRP_A` and `PASSWORD_VERIFIER`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SrpChallengeState {
+    pub client_public: String,
+    pub server_private: String,
+    pub server_public: String,
+    pub secret_block: String,
 }
 
 /// Authentication flow types
@@ -939,6 +1069,7 @@ pub enum AuthFlow {
     AdminNoSrpAuth,
     UserPasswordAuth,
     AdminUserPasswordAuth,
+    UserAuth,
 }
 
 /// Challenge types
@@ -955,6 +1086,63 @@ pub enum ChallengeType {
     DevicePasswordVerifier,
     AdminNoSrpAuth,
     NewPasswordRequired,
+    EmailOtp,
+    SmsOtp,
+    SelectChallenge,
+    Password,
+    PasswordSrp,
+    WebAuthn,
+}
+
+impl ChallengeType {
+    /// The wire name (`NEW_PASSWORD_REQUIRED`, ...).
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ChallengeType::SmsMfa => "SMS_MFA",
+            ChallengeType::SoftwareTokenMfa => "SOFTWARE_TOKEN_MFA",
+            ChallengeType::SelectMfaType => "SELECT_MFA_TYPE",
+            ChallengeType::MfaSetup => "MFA_SETUP",
+            ChallengeType::PasswordVerifier => "PASSWORD_VERIFIER",
+            ChallengeType::CustomChallenge => "CUSTOM_CHALLENGE",
+            ChallengeType::DeviceSrpAuth => "DEVICE_SRP_AUTH",
+            ChallengeType::DevicePasswordVerifier => "DEVICE_PASSWORD_VERIFIER",
+            ChallengeType::AdminNoSrpAuth => "ADMIN_NO_SRP_AUTH",
+            ChallengeType::NewPasswordRequired => "NEW_PASSWORD_REQUIRED",
+            ChallengeType::EmailOtp => "EMAIL_OTP",
+            ChallengeType::SmsOtp => "SMS_OTP",
+            ChallengeType::SelectChallenge => "SELECT_CHALLENGE",
+            ChallengeType::Password => "PASSWORD",
+            ChallengeType::PasswordSrp => "PASSWORD_SRP",
+            ChallengeType::WebAuthn => "WEB_AUTHN",
+        }
+    }
+
+    /// Parse a wire name.
+    pub fn parse(value: &str) -> Option<Self> {
+        Self::ALL
+            .iter()
+            .copied()
+            .find(|challenge| challenge.as_str() == value)
+    }
+
+    pub const ALL: &'static [ChallengeType] = &[
+        ChallengeType::SmsMfa,
+        ChallengeType::EmailOtp,
+        ChallengeType::SoftwareTokenMfa,
+        ChallengeType::SelectMfaType,
+        ChallengeType::MfaSetup,
+        ChallengeType::PasswordVerifier,
+        ChallengeType::CustomChallenge,
+        ChallengeType::SelectChallenge,
+        ChallengeType::DeviceSrpAuth,
+        ChallengeType::DevicePasswordVerifier,
+        ChallengeType::AdminNoSrpAuth,
+        ChallengeType::NewPasswordRequired,
+        ChallengeType::SmsOtp,
+        ChallengeType::Password,
+        ChallengeType::WebAuthn,
+        ChallengeType::PasswordSrp,
+    ];
 }
 
 /// Group ID

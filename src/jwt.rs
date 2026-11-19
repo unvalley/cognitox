@@ -14,7 +14,7 @@ use rsa::pkcs8::LineEnding;
 use rsa::traits::PublicKeyParts;
 use rsa::{RsaPrivateKey, RsaPublicKey};
 use serde::{Deserialize, Serialize};
-use std::{fs, sync::OnceLock};
+use std::{collections::BTreeMap, fs, sync::OnceLock};
 
 use crate::types::{ClientId, TokenValidityUnit, User, UserPoolClient, UserPoolId};
 
@@ -171,7 +171,15 @@ pub struct IdTokenClaims {
     pub auth_time: i64,
     pub token_use: String,
     #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub jti: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub origin_jti: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub event_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
     pub nonce: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub at_hash: Option<String>,
 
     // Cognito-specific claims
     #[serde(skip_serializing_if = "Option::is_none", default)]
@@ -190,6 +198,23 @@ pub struct IdTokenClaims {
         default
     )]
     pub cognito_groups: Vec<String>,
+    #[serde(
+        rename = "cognito:roles",
+        skip_serializing_if = "Vec::is_empty",
+        default
+    )]
+    pub cognito_roles: Vec<String>,
+    #[serde(
+        rename = "cognito:preferred_role",
+        skip_serializing_if = "Option::is_none",
+        default
+    )]
+    pub cognito_preferred_role: Option<String>,
+
+    /// The user's remaining attributes (`name`, `custom:*`, ...), which
+    /// Cognito copies into the ID token as string claims.
+    #[serde(flatten)]
+    pub attributes: BTreeMap<String, serde_json::Value>,
 }
 
 /// Claims for Access Token
@@ -205,6 +230,15 @@ pub struct AccessTokenClaims {
     pub auth_time: i64,
     pub token_use: String,
     pub client_id: String,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub jti: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub origin_jti: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub event_id: Option<String>,
+    /// `2` on tokens issued through the OAuth 2.0 endpoints.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub version: Option<u8>,
 
     // Cognito-specific claims
     #[serde(
@@ -214,7 +248,241 @@ pub struct AccessTokenClaims {
     )]
     pub cognito_groups: Vec<String>,
     pub scope: String,
-    pub username: String,
+    /// Absent on client credentials tokens, which have no user.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub username: Option<String>,
+}
+
+/// The sign-in a set of tokens descends from.
+///
+/// Tokens obtained with a refresh token keep the `auth_time` and
+/// `origin_jti` of the authentication that produced that refresh token.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TokenSession {
+    /// Identifies the originating authentication; present when the app
+    /// client has token revocation enabled.
+    pub origin_jti: Option<String>,
+    pub event_id: String,
+    pub auth_time: i64,
+}
+
+impl TokenSession {
+    /// A session for an authentication happening now.
+    pub fn new(token_revocation_enabled: bool) -> Self {
+        Self {
+            origin_jti: token_revocation_enabled.then(|| uuid::Uuid::new_v4().to_string()),
+            event_id: uuid::Uuid::new_v4().to_string(),
+            auth_time: Utc::now().timestamp(),
+        }
+    }
+
+    /// A session for tokens derived from an earlier authentication.
+    pub fn resumed(origin_jti: Option<String>, auth_time: Option<i64>) -> Self {
+        Self {
+            origin_jti,
+            event_id: uuid::Uuid::new_v4().to_string(),
+            auth_time: auth_time.unwrap_or_else(|| Utc::now().timestamp()),
+        }
+    }
+}
+
+/// Group membership as the tokens present it.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct GroupClaims {
+    /// `cognito:groups`
+    pub groups: Vec<String>,
+    /// `cognito:roles`: the IAM role of each group that has one.
+    pub roles: Vec<String>,
+    /// `cognito:preferred_role`: the role of the group with the lowest
+    /// precedence value.
+    pub preferred_role: Option<String>,
+}
+
+impl GroupClaims {
+    pub fn from_names(groups: &[String]) -> Self {
+        Self {
+            groups: groups.to_vec(),
+            ..Self::default()
+        }
+    }
+
+    /// Order groups the way Cognito does and derive the role claims.
+    pub fn from_groups(mut groups: Vec<crate::types::Group>) -> Self {
+        groups.sort_by(|left, right| {
+            let precedence = |group: &crate::types::Group| group.precedence.unwrap_or(i32::MAX);
+            precedence(left)
+                .cmp(&precedence(right))
+                .then_with(|| left.group_name.cmp(&right.group_name))
+        });
+        let roles: Vec<String> = groups
+            .iter()
+            .filter_map(|group| group.role_arn.clone())
+            .collect();
+        let preferred_role = groups
+            .iter()
+            .find(|group| group.precedence.is_some())
+            .and_then(|group| group.role_arn.clone())
+            .or_else(|| (roles.len() == 1).then(|| roles[0].clone()));
+        Self {
+            groups: groups.into_iter().map(|group| group.group_name).collect(),
+            roles,
+            preferred_role,
+        }
+    }
+}
+
+/// Attributes that never become ID token claims of their own.
+const NON_CLAIM_ATTRIBUTES: &[&str] = &[
+    "sub",
+    "email",
+    "email_verified",
+    "phone_number",
+    "phone_number_verified",
+    // Emulator bookkeeping stored next to the real attributes.
+    "preferred_mfa_setting",
+];
+
+fn attribute_is_true(user: &User, name: &str) -> bool {
+    user.attributes
+        .iter()
+        .any(|attribute| attribute.name == name && attribute.value.as_deref() == Some("true"))
+}
+
+fn sign<T: Serialize>(claims: &T, what: &str) -> Result<String, String> {
+    let keys = get_jwt_keys();
+    let mut header = Header::new(Algorithm::RS256);
+    header.kid = Some(keys.key_id.clone());
+    // Cognito's JOSE header carries only `kid` and `alg`.
+    header.typ = None;
+
+    encode(&header, claims, &keys.encoding_key).map_err(|e| format!("Failed to encode {what}: {e}"))
+}
+
+/// `at_hash`: the left half of the access token's SHA-256, base64url encoded.
+pub fn access_token_hash(access_token: &str) -> String {
+    use sha2::{Digest, Sha256};
+    let digest = Sha256::digest(access_token.as_bytes());
+    URL_SAFE_NO_PAD.encode(&digest[..digest.len() / 2])
+}
+
+/// Everything that goes into an ID token.
+pub struct IdTokenRequest<'a> {
+    pub user: &'a User,
+    pub client_id: &'a str,
+    pub user_pool_id: &'a UserPoolId,
+    pub groups: &'a GroupClaims,
+    pub session: &'a TokenSession,
+    /// The value the client sent to the authorize endpoint. Like Cognito,
+    /// only tokens issued for that authorization carry it.
+    pub nonce: Option<&'a str>,
+    /// The access token issued alongside, for `at_hash` (OAuth 2.0 only).
+    pub access_token: Option<&'a str>,
+    /// The app client's `ReadAttributes`; empty means every attribute.
+    pub readable_attributes: &'a [String],
+    pub expiry: Duration,
+}
+
+/// Generate an ID token.
+pub fn issue_id_token(request: &IdTokenRequest<'_>) -> Result<String, String> {
+    let user = request.user;
+    let now = Utc::now();
+    let readable = |name: &str| {
+        request.readable_attributes.is_empty()
+            || request
+                .readable_attributes
+                .iter()
+                .any(|attribute| attribute == name)
+    };
+
+    let email = user.email.clone().filter(|_| readable("email"));
+    let phone_number = user
+        .phone_number
+        .clone()
+        .filter(|_| readable("phone_number"));
+    let attributes = user
+        .attributes
+        .iter()
+        .filter(|attribute| {
+            !NON_CLAIM_ATTRIBUTES.contains(&attribute.name.as_str()) && readable(&attribute.name)
+        })
+        .filter_map(|attribute| {
+            let value = attribute.value.clone()?;
+            Some((attribute.name.clone(), serde_json::Value::String(value)))
+        })
+        .collect();
+
+    let claims = IdTokenClaims {
+        sub: user.id.to_string(),
+        aud: request.client_id.to_string(),
+        iss: user_pool_issuer(request.user_pool_id),
+        iat: now.timestamp(),
+        exp: (now + request.expiry).timestamp(),
+        auth_time: request.session.auth_time,
+        token_use: "id".to_string(),
+        jti: Some(uuid::Uuid::new_v4().to_string()),
+        origin_jti: request.session.origin_jti.clone(),
+        event_id: Some(request.session.event_id.clone()),
+        nonce: request.nonce.map(str::to_string),
+        at_hash: request.access_token.map(access_token_hash),
+        email_verified: (email.is_some() && readable("email_verified"))
+            .then(|| attribute_is_true(user, "email_verified")),
+        email,
+        phone_number_verified: (phone_number.is_some() && readable("phone_number_verified"))
+            .then(|| attribute_is_true(user, "phone_number_verified")),
+        phone_number,
+        cognito_username: user.username.clone(),
+        cognito_groups: request.groups.groups.clone(),
+        cognito_roles: request.groups.roles.clone(),
+        cognito_preferred_role: request.groups.preferred_role.clone(),
+        attributes,
+    };
+
+    sign(&claims, "ID token")
+}
+
+/// Everything that goes into a user's access token.
+pub struct AccessTokenRequest<'a> {
+    pub user: &'a User,
+    pub client_id: &'a str,
+    pub user_pool_id: &'a UserPoolId,
+    pub groups: &'a GroupClaims,
+    pub session: &'a TokenSession,
+    /// Empty for user pools API authentication, which grants only
+    /// `aws.cognito.signin.user.admin`.
+    pub scopes: &'a [String],
+    /// Whether the OAuth 2.0 endpoints issue the token.
+    pub oauth: bool,
+    pub expiry: Duration,
+}
+
+/// Generate an access token for a user.
+pub fn issue_access_token(request: &AccessTokenRequest<'_>) -> Result<String, String> {
+    let now = Utc::now();
+    let scope = if request.scopes.is_empty() {
+        "aws.cognito.signin.user.admin".to_string()
+    } else {
+        request.scopes.join(" ")
+    };
+
+    let claims = AccessTokenClaims {
+        sub: request.user.id.to_string(),
+        iss: user_pool_issuer(request.user_pool_id),
+        iat: now.timestamp(),
+        cognitox_iat_ms: Some(now.timestamp_millis()),
+        exp: (now + request.expiry).timestamp(),
+        auth_time: request.session.auth_time,
+        token_use: "access".to_string(),
+        client_id: request.client_id.to_string(),
+        jti: Some(uuid::Uuid::new_v4().to_string()),
+        origin_jti: request.session.origin_jti.clone(),
+        event_id: Some(request.session.event_id.clone()),
+        version: request.oauth.then_some(2),
+        cognito_groups: request.groups.groups.clone(),
+        scope,
+        username: Some(request.user.username.clone()),
+    };
+
+    sign(&claims, "access token")
 }
 
 /// Generate ID Token
@@ -229,32 +497,17 @@ pub fn generate_id_token(
     nonce: Option<&str>,
     expiry: Duration,
 ) -> Result<String, String> {
-    let keys = get_jwt_keys();
-    let now = Utc::now();
-    let auth_time = now.timestamp();
-
-    let claims = IdTokenClaims {
-        sub: user.id.to_string(),
-        aud: client_id.to_string(),
-        iss: user_pool_issuer(user_pool_id),
-        iat: now.timestamp(),
-        exp: (now + expiry).timestamp(),
-        auth_time,
-        token_use: "id".to_string(),
-        nonce: nonce.map(str::to_string),
-        email: user.email.clone(),
-        email_verified: user.email.as_ref().map(|_| true),
-        phone_number: user.phone_number.clone(),
-        phone_number_verified: user.phone_number.as_ref().map(|_| true),
-        cognito_username: user.username.clone(),
-        cognito_groups: groups.to_vec(),
-    };
-
-    let mut header = Header::new(Algorithm::RS256);
-    header.kid = Some(keys.key_id.clone());
-
-    encode(&header, &claims, &keys.encoding_key)
-        .map_err(|e| format!("Failed to encode ID token: {}", e))
+    issue_id_token(&IdTokenRequest {
+        user,
+        client_id,
+        user_pool_id,
+        groups: &GroupClaims::from_names(groups),
+        session: &TokenSession::new(true),
+        nonce,
+        access_token: None,
+        readable_attributes: &[],
+        expiry,
+    })
 }
 
 /// Generate Access Token
@@ -266,45 +519,28 @@ pub fn generate_access_token(
     scopes: &[String],
     expiry: Duration,
 ) -> Result<String, String> {
-    let keys = get_jwt_keys();
-    let now = Utc::now();
-    let auth_time = now.timestamp();
-
-    let scope = if scopes.is_empty() {
-        "aws.cognito.signin.user.admin".to_string()
-    } else {
-        scopes.join(" ")
-    };
-
-    let claims = AccessTokenClaims {
-        sub: user.id.to_string(),
-        iss: user_pool_issuer(user_pool_id),
-        iat: now.timestamp(),
-        cognitox_iat_ms: Some(now.timestamp_millis()),
-        exp: (now + expiry).timestamp(),
-        auth_time,
-        token_use: "access".to_string(),
-        client_id: client_id.to_string(),
-        cognito_groups: groups.to_vec(),
-        scope,
-        username: user.username.clone(),
-    };
-
-    let mut header = Header::new(Algorithm::RS256);
-    header.kid = Some(keys.key_id.clone());
-
-    encode(&header, &claims, &keys.encoding_key)
-        .map_err(|e| format!("Failed to encode access token: {}", e))
+    issue_access_token(&AccessTokenRequest {
+        user,
+        client_id,
+        user_pool_id,
+        groups: &GroupClaims::from_names(groups),
+        session: &TokenSession::new(true),
+        scopes,
+        oauth: false,
+        expiry,
+    })
 }
 
 /// Generate an OAuth client credentials access token.
+///
+/// Like Cognito's, it has the app client as its subject and carries no
+/// `username`.
 pub fn generate_client_credentials_access_token(
     client_id: &ClientId,
     user_pool_id: &UserPoolId,
     scopes: &[String],
     expiry: Duration,
 ) -> Result<String, String> {
-    let keys = get_jwt_keys();
     let now = Utc::now();
     let client_id = client_id.as_str();
 
@@ -317,16 +553,16 @@ pub fn generate_client_credentials_access_token(
         auth_time: now.timestamp(),
         token_use: "access".to_string(),
         client_id: client_id.to_string(),
+        jti: Some(uuid::Uuid::new_v4().to_string()),
+        origin_jti: None,
+        event_id: None,
+        version: Some(2),
         cognito_groups: Vec::new(),
         scope: scopes.join(" "),
-        username: client_id.to_string(),
+        username: None,
     };
 
-    let mut header = Header::new(Algorithm::RS256);
-    header.kid = Some(keys.key_id.clone());
-
-    encode(&header, &claims, &keys.encoding_key)
-        .map_err(|e| format!("Failed to encode client credentials access token: {e}"))
+    sign(&claims, "client credentials access token")
 }
 
 /// Why an access token was rejected.
@@ -491,6 +727,9 @@ mod tests {
             attributes: vec![],
             creation_date: Utc::now(),
             last_modified_date: Utc::now(),
+            srp_salt: None,
+            srp_verifier: None,
+            password_set_at: None,
         };
 
         let client_id = "test_client_id";

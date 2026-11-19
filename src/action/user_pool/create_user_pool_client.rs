@@ -260,13 +260,23 @@ pub(crate) async fn create(
         analytics_configuration: config.analytics_configuration,
 
         // Auth flows
-        explicit_auth_flows: config.explicit_auth_flows.unwrap_or_default(),
-        auth_session_validity: config.auth_session_validity,
+        explicit_auth_flows: config
+            .explicit_auth_flows
+            .unwrap_or_else(default_explicit_auth_flows),
+        auth_session_validity: Some(
+            config
+                .auth_session_validity
+                .unwrap_or(DEFAULT_AUTH_SESSION_VALIDITY_MINUTES),
+        ),
 
         // Token validity
         access_token_validity: config.access_token_validity,
         id_token_validity: config.id_token_validity,
-        refresh_token_validity: config.refresh_token_validity,
+        refresh_token_validity: Some(
+            config
+                .refresh_token_validity
+                .unwrap_or(DEFAULT_REFRESH_TOKEN_VALIDITY_DAYS),
+        ),
         token_validity_units: config.token_validity_units,
         refresh_token_rotation: config.refresh_token_rotation,
 
@@ -284,6 +294,21 @@ pub(crate) async fn create(
         "UserPoolClient": build_client_response(&created)
     }))
 }
+
+/// The flows an app client created without `ExplicitAuthFlows` supports.
+pub(crate) fn default_explicit_auth_flows() -> Vec<ExplicitAuthFlow> {
+    vec![
+        ExplicitAuthFlow::AllowCustomAuth,
+        ExplicitAuthFlow::AllowUserSrpAuth,
+        ExplicitAuthFlow::AllowRefreshTokenAuth,
+    ]
+}
+
+/// `AuthSessionValidity` when the request leaves it out.
+const DEFAULT_AUTH_SESSION_VALIDITY_MINUTES: i32 = 3;
+
+/// `RefreshTokenValidity` when the request leaves it out.
+const DEFAULT_REFRESH_TOKEN_VALIDITY_DAYS: i32 = 30;
 
 pub fn build_client_response(client: &UserPoolClient) -> Value {
     let mut response = json!({
@@ -357,6 +382,8 @@ pub fn build_client_response(client: &UserPoolClient) -> Value {
         response["RefreshTokenValidity"] = json!(validity);
     }
 
+    // Cognito always returns the member, empty when no unit was chosen.
+    response["TokenValidityUnits"] = json!({});
     if let Some(ref units) = client.token_validity_units {
         let mut units_json = json!({});
         if let Some(ref access) = units.access_token {

@@ -4,6 +4,7 @@ pub mod config;
 pub mod error;
 pub mod jwt;
 pub mod seed;
+pub mod srp;
 pub mod storage;
 pub mod types;
 pub mod validation;

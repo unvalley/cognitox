@@ -1,5 +1,6 @@
 use std::{net::SocketAddr, path::PathBuf, sync::Arc};
 
+use axum::http::HeaderName;
 use bpaf::Bpaf;
 use cognitox::{api, config::StorageConfig, jwt::set_issuer_base_url, seed, storage::Storage};
 use tokio::signal;
@@ -142,7 +143,15 @@ async fn main() {
             CorsLayer::new()
                 .allow_origin(Any)
                 .allow_methods(Any)
-                .allow_headers(Any),
+                .allow_headers(Any)
+                // What Cognito exposes to browser SDKs, which read the
+                // error type from the header.
+                .expose_headers([
+                    HeaderName::from_static("x-amzn-requestid"),
+                    HeaderName::from_static("x-amzn-errortype"),
+                    HeaderName::from_static("x-amzn-errormessage"),
+                    axum::http::header::DATE,
+                ]),
         );
 
     // Start server

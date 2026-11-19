@@ -31,6 +31,7 @@ async fn setup_user_and_client(client: &TestClient) -> (String, String, String, 
             "CreateUserPoolClient",
             json!({
                 "UserPoolId": pool_id,
+                "ExplicitAuthFlows": ["ALLOW_USER_PASSWORD_AUTH", "ALLOW_ADMIN_USER_PASSWORD_AUTH", "ALLOW_USER_SRP_AUTH", "ALLOW_REFRESH_TOKEN_AUTH"],
                 "ClientName": "OAuthClient",
                 "AllowedOAuthFlows": ["code", "implicit"],
                 "AllowedOAuthScopes": ["openid", "email", "profile"],
@@ -94,6 +95,7 @@ async fn setup_user_and_confidential_client(
             "CreateUserPoolClient",
             json!({
                 "UserPoolId": pool_id,
+                "ExplicitAuthFlows": ["ALLOW_USER_PASSWORD_AUTH", "ALLOW_ADMIN_USER_PASSWORD_AUTH", "ALLOW_USER_SRP_AUTH", "ALLOW_REFRESH_TOKEN_AUTH"],
                 "ClientName": "OAuthClientWithSecret",
                 "AllowedOAuthFlows": ["code", "implicit"],
                 "AllowedOAuthScopes": ["openid", "email", "profile"],
@@ -715,6 +717,7 @@ async fn test_refresh_token_flow_rejects_client_id_mismatch() {
             "CreateUserPoolClient",
             json!({
                 "UserPoolId": pool_id,
+                "ExplicitAuthFlows": ["ALLOW_USER_PASSWORD_AUTH", "ALLOW_ADMIN_USER_PASSWORD_AUTH", "ALLOW_USER_SRP_AUTH", "ALLOW_REFRESH_TOKEN_AUTH"],
                 "ClientName": "OAuthClient2",
                 "AllowedOAuthFlows": ["code", "implicit"],
                 "AllowedOAuthScopes": ["openid", "email", "profile"],
@@ -860,6 +863,7 @@ async fn test_logout_redirects_to_allowed_logout_uri() {
             "CreateUserPoolClient",
             json!({
                 "UserPoolId": pool_id,
+                "ExplicitAuthFlows": ["ALLOW_USER_PASSWORD_AUTH", "ALLOW_ADMIN_USER_PASSWORD_AUTH", "ALLOW_USER_SRP_AUTH", "ALLOW_REFRESH_TOKEN_AUTH"],
                 "ClientName": "LogoutClient",
                 "AllowedOAuthFlowsUserPoolClient": true,
                 "LogoutURLs": ["http://localhost:3000/"]
@@ -899,6 +903,7 @@ async fn test_logout_rejects_disallowed_logout_uri() {
             "CreateUserPoolClient",
             json!({
                 "UserPoolId": pool_id,
+                "ExplicitAuthFlows": ["ALLOW_USER_PASSWORD_AUTH", "ALLOW_ADMIN_USER_PASSWORD_AUTH", "ALLOW_USER_SRP_AUTH", "ALLOW_REFRESH_TOKEN_AUTH"],
                 "ClientName": "LogoutClient",
                 "AllowedOAuthFlowsUserPoolClient": true,
                 "LogoutURLs": ["http://localhost:3000/"]
@@ -936,6 +941,7 @@ async fn test_authorize_rejects_client_without_oauth_enabled() {
             "CreateUserPoolClient",
             json!({
                 "UserPoolId": pool_id,
+                "ExplicitAuthFlows": ["ALLOW_USER_PASSWORD_AUTH", "ALLOW_ADMIN_USER_PASSWORD_AUTH", "ALLOW_USER_SRP_AUTH", "ALLOW_REFRESH_TOKEN_AUTH"],
                 "ClientName": "OAuthClient"
             }),
         )
@@ -970,6 +976,7 @@ async fn test_authorize_rejects_client_without_code_flow() {
             "CreateUserPoolClient",
             json!({
                 "UserPoolId": pool_id,
+                "ExplicitAuthFlows": ["ALLOW_USER_PASSWORD_AUTH", "ALLOW_ADMIN_USER_PASSWORD_AUTH", "ALLOW_USER_SRP_AUTH", "ALLOW_REFRESH_TOKEN_AUTH"],
                 "ClientName": "OAuthClient",
                 "AllowedOAuthScopes": ["openid"],
                 "CallbackURLs": ["https://example.com/callback"],
@@ -1027,6 +1034,7 @@ async fn test_client_credentials_returns_jwt_access_token() {
             "CreateUserPoolClient",
             json!({
                 "UserPoolId": pool_id,
+                "ExplicitAuthFlows": ["ALLOW_USER_PASSWORD_AUTH", "ALLOW_ADMIN_USER_PASSWORD_AUTH", "ALLOW_USER_SRP_AUTH", "ALLOW_REFRESH_TOKEN_AUTH"],
                 "ClientName": "MachineClient",
                 "GenerateSecret": true,
                 "AllowedOAuthFlows": ["client_credentials"],
@@ -1165,6 +1173,7 @@ async fn test_basic_auth_authorization_code_and_refresh_flow() {
             "CreateUserPoolClient",
             json!({
                 "UserPoolId": pool_id,
+                "ExplicitAuthFlows": ["ALLOW_USER_PASSWORD_AUTH", "ALLOW_ADMIN_USER_PASSWORD_AUTH", "ALLOW_USER_SRP_AUTH", "ALLOW_REFRESH_TOKEN_AUTH"],
                 "ClientName": "OtherClient",
                 "GenerateSecret": true
             }),
@@ -1229,6 +1238,7 @@ async fn test_basic_auth_client_credentials_flow() {
             "CreateUserPoolClient",
             json!({
                 "UserPoolId": pool["UserPool"]["Id"],
+                "ExplicitAuthFlows": ["ALLOW_USER_PASSWORD_AUTH", "ALLOW_ADMIN_USER_PASSWORD_AUTH", "ALLOW_USER_SRP_AUTH", "ALLOW_REFRESH_TOKEN_AUTH"],
                 "ClientName": "BasicAuthClient",
                 "GenerateSecret": true,
                 "AllowedOAuthFlows": ["client_credentials"],

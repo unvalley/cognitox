@@ -19,7 +19,7 @@ use uuid::Uuid;
 
 use crate::{
     action::user::helpers::{
-        generate_confirmation_code, hash_password, normalize_confirmation_code, verify_password,
+        generate_confirmation_code, normalize_confirmation_code, set_user_password, verify_password,
     },
     storage::Storage,
     types::{
@@ -874,22 +874,11 @@ pub async fn signup_submit(
     let user_id = Uuid::new_v4();
     let code = generate_confirmation_code();
 
-    let password_hash = match hash_password(&form.password) {
-        Ok(hash) => hash,
-        Err(e) => {
-            tracing::error!("Failed to hash password: {}", e);
-            let mut ctx = create_template_context(&branding, &form.oauth);
-            ctx.insert("oauth_query", &build_oauth_query(&form.oauth));
-            ctx.insert("error", &Some("Internal error".to_string()));
-            return render_template(&tera, "signup", &ctx);
-        }
-    };
-
-    let user = User {
+    let mut user = User {
         id: user_id,
         user_pool_id: client.user_pool_id.clone(),
         username: form.username.clone(),
-        password_hash,
+        password_hash: String::new(),
         email: Some(form.email.clone()),
         phone_number: None,
         user_status: UserStatus::Unconfirmed,
@@ -897,7 +886,17 @@ pub async fn signup_submit(
         attributes: vec![],
         creation_date: now,
         last_modified_date: now,
+        srp_salt: None,
+        srp_verifier: None,
+        password_set_at: None,
     };
+    if let Err(e) = set_user_password(&mut user, &form.password) {
+        tracing::error!("Failed to hash password: {}", e);
+        let mut ctx = create_template_context(&branding, &form.oauth);
+        ctx.insert("oauth_query", &build_oauth_query(&form.oauth));
+        ctx.insert("error", &Some("Internal error".to_string()));
+        return render_template(&tera, "signup", &ctx);
+    }
 
     if storage.try_create_user(user).await.is_none() {
         let mut ctx = create_template_context(&branding, &form.oauth);
@@ -1203,18 +1202,17 @@ pub async fn reset_password_submit(
     }
 
     // Update password
-    let password_hash = match hash_password(&form.new_password) {
-        Ok(hash) => hash,
-        Err(e) => {
-            tracing::error!("Failed to hash password: {}", e);
-            let mut ctx = create_template_context(&branding, &form.oauth);
-            ctx.insert("oauth_query", &build_oauth_query(&form.oauth));
-            ctx.insert("username", &form.username);
-            ctx.insert("error", &Some("Internal error".to_string()));
-            return render_template(&tera, "reset_password", &ctx);
-        }
-    };
-    storage.set_user_password(&user.id, &password_hash).await;
+    let mut updated = user.clone();
+    if let Err(e) = set_user_password(&mut updated, &form.new_password) {
+        tracing::error!("Failed to hash password: {}", e);
+        let mut ctx = create_template_context(&branding, &form.oauth);
+        ctx.insert("oauth_query", &build_oauth_query(&form.oauth));
+        ctx.insert("username", &form.username);
+        ctx.insert("error", &Some("Internal error".to_string()));
+        return render_template(&tera, "reset_password", &ctx);
+    }
+    updated.last_modified_date = Utc::now();
+    storage.update_user(updated).await;
 
     // Clear confirmation code
     storage.delete_confirmation_code(&user.id).await;

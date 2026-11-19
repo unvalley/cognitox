@@ -176,6 +176,38 @@ struct PrincipalStore {
     federated_user_links: HashMap<(UserPoolId, ProviderUserIdentifier), FederatedUserLink>,
     #[serde(default)]
     access_tokens_invalid_before: HashMap<UserId, chrono::DateTime<chrono::Utc>>,
+    /// Refresh tokens that were revoked rather than never issued, so that a
+    /// later use reports `Refresh Token has been revoked`.
+    #[serde(default)]
+    revoked_refresh_tokens: HashSet<String>,
+    /// `origin_jti` values whose access and ID tokens `RevokeToken` voided.
+    #[serde(default)]
+    revoked_origin_jtis: HashSet<String>,
+}
+
+impl PrincipalStore {
+    /// Remove a refresh token and remember that it, and the tokens derived
+    /// from it, were revoked.
+    fn revoke_refresh_token(&mut self, token: &str) -> Option<RefreshToken> {
+        let revoked = self.refresh_tokens.remove(token)?;
+        self.revoked_refresh_tokens.insert(revoked.token.clone());
+        if let Some(origin_jti) = &revoked.origin_jti {
+            self.revoked_origin_jtis.insert(origin_jti.clone());
+        }
+        Some(revoked)
+    }
+
+    fn revoke_refresh_tokens_for_user(&mut self, user_id: &UserId) {
+        let tokens: Vec<String> = self
+            .refresh_tokens
+            .values()
+            .filter(|token| &token.user_id == user_id)
+            .map(|token| token.token.clone())
+            .collect();
+        for token in tokens {
+            self.revoke_refresh_token(&token);
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -1047,7 +1079,7 @@ impl Storage {
         let user = store.users.get_mut(id)?;
         user.enabled = false;
         user.last_modified_date = now;
-        store.refresh_tokens.retain(|_, token| &token.user_id != id);
+        store.revoke_refresh_tokens_for_user(id);
         store.access_tokens_invalid_before.insert(*id, now);
         Some(())
     }
@@ -1175,15 +1207,6 @@ impl Storage {
         store.confirmation_codes.remove(user_id);
     }
 
-    /// Set the password for a user
-    pub async fn set_user_password(&self, user_id: &UserId, password_hash: &str) {
-        let mut store = self.principal_store.write().await;
-        if let Some(user) = store.users.get_mut(user_id) {
-            user.password_hash = password_hash.to_string();
-            user.last_modified_date = chrono::Utc::now();
-        }
-    }
-
     // ==================== Confirmation Code Operations ====================
 
     pub async fn save_confirmation_code(&self, code: ConfirmationCode) {
@@ -1225,19 +1248,38 @@ impl Storage {
         store.auth_challenge_sessions.remove(session);
     }
 
+    /// Change a pending challenge in place.
+    pub async fn update_auth_challenge_session<R>(
+        &self,
+        session: &str,
+        f: impl FnOnce(&mut PendingAuthChallenge) -> R,
+    ) -> Option<R> {
+        let mut store = self.principal_store.write().await;
+        store.auth_challenge_sessions.get_mut(session).map(f)
+    }
+
     pub async fn get_refresh_token(&self, token: &str) -> Option<RefreshToken> {
         let store = self.principal_store.read().await;
         store.refresh_tokens.get(token).cloned()
     }
 
-    pub async fn delete_refresh_token(&self, token: &str) {
+    /// Revoke one refresh token together with the access and ID tokens that
+    /// descend from the same authentication.
+    pub async fn delete_refresh_token(&self, token: &str) -> Option<RefreshToken> {
         let mut store = self.principal_store.write().await;
-        store.refresh_tokens.remove(token);
+        store.revoke_refresh_token(token)
     }
 
+    /// Revoke every refresh token of a user.
     pub async fn delete_refresh_tokens_for_user(&self, user_id: &UserId) {
         let mut store = self.principal_store.write().await;
-        store.refresh_tokens.retain(|_, v| &v.user_id != user_id);
+        store.revoke_refresh_tokens_for_user(user_id);
+    }
+
+    /// Whether the token was issued by this emulator and later revoked.
+    pub async fn is_refresh_token_revoked(&self, token: &str) -> bool {
+        let store = self.principal_store.read().await;
+        store.revoked_refresh_tokens.contains(token)
     }
 
     pub async fn invalidate_access_tokens_for_user(&self, user_id: &UserId) {
@@ -1252,8 +1294,12 @@ impl Storage {
         user_id: &UserId,
         issued_at: i64,
         issued_at_ms: Option<i64>,
+        origin_jti: Option<&str>,
     ) -> bool {
         let store = self.principal_store.read().await;
+        if origin_jti.is_some_and(|origin_jti| store.revoked_origin_jtis.contains(origin_jti)) {
+            return true;
+        }
         store
             .access_tokens_invalid_before
             .get(user_id)

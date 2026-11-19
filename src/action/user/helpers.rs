@@ -9,9 +9,9 @@ use uuid::Uuid;
 
 use crate::{
     error::AppError,
-    jwt,
+    jwt, srp,
     storage::Storage,
-    types::{Device, User, UserAttribute, UserPoolClient},
+    types::{AutoVerifiedAttribute, Device, User, UserAttribute, UserPool, UserPoolClient},
 };
 
 pub const SOFTWARE_TOKEN_MFA_FACTOR: &str = "SOFTWARE_TOKEN_MFA";
@@ -35,30 +35,18 @@ fn configured_bcrypt_cost() -> u32 {
     })
 }
 
-/// Generate a secure confirmation code
-/// Uses 20 alphanumeric characters for high entropy (~119 bits)
-/// Format: XXXX-XXXX-XXXX-XXXX-XXXX for readability
+/// Generate a confirmation code.
+///
+/// Cognito sends six-digit numeric codes for sign-up confirmation, attribute
+/// verification, and password reset.
 pub fn generate_confirmation_code() -> String {
+    generate_numeric_code()
+}
+
+/// A six-digit one-time code, the form Cognito sends by email and SMS.
+pub fn generate_numeric_code() -> String {
     use rand::Rng;
-    const CHARSET: &[u8] = b"ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; // Excludes confusing chars: 0/O, 1/I/L
-    let mut rng = rand::thread_rng();
-
-    let code: String = (0..20)
-        .map(|_| {
-            let idx = rng.gen_range(0..CHARSET.len());
-            CHARSET[idx] as char
-        })
-        .collect();
-
-    // Format as XXXX-XXXX-XXXX-XXXX-XXXX for readability
-    format!(
-        "{}-{}-{}-{}-{}",
-        &code[0..4],
-        &code[4..8],
-        &code[8..12],
-        &code[12..16],
-        &code[16..20]
-    )
+    format!("{:06}", rand::thread_rng().gen_range(0..1_000_000))
 }
 
 /// Normalize a confirmation code by removing dashes and converting to uppercase
@@ -75,30 +63,52 @@ pub fn hash_password(password: &str) -> std::result::Result<String, String> {
         .map_err(|e| format!("Failed to hash password: {}", e))
 }
 
+/// Store a new password on a user.
+///
+/// Keeps a bcrypt hash for the flows that present the password in clear and
+/// an SRP verifier for `USER_SRP_AUTH`, as Cognito does.
+pub fn set_user_password(user: &mut User, password: &str) -> crate::error::Result<()> {
+    user.password_hash = hash_password(password).map_err(AppError::Internal)?;
+    store_srp_verifier(user, password);
+    user.password_set_at = Some(chrono::Utc::now());
+    Ok(())
+}
+
+/// Derive and store the SRP verifier for a password known to be the user's.
+pub fn store_srp_verifier(user: &mut User, password: &str) {
+    let verifier = srp::generate_verifier(user.user_pool_id.as_str(), &user.username, password);
+    user.srp_salt = Some(verifier.salt);
+    user.srp_verifier = Some(verifier.verifier);
+}
+
 /// Verify password against bcrypt hash
 pub fn verify_password(password: &str, hash: &str) -> bool {
     bcrypt::verify(password, hash).unwrap_or(false)
 }
 
+/// Mask an email address the way Cognito does in `Destination`:
+/// `alice@example.com` becomes `a***@e***`.
 pub fn mask_email(email: &str) -> String {
-    if let Some((local, domain)) = email.split_once('@') {
-        if local.len() > 2 {
-            format!("{}***@{}", &local[..2], domain)
-        } else {
-            format!("***@{}", domain)
-        }
-    } else {
-        "***".to_string()
+    let initial = |part: &str| part.chars().next().map(String::from).unwrap_or_default();
+    match email.split_once('@') {
+        Some((local, domain)) => format!("{}***@{}***", initial(local), initial(domain)),
+        None => "***".to_string(),
     }
 }
 
+/// Mask a phone number the way Cognito does in `Destination`:
+/// `+15555550100` becomes `+*******0100`.
 pub fn mask_phone_number(phone_number: &str) -> String {
     let digits: String = phone_number
         .chars()
         .filter(|c| c.is_ascii_digit())
         .collect();
     if digits.len() >= 4 {
-        format!("***{}", &digits[digits.len().saturating_sub(4)..])
+        format!(
+            "+{}{}",
+            "*".repeat(digits.len() - 4),
+            &digits[digits.len() - 4..]
+        )
     } else {
         "***".to_string()
     }
@@ -130,6 +140,30 @@ pub fn build_code_delivery_details(
             "AttributeName": "phone_number"
         })
     })
+}
+
+/// Where a sign-up confirmation code goes: the attribute the user pool
+/// verifies automatically. Cognito texts the code when it verifies both.
+/// `None` when the pool verifies nothing the user has.
+pub fn confirmation_attribute(pool: &UserPool, user: &User) -> Option<AutoVerifiedAttribute> {
+    let auto_verified = pool.auto_verified_attributes.as_deref().unwrap_or_default();
+    if auto_verified.contains(&AutoVerifiedAttribute::PhoneNumber) && user.phone_number.is_some() {
+        Some(AutoVerifiedAttribute::PhoneNumber)
+    } else if auto_verified.contains(&AutoVerifiedAttribute::Email) && user.email.is_some() {
+        Some(AutoVerifiedAttribute::Email)
+    } else {
+        None
+    }
+}
+
+/// `CodeDeliveryDetails` for a sign-up confirmation code.
+pub fn confirmation_delivery(pool: &UserPool, user: &User) -> Option<Value> {
+    match confirmation_attribute(pool, user)? {
+        AutoVerifiedAttribute::Email => build_code_delivery_details(user.email.as_deref(), None),
+        AutoVerifiedAttribute::PhoneNumber => {
+            build_code_delivery_details(None, user.phone_number.as_deref())
+        }
+    }
 }
 
 pub fn require_code_delivery_details(user: &User) -> crate::error::Result<Value> {
@@ -201,6 +235,7 @@ pub async fn verify_and_extract_active_user_id(
             &user_id,
             token_data.claims.iat,
             token_data.claims.cognitox_iat_ms,
+            token_data.claims.origin_jti.as_deref(),
         )
         .await
     {

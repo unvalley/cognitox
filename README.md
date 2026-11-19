@@ -159,6 +159,16 @@ Cognito assigns user pool and client IDs itself, so they cannot be written into 
 COGNITOX_SEED_FILE=./seed.json cargo run
 ```
 
+## Behavior that follows Cognito
+
+cognitox aims to fail locally where Cognito would fail in AWS:
+
+- **App client auth flows** -- a client created without `ExplicitAuthFlows` gets Cognito's default (`ALLOW_CUSTOM_AUTH`, `ALLOW_USER_SRP_AUTH`, `ALLOW_REFRESH_TOKEN_AUTH`). `USER_PASSWORD_AUTH` and the admin password flow answer `InvalidParameterException` until the client lists `ALLOW_USER_PASSWORD_AUTH` / `ALLOW_ADMIN_USER_PASSWORD_AUTH`.
+- **Password policy** -- the user pool's `PasswordPolicy` is enforced wherever a password is set, with `InvalidPasswordException` and Cognito's messages. A pool without one uses Cognito's default: 8 characters with upper case, lower case, a number, and a symbol.
+- **MFA** -- a user's MFA preference, or a pool with `MfaConfiguration: ON`, adds the `SOFTWARE_TOKEN_MFA`, `SMS_MFA`, `EMAIL_OTP`, `SELECT_MFA_TYPE`, or `MFA_SETUP` challenge to sign-in.
+- **Errors** -- client errors are HTTP 400 with Cognito's `__type` and message (`NotAuthorizedException: Incorrect username or password.`), plus the `x-amzn-errortype` and `x-amzn-requestid` headers.
+- **Tokens** -- ID tokens carry the user's attributes, `cognito:groups`, and `cognito:roles`; access and ID tokens share `origin_jti` and `event_id`, and `RevokeToken` voids the tokens of one sign-in.
+
 ## API Coverage
 
 cognitox routes all 119 cognito-idp operations, with **101 (85%) currently spec-aligned**. The remaining 18 have known partial functionality or limitations (see below).
@@ -170,11 +180,10 @@ See [spec/README.md](spec/README.md).
 
 ## Known Limitations
 
-- **Auth flows** -- `USER_PASSWORD_AUTH`, `REFRESH_TOKEN_AUTH`, `ADMIN_USER_PASSWORD_AUTH`, and `ADMIN_NO_SRP_AUTH` are supported. `USER_SRP_AUTH` and `USER_AUTH` return `NotImplementedException`.
+- **Auth flows** -- `USER_SRP_AUTH`, `USER_PASSWORD_AUTH`, `ADMIN_USER_PASSWORD_AUTH` (`ADMIN_NO_SRP_AUTH`), `REFRESH_TOKEN_AUTH`, and the choice-based `USER_AUTH` flow (password, SRP, email and SMS one-time codes) are supported. `CUSTOM_AUTH` needs Lambda triggers and returns `NotImplementedException`, as do passkey (`WEB_AUTHN`) sign-in and device SRP.
 - **Lambda triggers** -- not supported (no pre/post auth hooks)
-- **Email/SMS delivery** -- nothing is sent. SignUp / ForgotPassword / ResendConfirmationCode return `CodeDeliveryDetails` only; the actual confirmation code is persisted in the data file and emitted only at debug log level for local troubleshooting.
-- **Password policy per pool** -- the per-pool `PasswordPolicy` is stored and returned but not enforced. A fixed global rule (length 6–256) is applied to all passwords.
-- **MFA enforcement** -- MFA operations are implemented but not enforced during auth
+- **Email/SMS delivery** -- nothing is sent. Confirmation, password reset, and MFA codes are six digits, as Cognito's are; they are persisted in the data file and emitted only at debug log level (`RUST_LOG=cognitox=debug`).
+- **Account lockout** -- failed sign-in attempts are not rate limited; only a challenge session ends after repeated wrong answers.
 - **Advanced security features** -- risk configuration is stored but not evaluated
 
 ## Development

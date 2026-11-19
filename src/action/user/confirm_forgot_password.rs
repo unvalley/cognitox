@@ -11,10 +11,10 @@ use crate::{
     error::{AppError, Result},
     storage::Storage,
     types::{ClientId, UserStatus},
-    validation::{validate_confirmation_code, validate_password, validate_username},
+    validation::{validate_confirmation_code, validate_password_against_policy, validate_username},
 };
 
-use super::helpers::{hash_password, normalize_confirmation_code, verify_secret_hash};
+use super::helpers::{normalize_confirmation_code, set_user_password, verify_secret_hash};
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "PascalCase")]
@@ -44,13 +44,17 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
 
     validate_username(&req.username)?;
     validate_confirmation_code(&req.confirmation_code)?;
-    validate_password(&req.password)?;
 
     let client = storage
         .get_user_pool_client(&req.client_id)
         .await
         .ok_or(AppError::UserPoolClientNotFound)?;
     verify_secret_hash(&client, &req.username, req.secret_hash.as_deref())?;
+    let pool = storage
+        .get_user_pool(&client.user_pool_id)
+        .await
+        .ok_or(AppError::UserPoolNotFound)?;
+    validate_password_against_policy(&pool, &req.password)?;
 
     let mut user = storage
         .get_user_by_username(&client.user_pool_id, &req.username)
@@ -82,7 +86,7 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
         return Err(AppError::ExpiredCode);
     }
 
-    user.password_hash = hash_password(&req.password).map_err(AppError::Internal)?;
+    set_user_password(&mut user, &req.password)?;
     if user.user_status == UserStatus::ResetRequired {
         user.user_status = UserStatus::Confirmed;
     }
@@ -113,6 +117,7 @@ mod tests {
             storage,
             json!({
                 "UserPoolId": pool_id,
+                "ExplicitAuthFlows": ["ALLOW_USER_PASSWORD_AUTH", "ALLOW_ADMIN_USER_PASSWORD_AUTH", "ALLOW_USER_SRP_AUTH", "ALLOW_REFRESH_TOKEN_AUTH"],
                 "ClientName": "test-client"
             }),
         )

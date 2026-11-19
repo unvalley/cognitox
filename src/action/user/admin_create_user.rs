@@ -13,12 +13,15 @@ use crate::{
     error::{AppError, Result},
     storage::Storage,
     types::{AliasAttribute, User, UserAttribute, UserPoolId, UserStatus},
-    validation::{validate_email, validate_password, validate_phone_number, validate_username},
+    validation::{
+        generate_temporary_password, validate_email, validate_password_against_policy,
+        validate_phone_number, validate_username,
+    },
 };
 
 use super::helpers::{
-    build_user_attributes, find_user_attribute_value, hash_password, sync_user_profile_attributes,
-    upsert_user_attribute,
+    build_user_attributes, find_user_attribute_value, set_user_password,
+    sync_user_profile_attributes, upsert_user_attribute,
 };
 
 #[derive(Debug, Deserialize)]
@@ -54,10 +57,6 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
 
     // Validate input
     validate_username(&req.username)?;
-    if let Some(password) = &req.temporary_password {
-        validate_password(password)?;
-    }
-
     if let Some(email) = req
         .user_attributes
         .as_ref()
@@ -77,6 +76,9 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
         .get_user_pool(&req.user_pool_id)
         .await
         .ok_or(AppError::UserPoolNotFound)?;
+    if let Some(password) = &req.temporary_password {
+        validate_password_against_policy(&pool, password)?;
+    }
 
     let existing = storage
         .get_user_by_username(&req.user_pool_id, &req.username)
@@ -92,7 +94,7 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
     let user_id = Uuid::new_v4();
     let password = req
         .temporary_password
-        .unwrap_or_else(|| Uuid::new_v4().to_string());
+        .unwrap_or_else(|| generate_temporary_password(&pool));
 
     let mut user = User {
         id: user_id,
@@ -100,13 +102,17 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
         username: req.username.clone(),
         email: None,
         phone_number: None,
-        password_hash: hash_password(&password).map_err(AppError::Internal)?,
+        password_hash: String::new(),
         enabled: true,
         user_status: UserStatus::ForceChangePassword,
         attributes: req.user_attributes.unwrap_or_default(),
         creation_date: now,
         last_modified_date: now,
+        srp_salt: None,
+        srp_verifier: None,
+        password_set_at: None,
     };
+    set_user_password(&mut user, &password)?;
     sync_user_profile_attributes(&mut user);
 
     // An email address or phone number created as verified becomes a sign-in
@@ -180,13 +186,11 @@ async fn resend_invitation(
             "User": user_view(&user)
         }));
     };
-    let password_hash = hash_password(&password).map_err(AppError::Internal)?;
+    let mut updated = user;
+    set_user_password(&mut updated, &password)?;
+    updated.last_modified_date = Utc::now();
     let updated = storage
-        .update_user_with(&user.id, |user| {
-            user.password_hash = password_hash;
-            user.last_modified_date = Utc::now();
-            user.clone()
-        })
+        .update_user(updated)
         .await
         .ok_or(AppError::UserNotFound)?;
 

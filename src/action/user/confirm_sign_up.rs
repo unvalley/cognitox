@@ -10,11 +10,13 @@ use crate::{
     action::io::parse_request,
     error::{AppError, Result},
     storage::Storage,
-    types::{ClientId, UserStatus},
+    types::{AutoVerifiedAttribute, ClientId, UserStatus},
     validation::{validate_confirmation_code, validate_username},
 };
 
-use super::helpers::{normalize_confirmation_code, verify_secret_hash};
+use super::helpers::{
+    confirmation_attribute, normalize_confirmation_code, upsert_user_attribute, verify_secret_hash,
+};
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "PascalCase")]
@@ -66,10 +68,12 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
         ));
     }
 
+    // Without a pending code there is nothing to match against; Cognito
+    // answers as it does for a code that has expired.
     let confirmation = storage
         .get_confirmation_code(&user.id)
         .await
-        .ok_or(AppError::InvalidConfirmationCode)?;
+        .ok_or(AppError::ExpiredCode)?;
 
     // Normalize codes for comparison (removes dashes, converts to uppercase)
     if normalize_confirmation_code(&confirmation.code)
@@ -83,6 +87,24 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
         return Err(AppError::ExpiredCode);
     }
 
+    // Returning the code proves control of the address or number it was
+    // sent to.
+    let pool = storage
+        .get_user_pool(&client.user_pool_id)
+        .await
+        .ok_or(AppError::UserPoolNotFound)?;
+    if let Some(attribute) = confirmation_attribute(&pool, &user) {
+        let verified_attribute = match attribute {
+            AutoVerifiedAttribute::Email => "email_verified",
+            AutoVerifiedAttribute::PhoneNumber => "phone_number_verified",
+        };
+        upsert_user_attribute(
+            &mut user.attributes,
+            verified_attribute,
+            Some("true".to_string()),
+        );
+    }
+
     user.user_status = UserStatus::Confirmed;
     user.last_modified_date = Utc::now();
     storage.update_user(user).await;
@@ -90,9 +112,11 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
         .delete_confirmation_code(&confirmation.user_id)
         .await;
 
-    Ok(json!({
-        "Session": req.session
-    }))
+    let mut response = json!({});
+    if let Some(session) = req.session {
+        response["Session"] = json!(session);
+    }
+    Ok(response)
 }
 
 #[cfg(test)]
@@ -114,6 +138,7 @@ mod tests {
             storage,
             json!({
                 "UserPoolId": pool_id,
+                "ExplicitAuthFlows": ["ALLOW_USER_PASSWORD_AUTH", "ALLOW_ADMIN_USER_PASSWORD_AUTH", "ALLOW_USER_SRP_AUTH", "ALLOW_REFRESH_TOKEN_AUTH"],
                 "ClientName": "test-client"
             }),
         )

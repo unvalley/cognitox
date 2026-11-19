@@ -135,7 +135,7 @@ mod tests {
 
         let client = create_user_pool_client::handler(
             storage,
-            json!({"UserPoolId": pool_id, "ClientName": "test-client"}),
+            json!({"UserPoolId": pool_id, "ClientName": "test-client", "ExplicitAuthFlows": ["ALLOW_USER_PASSWORD_AUTH", "ALLOW_ADMIN_USER_PASSWORD_AUTH", "ALLOW_USER_SRP_AUTH", "ALLOW_REFRESH_TOKEN_AUTH"]}),
         )
         .await
         .unwrap();

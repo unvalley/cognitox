@@ -157,6 +157,16 @@ pub enum AppError {
     #[error("{0}")]
     InvalidParameter(String),
 
+    /// `EnableSoftwareTokenMFAException`: the TOTP code did not verify.
+    #[error("{0}")]
+    EnableSoftwareTokenMfa(String),
+
+    /// `SoftwareTokenMFANotFoundException`
+    #[error(
+        "Software token TOTP multi-factor authentication (MFA) is not enabled for the user pool."
+    )]
+    SoftwareTokenMfaNotFound,
+
     /// The request body could not be mapped onto the operation's input shape.
     #[error("{0}")]
     Serialization(String),
@@ -209,6 +219,12 @@ impl AppError {
                 (StatusCode::BAD_REQUEST, "InvalidParameterException")
             }
             AppError::Serialization(_) => (StatusCode::BAD_REQUEST, "SerializationException"),
+            AppError::EnableSoftwareTokenMfa(_) => {
+                (StatusCode::BAD_REQUEST, "EnableSoftwareTokenMFAException")
+            }
+            AppError::SoftwareTokenMfaNotFound => {
+                (StatusCode::BAD_REQUEST, "SoftwareTokenMFANotFoundException")
+            }
             AppError::UserAlreadyExists | AppError::UserAccountAlreadyExists => {
                 (StatusCode::BAD_REQUEST, "UsernameExistsException")
             }

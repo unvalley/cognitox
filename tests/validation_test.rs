@@ -26,6 +26,7 @@ async fn test_sign_up_empty_username() {
             "CreateUserPoolClient",
             json!({
                 "UserPoolId": pool_id,
+                "ExplicitAuthFlows": ["ALLOW_USER_PASSWORD_AUTH", "ALLOW_ADMIN_USER_PASSWORD_AUTH", "ALLOW_USER_SRP_AUTH", "ALLOW_REFRESH_TOKEN_AUTH"],
                 "ClientName": "test-client"
             }),
         )
@@ -41,7 +42,7 @@ async fn test_sign_up_empty_username() {
             json!({
                 "ClientId": client_id,
                 "Username": "",
-                "Password": "password123"
+                "Password": "Password123!"
             }),
         )
         .await;
@@ -65,6 +66,7 @@ async fn test_sign_up_username_with_spaces() {
             "CreateUserPoolClient",
             json!({
                 "UserPoolId": pool_id,
+                "ExplicitAuthFlows": ["ALLOW_USER_PASSWORD_AUTH", "ALLOW_ADMIN_USER_PASSWORD_AUTH", "ALLOW_USER_SRP_AUTH", "ALLOW_REFRESH_TOKEN_AUTH"],
                 "ClientName": "test-client"
             }),
         )
@@ -80,7 +82,7 @@ async fn test_sign_up_username_with_spaces() {
             json!({
                 "ClientId": client_id,
                 "Username": "user name",
-                "Password": "password123"
+                "Password": "Password123!"
             }),
         )
         .await;
@@ -108,6 +110,7 @@ async fn test_sign_up_password_too_short() {
             "CreateUserPoolClient",
             json!({
                 "UserPoolId": pool_id,
+                "ExplicitAuthFlows": ["ALLOW_USER_PASSWORD_AUTH", "ALLOW_ADMIN_USER_PASSWORD_AUTH", "ALLOW_USER_SRP_AUTH", "ALLOW_REFRESH_TOKEN_AUTH"],
                 "ClientName": "test-client"
             }),
         )
@@ -130,7 +133,11 @@ async fn test_sign_up_password_too_short() {
 
     assert_eq!(response.status(), 400);
     let body: serde_json::Value = response.json().await.unwrap();
-    assert_eq!(body["__type"], "InvalidParameterException");
+    assert_eq!(body["__type"], "InvalidPasswordException");
+    assert_eq!(
+        body["message"],
+        "Password did not conform with policy: Password not long enough"
+    );
 }
 
 #[tokio::test]
@@ -148,6 +155,7 @@ async fn test_change_password_new_password_too_short() {
             "CreateUserPoolClient",
             json!({
                 "UserPoolId": pool_id,
+                "ExplicitAuthFlows": ["ALLOW_USER_PASSWORD_AUTH", "ALLOW_ADMIN_USER_PASSWORD_AUTH", "ALLOW_USER_SRP_AUTH", "ALLOW_REFRESH_TOKEN_AUTH"],
                 "ClientName": "test-client"
             }),
         )
@@ -163,7 +171,7 @@ async fn test_change_password_new_password_too_short() {
             json!({
                 "ClientId": client_id,
                 "Username": "testuser",
-                "Password": "password123"
+                "Password": "Password123!"
             }),
         )
         .await;
@@ -187,7 +195,7 @@ async fn test_change_password_new_password_too_short() {
                 "AuthFlow": "USER_PASSWORD_AUTH",
                 "AuthParameters": {
                     "USERNAME": "testuser",
-                    "PASSWORD": "password123"
+                    "PASSWORD": "Password123!"
                 }
             }),
         )
@@ -202,7 +210,7 @@ async fn test_change_password_new_password_too_short() {
             "ChangePassword",
             json!({
                 "AccessToken": access_token,
-                "PreviousPassword": "password123",
+                "PreviousPassword": "Password123!",
                 "ProposedPassword": "12345"
             }),
         )
@@ -210,7 +218,7 @@ async fn test_change_password_new_password_too_short() {
 
     assert_eq!(response.status(), 400);
     let body: serde_json::Value = response.json().await.unwrap();
-    assert_eq!(body["__type"], "InvalidParameterException");
+    assert_eq!(body["__type"], "InvalidPasswordException");
 }
 
 // =============================================================================
@@ -231,6 +239,7 @@ async fn test_sign_up_invalid_email() {
             "CreateUserPoolClient",
             json!({
                 "UserPoolId": pool_id,
+                "ExplicitAuthFlows": ["ALLOW_USER_PASSWORD_AUTH", "ALLOW_ADMIN_USER_PASSWORD_AUTH", "ALLOW_USER_SRP_AUTH", "ALLOW_REFRESH_TOKEN_AUTH"],
                 "ClientName": "test-client"
             }),
         )
@@ -246,7 +255,7 @@ async fn test_sign_up_invalid_email() {
             json!({
                 "ClientId": client_id,
                 "Username": "testuser",
-                "Password": "password123",
+                "Password": "Password123!",
                 "UserAttributes": [
                     {"Name": "email", "Value": "notanemail"}
                 ]
@@ -278,6 +287,7 @@ async fn test_initiate_auth_disabled_user() {
             "CreateUserPoolClient",
             json!({
                 "UserPoolId": pool_id,
+                "ExplicitAuthFlows": ["ALLOW_USER_PASSWORD_AUTH", "ALLOW_ADMIN_USER_PASSWORD_AUTH", "ALLOW_USER_SRP_AUTH", "ALLOW_REFRESH_TOKEN_AUTH"],
                 "ClientName": "test-client"
             }),
         )
@@ -293,7 +303,7 @@ async fn test_initiate_auth_disabled_user() {
             json!({
                 "ClientId": client_id,
                 "Username": "testuser",
-                "Password": "password123"
+                "Password": "Password123!"
             }),
         )
         .await;
@@ -328,7 +338,7 @@ async fn test_initiate_auth_disabled_user() {
                 "AuthFlow": "USER_PASSWORD_AUTH",
                 "AuthParameters": {
                     "USERNAME": "testuser",
-                    "PASSWORD": "password123"
+                    "PASSWORD": "Password123!"
                 }
             }),
         )
@@ -354,6 +364,7 @@ async fn test_refresh_token_disabled_user() {
             "CreateUserPoolClient",
             json!({
                 "UserPoolId": pool_id,
+                "ExplicitAuthFlows": ["ALLOW_USER_PASSWORD_AUTH", "ALLOW_ADMIN_USER_PASSWORD_AUTH", "ALLOW_USER_SRP_AUTH", "ALLOW_REFRESH_TOKEN_AUTH"],
                 "ClientName": "test-client"
             }),
         )
@@ -369,7 +380,7 @@ async fn test_refresh_token_disabled_user() {
             json!({
                 "ClientId": client_id,
                 "Username": "testuser",
-                "Password": "password123"
+                "Password": "Password123!"
             }),
         )
         .await;
@@ -393,7 +404,7 @@ async fn test_refresh_token_disabled_user() {
                 "AuthFlow": "USER_PASSWORD_AUTH",
                 "AuthParameters": {
                     "USERNAME": "testuser",
-                    "PASSWORD": "password123"
+                    "PASSWORD": "Password123!"
                 }
             }),
         )
@@ -451,6 +462,7 @@ async fn test_refresh_token_after_global_signout() {
             "CreateUserPoolClient",
             json!({
                 "UserPoolId": pool_id,
+                "ExplicitAuthFlows": ["ALLOW_USER_PASSWORD_AUTH", "ALLOW_ADMIN_USER_PASSWORD_AUTH", "ALLOW_USER_SRP_AUTH", "ALLOW_REFRESH_TOKEN_AUTH"],
                 "ClientName": "test-client"
             }),
         )
@@ -466,7 +478,7 @@ async fn test_refresh_token_after_global_signout() {
             json!({
                 "ClientId": client_id,
                 "Username": "testuser",
-                "Password": "password123"
+                "Password": "Password123!"
             }),
         )
         .await;
@@ -490,7 +502,7 @@ async fn test_refresh_token_after_global_signout() {
                 "AuthFlow": "USER_PASSWORD_AUTH",
                 "AuthParameters": {
                     "USERNAME": "testuser",
-                    "PASSWORD": "password123"
+                    "PASSWORD": "Password123!"
                 }
             }),
         )
@@ -550,6 +562,7 @@ async fn test_create_client_invalid_callback_url() {
             "CreateUserPoolClient",
             json!({
                 "UserPoolId": pool_id,
+                "ExplicitAuthFlows": ["ALLOW_USER_PASSWORD_AUTH", "ALLOW_ADMIN_USER_PASSWORD_AUTH", "ALLOW_USER_SRP_AUTH", "ALLOW_REFRESH_TOKEN_AUTH"],
                 "ClientName": "test-client",
                 "CallbackURLs": ["not-a-valid-url"]
             }),
@@ -668,6 +681,7 @@ async fn test_update_user_pool_client_invalid_callback_url() {
             "CreateUserPoolClient",
             json!({
                 "UserPoolId": pool_id,
+                "ExplicitAuthFlows": ["ALLOW_USER_PASSWORD_AUTH", "ALLOW_ADMIN_USER_PASSWORD_AUTH", "ALLOW_USER_SRP_AUTH", "ALLOW_REFRESH_TOKEN_AUTH"],
                 "ClientName": "test-client"
             }),
         )
@@ -722,7 +736,7 @@ async fn test_initiate_auth_rejects_flow_not_enabled_for_client() {
             json!({
                 "ClientId": client_id,
                 "Username": "testuser",
-                "Password": "password123"
+                "Password": "Password123!"
             }),
         )
         .await;
@@ -744,7 +758,7 @@ async fn test_initiate_auth_rejects_flow_not_enabled_for_client() {
                 "AuthFlow": "USER_PASSWORD_AUTH",
                 "AuthParameters": {
                     "USERNAME": "testuser",
-                    "PASSWORD": "password123"
+                    "PASSWORD": "Password123!"
                 }
             }),
         )
@@ -752,7 +766,11 @@ async fn test_initiate_auth_rejects_flow_not_enabled_for_client() {
 
     assert_eq!(response.status(), 400);
     let body: serde_json::Value = response.json().await.unwrap();
-    assert_eq!(body["__type"], "NotAuthorizedException");
+    assert_eq!(body["__type"], "InvalidParameterException");
+    assert_eq!(
+        body["message"],
+        "USER_PASSWORD_AUTH flow not enabled for this client"
+    );
 }
 
 #[tokio::test]
@@ -769,6 +787,7 @@ async fn test_admin_delete_user_cascades_refresh_tokens_and_group_membership() {
             "CreateUserPoolClient",
             json!({
                 "UserPoolId": pool_id,
+                "ExplicitAuthFlows": ["ALLOW_USER_PASSWORD_AUTH", "ALLOW_ADMIN_USER_PASSWORD_AUTH", "ALLOW_USER_SRP_AUTH", "ALLOW_REFRESH_TOKEN_AUTH"],
                 "ClientName": "test-client"
             }),
         )
@@ -783,7 +802,7 @@ async fn test_admin_delete_user_cascades_refresh_tokens_and_group_membership() {
             json!({
                 "ClientId": client_id,
                 "Username": "testuser",
-                "Password": "password123"
+                "Password": "Password123!"
             }),
         )
         .await;
@@ -824,7 +843,7 @@ async fn test_admin_delete_user_cascades_refresh_tokens_and_group_membership() {
                 "AuthFlow": "USER_PASSWORD_AUTH",
                 "AuthParameters": {
                     "USERNAME": "testuser",
-                    "PASSWORD": "password123"
+                    "PASSWORD": "Password123!"
                 }
             }),
         )

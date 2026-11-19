@@ -21,6 +21,7 @@ async fn test_login_page_renders() {
             "CreateUserPoolClient",
             json!({
                 "UserPoolId": user_pool_id,
+                "ExplicitAuthFlows": ["ALLOW_USER_PASSWORD_AUTH", "ALLOW_ADMIN_USER_PASSWORD_AUTH", "ALLOW_USER_SRP_AUTH", "ALLOW_REFRESH_TOKEN_AUTH"],
                 "ClientName": "test-client",
                 "AllowedOAuthFlowsUserPoolClient": true,
                 "AllowedOAuthFlows": ["code"],
@@ -61,6 +62,7 @@ async fn test_signup_page_renders() {
             "CreateUserPoolClient",
             json!({
                 "UserPoolId": user_pool_id,
+                "ExplicitAuthFlows": ["ALLOW_USER_PASSWORD_AUTH", "ALLOW_ADMIN_USER_PASSWORD_AUTH", "ALLOW_USER_SRP_AUTH", "ALLOW_REFRESH_TOKEN_AUTH"],
                 "ClientName": "test-client",
                 "AllowedOAuthFlowsUserPoolClient": true,
                 "AllowedOAuthFlows": ["code"],
@@ -99,6 +101,7 @@ async fn test_login_page_with_branding() {
             "CreateUserPoolClient",
             json!({
                 "UserPoolId": user_pool_id,
+                "ExplicitAuthFlows": ["ALLOW_USER_PASSWORD_AUTH", "ALLOW_ADMIN_USER_PASSWORD_AUTH", "ALLOW_USER_SRP_AUTH", "ALLOW_REFRESH_TOKEN_AUTH"],
                 "ClientName": "test-client",
                 "AllowedOAuthFlowsUserPoolClient": true,
                 "AllowedOAuthFlows": ["code"],
@@ -155,6 +158,7 @@ async fn test_forgot_password_page() {
             "CreateUserPoolClient",
             json!({
                 "UserPoolId": user_pool_id,
+                "ExplicitAuthFlows": ["ALLOW_USER_PASSWORD_AUTH", "ALLOW_ADMIN_USER_PASSWORD_AUTH", "ALLOW_USER_SRP_AUTH", "ALLOW_REFRESH_TOKEN_AUTH"],
                 "ClientName": "test-client",
                 "AllowedOAuthFlowsUserPoolClient": true,
                 "AllowedOAuthFlows": ["code"],
@@ -189,6 +193,7 @@ async fn setup_login_fixture(client: &TestClient) -> (String, String, String) {
             "CreateUserPoolClient",
             json!({
                 "UserPoolId": user_pool_id,
+                "ExplicitAuthFlows": ["ALLOW_USER_PASSWORD_AUTH", "ALLOW_ADMIN_USER_PASSWORD_AUTH", "ALLOW_USER_SRP_AUTH", "ALLOW_REFRESH_TOKEN_AUTH"],
                 "ClientName": "test-client",
                 "AllowedOAuthFlowsUserPoolClient": true,
                 "AllowedOAuthFlows": ["code"],
