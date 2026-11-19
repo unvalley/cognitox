@@ -21,11 +21,13 @@ use tracing::error;
 
 use crate::config::{StorageConfig, StorageMode};
 use crate::types::{
-    AliasAttribute, AuthEvent, AuthorizationCode, BrandingId, ClientId, ConfirmationCode, Device,
-    DomainPrefix, FederatedUserLink, Group, GroupName, IdentityProvider, ManagedLoginBranding,
+    AliasAttribute, AttributeDataType, AuthEvent, AuthorizationCode, AutoVerifiedAttribute,
+    BrandingId, ClientId, ConfirmationCode, Device, DomainPrefix, ExplicitAuthFlow,
+    FederatedUserLink, Group, GroupName, IdentityProvider, ManagedLoginBranding, PasswordPolicy,
     PasswordResetCode, PendingAuthChallenge, ProviderUserIdentifier, RefreshToken, ResourceServer,
-    TermsDocument, UiCustomization, User, UserId, UserImportJob, UserPool, UserPoolClient,
-    UserPoolDomain, UserPoolId, UsernameAttribute, WebAuthnCredential,
+    SchemaAttributeType, TermsDocument, UiCustomization, User, UserAttribute, UserId,
+    UserImportJob, UserPool, UserPoolClient, UserPoolDomain, UserPoolId, UserPoolPolicies,
+    UsernameAttribute, UsernameConfiguration, WebAuthnCredential,
 };
 
 // ==================== Persistence Backend Trait ====================
@@ -285,7 +287,19 @@ struct PersistedSnapshot {
     version: u32,
     encoding: String,
     payload: String,
+    /// Which emulator semantics the data was written under; see
+    /// [`DATA_REVISION`]. Absent in snapshots older than revision 1.
+    #[serde(default)]
+    data_revision: u32,
 }
+
+/// Revision 1 is where the emulator began to follow Cognito's defaults
+/// instead of being permissive: app clients default to a restricted set of
+/// auth flows, password policies and attribute schemas are enforced, and an
+/// email address or phone number counts as verified only when marked so.
+/// Older data is adjusted on load ([`keep_pre_revision_1_behavior`]) so it
+/// keeps working the way it did when it was written.
+const DATA_REVISION: u32 = 1;
 
 const SNAPSHOT_VERSION: u32 = 2;
 const SNAPSHOT_ENCODING: &str = "msgpack+base64";
@@ -323,8 +337,110 @@ fn decode_snapshot(content: &str) -> Result<PersistedStorageState, String> {
             .map_err(|e| format!("Failed to deserialize snapshot payload: {e}"));
     }
 
-    rmp_serde::from_slice::<PersistedStorageState>(&payload)
-        .map_err(|e| format!("Failed to deserialize snapshot payload: {e}"))
+    let mut state = rmp_serde::from_slice::<PersistedStorageState>(&payload)
+        .map_err(|e| format!("Failed to deserialize snapshot payload: {e}"))?;
+    if snapshot.data_revision < 1 {
+        keep_pre_revision_1_behavior(&mut state);
+    }
+    Ok(state)
+}
+
+/// Make data written before [`DATA_REVISION`] 1 explicit about what it used
+/// to get implicitly, so that an upgrade does not lock anyone out:
+///
+/// - an app client without `ExplicitAuthFlows` allowed every flow;
+/// - a user pool without a password policy accepted any password of six
+///   characters, issued sign-up codes whatever it auto-verified, and matched
+///   usernames exactly;
+/// - an email address or phone number was treated as verified unless it was
+///   marked otherwise;
+/// - custom attributes needed no declaration in the schema.
+fn keep_pre_revision_1_behavior(state: &mut PersistedStorageState) {
+    for client in state.pool_store.user_pool_clients.values_mut() {
+        if client.explicit_auth_flows.is_empty() {
+            client.explicit_auth_flows = vec![
+                ExplicitAuthFlow::AllowAdminUserPasswordAuth,
+                ExplicitAuthFlow::AllowCustomAuth,
+                ExplicitAuthFlow::AllowUserPasswordAuth,
+                ExplicitAuthFlow::AllowUserSrpAuth,
+                ExplicitAuthFlow::AllowRefreshTokenAuth,
+            ];
+        }
+    }
+
+    let mut custom_attributes: HashMap<UserPoolId, Vec<String>> = HashMap::new();
+    for user in state.principal_store.users.values_mut() {
+        for (present, verified_attribute) in [
+            (user.email.is_some(), "email_verified"),
+            (user.phone_number.is_some(), "phone_number_verified"),
+        ] {
+            let recorded = user
+                .attributes
+                .iter()
+                .any(|attribute| attribute.name == verified_attribute);
+            if present && !recorded {
+                user.attributes.push(UserAttribute {
+                    name: verified_attribute.to_string(),
+                    value: Some("true".to_string()),
+                });
+            }
+        }
+
+        let declared = custom_attributes
+            .entry(user.user_pool_id.clone())
+            .or_default();
+        for attribute in &user.attributes {
+            if let Some(name) = attribute.name.strip_prefix("custom:")
+                && !declared.iter().any(|declared| declared == name)
+            {
+                declared.push(name.to_string());
+            }
+        }
+    }
+
+    for pool in state.pool_store.user_pools.values_mut() {
+        let policies = pool.policies.get_or_insert(UserPoolPolicies {
+            password_policy: None,
+            sign_in_policy: None,
+        });
+        policies.password_policy.get_or_insert(PasswordPolicy {
+            minimum_length: Some(6),
+            password_history_size: None,
+            require_lowercase: Some(false),
+            require_numbers: Some(false),
+            require_symbols: Some(false),
+            require_uppercase: Some(false),
+            temporary_password_validity_days: Some(7),
+        });
+        pool.username_configuration
+            .get_or_insert(UsernameConfiguration {
+                case_sensitive: true,
+            });
+        pool.auto_verified_attributes.get_or_insert_with(|| {
+            vec![
+                AutoVerifiedAttribute::Email,
+                AutoVerifiedAttribute::PhoneNumber,
+            ]
+        });
+
+        let schema = pool.schema_attributes.get_or_insert_with(Vec::new);
+        for name in custom_attributes.remove(&pool.id).unwrap_or_default() {
+            let known = schema.iter().any(|attribute| {
+                attribute.name == name || attribute.name.strip_prefix("custom:") == Some(&name)
+            });
+            if !known {
+                schema.push(SchemaAttributeType {
+                    name,
+                    attribute_data_type: Some(AttributeDataType::String),
+                    developer_only_attribute: Some(false),
+                    mutable: Some(true),
+                    number_attribute_constraints: None,
+                    required: Some(false),
+                    string_attribute_constraints: None,
+                });
+            }
+        }
+    }
 }
 
 fn encode_snapshot<T: Serialize>(state: &T) -> Result<Vec<u8>, String> {
@@ -336,6 +452,7 @@ fn encode_snapshot<T: Serialize>(state: &T) -> Result<Vec<u8>, String> {
         version: SNAPSHOT_VERSION,
         encoding: SNAPSHOT_ENCODING.to_string(),
         payload: BASE64_STANDARD.encode(payload),
+        data_revision: DATA_REVISION,
     };
 
     serde_json::to_vec_pretty(&snapshot).map_err(|e| format!("Failed to encode snapshot: {e}"))
@@ -2175,6 +2292,143 @@ mod tests {
         let _ = fs::remove_file(path);
     }
 
+    /// A snapshot as a version before data revision 1 wrote it.
+    fn write_pre_revision_1_snapshot(path: &Path, state: &PersistedStorageState) {
+        let payload = rmp_serde::to_vec_named(state).unwrap();
+        let snapshot = serde_json::json!({
+            "version": SNAPSHOT_VERSION,
+            "encoding": SNAPSHOT_ENCODING,
+            "payload": BASE64_STANDARD.encode(payload),
+        });
+        fs::write(path, serde_json::to_vec(&snapshot).unwrap()).unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_older_snapshot_keeps_its_permissive_behavior() {
+        let path = temp_data_file();
+        let pool_id = UserPoolId::new("us-east-1_OldPool1").unwrap();
+        let client_id = ClientId::generate();
+        let user_id = uuid::Uuid::new_v4();
+
+        let mut state = PersistedStorageState::default();
+        state
+            .pool_store
+            .user_pools
+            .insert(pool_id.clone(), UserPool::new_for_test(pool_id.clone()));
+        state.pool_store.user_pool_clients.insert(
+            client_id.clone(),
+            UserPoolClient::new_for_test(client_id.clone(), pool_id.clone()),
+        );
+        state.principal_store.users.insert(
+            user_id,
+            User {
+                id: user_id,
+                user_pool_id: pool_id.clone(),
+                username: "olduser".to_string(),
+                email: Some("old@example.com".to_string()),
+                phone_number: None,
+                password_hash: "hash".to_string(),
+                enabled: true,
+                user_status: crate::types::UserStatus::Confirmed,
+                attributes: vec![
+                    UserAttribute {
+                        name: "email".to_string(),
+                        value: Some("old@example.com".to_string()),
+                    },
+                    UserAttribute {
+                        name: "custom:team".to_string(),
+                        value: Some("blue".to_string()),
+                    },
+                ],
+                creation_date: chrono::Utc::now(),
+                last_modified_date: chrono::Utc::now(),
+                srp_salt: None,
+                srp_verifier: None,
+                password_set_at: None,
+            },
+        );
+        write_pre_revision_1_snapshot(&path, &state);
+
+        let loaded = Storage::with_config(StorageConfig::persistent(path.clone())).unwrap();
+
+        // The app client keeps every flow it used to allow.
+        let client = loaded.get_user_pool_client(&client_id).await.unwrap();
+        assert!(
+            client
+                .explicit_auth_flows
+                .contains(&ExplicitAuthFlow::AllowUserPasswordAuth)
+        );
+        assert!(
+            client
+                .explicit_auth_flows
+                .contains(&ExplicitAuthFlow::AllowAdminUserPasswordAuth)
+        );
+
+        // The user pool keeps accepting what it accepted.
+        let pool = loaded.get_user_pool(&pool_id).await.unwrap();
+        let policy = pool.policies.unwrap().password_policy.unwrap();
+        assert_eq!(policy.minimum_length, Some(6));
+        assert_eq!(policy.require_symbols, Some(false));
+        assert!(pool.username_configuration.unwrap().case_sensitive);
+        assert!(
+            pool.schema_attributes
+                .unwrap()
+                .iter()
+                .any(|attribute| attribute.name == "team")
+        );
+
+        // The address was treated as verified, and still is.
+        let user = loaded.get_user(&user_id).await.unwrap();
+        assert!(user.attribute_verified("email"));
+
+        // Once saved, the data is at the current revision and is left alone.
+        loaded.flush_persistence().await.unwrap();
+        let saved: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(saved["data_revision"], DATA_REVISION);
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[tokio::test]
+    async fn test_current_snapshot_is_not_migrated() {
+        let path = temp_data_file();
+        let pool_id = UserPoolId::new("us-east-1_NewPool1").unwrap();
+        let client_id = ClientId::generate();
+
+        let storage = Storage::with_config(StorageConfig::persistent(path.clone())).unwrap();
+        storage
+            .create_user_pool(UserPool::new_for_test(pool_id.clone()))
+            .await;
+        storage
+            .create_user_pool_client(UserPoolClient::new_for_test(
+                client_id.clone(),
+                pool_id.clone(),
+            ))
+            .await;
+        storage.flush_persistence().await.unwrap();
+
+        let loaded = Storage::with_config(StorageConfig::persistent(path.clone())).unwrap();
+        assert!(
+            loaded
+                .get_user_pool_client(&client_id)
+                .await
+                .unwrap()
+                .explicit_auth_flows
+                .is_empty()
+        );
+        assert!(
+            loaded
+                .get_user_pool(&pool_id)
+                .await
+                .unwrap()
+                .policies
+                .is_none()
+        );
+
+        let _ = fs::remove_file(path);
+    }
+
     #[test]
     fn test_legacy_bincode_snapshot_is_loaded() {
         let path = temp_data_file();
@@ -2183,6 +2437,7 @@ mod tests {
             version: LEGACY_SNAPSHOT_VERSION,
             encoding: LEGACY_SNAPSHOT_ENCODING.to_string(),
             payload: BASE64_STANDARD.encode(payload),
+            data_revision: 0,
         })
         .unwrap();
         fs::write(&path, snapshot).unwrap();

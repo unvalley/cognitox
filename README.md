@@ -198,6 +198,8 @@ cognitox aims to fail locally where Cognito would fail in AWS:
 - **Verification and recovery** -- a sign-up or resend code is issued only when the pool auto-verifies an attribute the user has, and confirming with it marks that attribute verified. `ForgotPassword` and `AdminResetUserPassword` need a verified email address or phone number, chosen by `AccountRecoverySetting`.
 - **Resource defaults and updates** -- a user pool or app client created with only a name reads back with Cognito's defaults (`DescribeUserPool` returns the default policies, `SchemaAttributes`, `Arn`, and so on). `UpdateUserPool` and `UpdateUserPoolClient` replace the configuration: a setting the request leaves out returns to its default, so send the full configuration as you would to Cognito. `ListUserPools` requires `MaxResults`.
 
+Data saved by an earlier version keeps working after an upgrade: when cognitox loads an older snapshot it writes down what that data used to get implicitly (every auth flow for an app client without `ExplicitAuthFlows`, a six-character password policy, verified email addresses, undeclared custom attributes). Only resources created from now on get Cognito's defaults.
+
 ## API Coverage
 
 cognitox routes all 119 cognito-idp operations, with **107 (90%) currently spec-aligned**. The remaining 12 have known partial functionality or limitations (see below).
