@@ -110,11 +110,16 @@ pub fn create_router(storage: Storage) -> Router {
         .route("/oauth2/authorize", get(oauth2::authorize))
         .route("/oauth2/token", post(oauth2::token))
         .route("/oauth2/userInfo", get(oauth2::userinfo))
+        .route("/oauth2/revoke", post(oauth2::revoke))
         .route("/logout", get(oauth2::logout))
         // Rust-based Hosted UI (fallback/simple mode)
         .route(
             "/login",
             get(hosted_ui::login_page).post(hosted_ui::login_submit),
+        )
+        .route(
+            "/new-password",
+            get(hosted_ui::new_password_page).post(hosted_ui::new_password_submit),
         )
         .route(
             "/signup",

@@ -1185,6 +1185,10 @@ pub struct AuthorizationCode {
     pub code_challenge: Option<String>,
     pub code_challenge_method: Option<String>,
     pub expires_at: DateTime<Utc>,
+    /// When the user authenticated; becomes `auth_time` of the tokens the
+    /// code is exchanged for.
+    #[serde(default)]
+    pub auth_time: Option<i64>,
 }
 
 /// Domain prefix for User Pool

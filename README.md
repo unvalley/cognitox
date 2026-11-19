@@ -74,25 +74,50 @@ client = boto3.client(
 
 ### Hosted UI
 
-cognitox includes a built-in Hosted UI for login and signup flows.
+cognitox serves the endpoints of a Cognito managed login domain: sign-in,
+sign-up, and password reset pages, plus the OAuth 2.0 / OpenID Connect
+endpoints behind them.
 
 ```
 // example
 http://localhost:9229/login?response_type=code&client_id=<client-id>&redirect_uri=http://localhost:3000/callback&scope=openid
 ```
 
-The `/oauth2/token` endpoint supports authorization code, refresh token, and
-client credentials grants. Confidential clients can authenticate with an
-`Authorization: Basic ...` header (`client_secret_basic`) or form fields
-(`client_secret_post`), as described in the [Cognito token endpoint documentation](https://docs.aws.amazon.com/cognito/latest/developerguide/token-endpoint.html).
-Public clients must send `client_id` in the form body and can use the
-authorization code and refresh token grants.
+The app client has to be set up as it would be in Cognito:
+`AllowedOAuthFlowsUserPoolClient`, the grant in `AllowedOAuthFlows`, the
+scopes in `AllowedOAuthScopes`, and the `redirect_uri` among its
+`CallbackURLs`. A request for an unregistered redirect URI is answered with
+`redirect_mismatch` and never redirected. Leaving `scope` out asks for every
+scope the client allows, and PKCE supports `S256` only.
 
-The `/oauth2/userInfo` endpoint requires an access token with the `openid`
-scope and rejects revoked tokens with HTTP 401. Disabling a user revokes their
-access and refresh tokens, which remain invalid after the account is re-enabled.
-User Pools API authentication and refresh requests grant the
-`aws.cognito.signin.user.admin` scope; use the OAuth endpoints for `openid` access.
+The pages apply the user pool's rules. Sign-up and password reset enforce the
+`PasswordPolicy` and use six-digit codes (logged at debug level), confirming
+an account marks its email address verified, and a user who signs in with a
+temporary password is sent to `/new-password` to choose a new one before the
+sign-in completes. MFA is not asked for on these pages.
+
+| Endpoint | Notes |
+|----------|-------|
+| `GET /oauth2/authorize` | Authorization code (`response_type=code`) and implicit (`token`) grants. Redirects with `302`. |
+| `POST /oauth2/token` | `authorization_code`, `refresh_token`, and `client_credentials` grants. Confidential clients authenticate with `Authorization: Basic ...` (`client_secret_basic`) or form fields (`client_secret_post`); public clients send `client_id` in the form body. |
+| `GET /oauth2/userInfo` | Needs an access token with the `openid` scope. Returns `sub`, `username`, and the attributes the token's scopes cover (`email`, `phone`, `profile`). |
+| `POST /oauth2/revoke` | Revokes a refresh token and the access and ID tokens of its sign-in. |
+| `GET /logout` | `client_id` with `logout_uri` (one of the client's `LogoutURLs`), or with `redirect_uri` and `response_type` to go back to the sign-in page. |
+| `GET /<user pool id>/.well-known/openid-configuration` | Discovery document; the signing keys are at `/<user pool id>/.well-known/jwks.json`. |
+
+Tokens from these endpoints carry the granted scopes, and the access and ID
+token of one sign-in share `origin_jti`, `event_id`, and `auth_time`; the ID
+token has `at_hash`. A refresh keeps the scopes of the original grant (a
+`scope` parameter can only narrow them) and returns no new refresh token
+unless the client has refresh token rotation enabled. Errors use the OAuth
+codes Cognito uses (`invalid_grant`, `invalid_client`, `invalid_request`,
+`unauthorized_client`, `unsupported_grant_type`, `invalid_scope`) with HTTP
+400; `/oauth2/userInfo` rejects revoked tokens with HTTP 401.
+
+Disabling a user revokes their access and refresh tokens, which remain invalid
+after the account is re-enabled. User Pools API authentication and refresh
+requests grant the `aws.cognito.signin.user.admin` scope; use the OAuth
+endpoints for `openid` access.
 
 ### Admin Console
 
