@@ -4,11 +4,11 @@
 
 use std::collections::HashMap;
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::{
-    action::io::parse_request,
+    action::io::{parse_request, to_response_value},
     error::{AppError, Result},
     storage::Storage,
     types::{ClientId, UserPoolId},
@@ -50,6 +50,21 @@ struct Request {
     analytics_metadata: Option<AnalyticsMetadata>,
     client_metadata: Option<HashMap<String, String>>,
     context_data: Option<ContextData>,
+    session: Option<String>,
+}
+
+/// What a step of a sign-in answers with: tokens once it is complete, or
+/// the next challenge. Members that do not apply are left out.
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+struct Response {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    authentication_result: Option<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    challenge_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    challenge_parameters: Option<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     session: Option<String>,
 }
 
@@ -99,13 +114,16 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
         client: &client,
         api: AuthApi::Admin,
     };
-    respond_to_auth_challenge(
+    let outcome = respond_to_auth_challenge(
         &ctx,
         &req.challenge_name,
         req.session.as_deref(),
         &req.challenge_responses.unwrap_or_default(),
     )
-    .await
+    .await?;
+    let response: Response = serde_json::from_value(outcome)
+        .map_err(|e| AppError::Internal(format!("Invalid response: {e}")))?;
+    to_response_value(response)
 }
 
 #[cfg(test)]
