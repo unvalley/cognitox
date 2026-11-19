@@ -5,7 +5,6 @@
 use chrono::Utc;
 use serde::Deserialize;
 use serde_json::{Value, json};
-use uuid::Uuid;
 
 use crate::{
     action::io::parse_request,
@@ -215,12 +214,10 @@ pub(crate) async fn create(
     let config = req.into_config();
 
     validate_client_name(&client_name)?;
-    let callback_urls = config.callback_urls.clone().unwrap_or_default();
-    let logout_urls = config.logout_urls.clone().unwrap_or_default();
     validate_user_pool_client_configuration(
         &config,
-        &callback_urls,
-        &logout_urls,
+        config.callback_urls.as_deref().unwrap_or_default(),
+        config.logout_urls.as_deref().unwrap_or_default(),
         config.default_redirect_uri.as_deref(),
         generate_secret,
     )?;
@@ -231,68 +228,108 @@ pub(crate) async fn create(
         .ok_or(AppError::UserPoolNotFound)?;
 
     let now = Utc::now();
-    let client_secret = if generate_secret {
-        Some(client_secret.unwrap_or_else(|| Uuid::new_v4().to_string()))
-    } else {
-        None
-    };
+    let client_secret =
+        generate_secret.then(|| client_secret.unwrap_or_else(generate_client_secret));
 
-    let client = UserPoolClient {
+    let mut client = UserPoolClient {
         client_id,
         user_pool_id,
         client_name,
-        client_secret: client_secret.clone(),
+        client_secret,
         creation_date: now,
         last_modified_date: now,
 
-        // OAuth configuration
-        allowed_oauth_flows: config.allowed_o_auth_flows.unwrap_or_default(),
-        allowed_oauth_scopes: config.allowed_o_auth_scopes.unwrap_or_default(),
-        allowed_oauth_flows_user_pool_client: config
-            .allowed_o_auth_flows_user_pool_client
-            .unwrap_or(false),
-        callback_urls,
-        logout_urls,
-        default_redirect_uri: config.default_redirect_uri,
-        supported_identity_providers: config.supported_identity_providers.unwrap_or_default(),
-        read_attributes: config.read_attributes.unwrap_or_default(),
-        write_attributes: config.write_attributes.unwrap_or_default(),
-        analytics_configuration: config.analytics_configuration,
-
-        // Auth flows
-        explicit_auth_flows: config
-            .explicit_auth_flows
-            .unwrap_or_else(default_explicit_auth_flows),
-        auth_session_validity: Some(
-            config
-                .auth_session_validity
-                .unwrap_or(DEFAULT_AUTH_SESSION_VALIDITY_MINUTES),
-        ),
-
-        // Token validity
-        access_token_validity: config.access_token_validity,
-        id_token_validity: config.id_token_validity,
-        refresh_token_validity: Some(
-            config
-                .refresh_token_validity
-                .unwrap_or(DEFAULT_REFRESH_TOKEN_VALIDITY_DAYS),
-        ),
-        token_validity_units: config.token_validity_units,
-        refresh_token_rotation: config.refresh_token_rotation,
-
-        // Security settings
-        enable_token_revocation: config.enable_token_revocation.unwrap_or(true),
-        prevent_user_existence_errors: config.prevent_user_existence_errors,
-        enable_propagate_additional_user_context_data: config
-            .enable_propagate_additional_user_context_data
-            .unwrap_or(false),
+        allowed_oauth_flows: Vec::new(),
+        allowed_oauth_scopes: Vec::new(),
+        allowed_oauth_flows_user_pool_client: false,
+        callback_urls: Vec::new(),
+        logout_urls: Vec::new(),
+        default_redirect_uri: None,
+        supported_identity_providers: Vec::new(),
+        read_attributes: Vec::new(),
+        write_attributes: Vec::new(),
+        analytics_configuration: None,
+        explicit_auth_flows: Vec::new(),
+        auth_session_validity: None,
+        access_token_validity: None,
+        id_token_validity: None,
+        refresh_token_validity: None,
+        token_validity_units: None,
+        refresh_token_rotation: None,
+        enable_token_revocation: true,
+        prevent_user_existence_errors: None,
+        enable_propagate_additional_user_context_data: false,
     };
+    apply_client_configuration(&mut client, config);
 
     let created = storage.create_user_pool_client(client).await;
 
     Ok(json!({
         "UserPoolClient": build_client_response(&created)
     }))
+}
+
+/// Set every configurable setting of an app client from a request.
+///
+/// A setting the request leaves out gets Cognito's default. CreateUserPoolClient
+/// and UpdateUserPoolClient share this: an update replaces the configuration
+/// rather than patching it.
+pub(crate) fn apply_client_configuration(
+    client: &mut UserPoolClient,
+    config: UserPoolClientConfigInput,
+) {
+    // OAuth configuration
+    client.allowed_oauth_flows = config.allowed_o_auth_flows.unwrap_or_default();
+    client.allowed_oauth_scopes = config.allowed_o_auth_scopes.unwrap_or_default();
+    client.allowed_oauth_flows_user_pool_client = config
+        .allowed_o_auth_flows_user_pool_client
+        .unwrap_or(false);
+    client.callback_urls = config.callback_urls.unwrap_or_default();
+    client.logout_urls = config.logout_urls.unwrap_or_default();
+    client.default_redirect_uri = config.default_redirect_uri;
+    client.supported_identity_providers = config.supported_identity_providers.unwrap_or_default();
+    client.read_attributes = config.read_attributes.unwrap_or_default();
+    client.write_attributes = config.write_attributes.unwrap_or_default();
+    client.analytics_configuration = config.analytics_configuration;
+
+    // Auth flows
+    client.explicit_auth_flows = config
+        .explicit_auth_flows
+        .unwrap_or_else(default_explicit_auth_flows);
+    client.auth_session_validity = Some(
+        config
+            .auth_session_validity
+            .unwrap_or(DEFAULT_AUTH_SESSION_VALIDITY_MINUTES),
+    );
+
+    // Token validity
+    client.access_token_validity = config.access_token_validity;
+    client.id_token_validity = config.id_token_validity;
+    client.refresh_token_validity = Some(
+        config
+            .refresh_token_validity
+            .unwrap_or(DEFAULT_REFRESH_TOKEN_VALIDITY_DAYS),
+    );
+    client.token_validity_units = config.token_validity_units;
+    client.refresh_token_rotation = config.refresh_token_rotation;
+
+    // Security settings
+    client.enable_token_revocation = config.enable_token_revocation.unwrap_or(true);
+    client.prevent_user_existence_errors = config.prevent_user_existence_errors;
+    client.enable_propagate_additional_user_context_data = config
+        .enable_propagate_additional_user_context_data
+        .unwrap_or(false);
+}
+
+/// A client secret shaped like Cognito's: 51 lowercase letters and digits.
+pub(crate) fn generate_client_secret() -> String {
+    use rand::Rng;
+
+    const CHARSET: &[u8] = b"0123456789abcdefghijklmnopqrstuvwxyz";
+    let mut rng = rand::thread_rng();
+    (0..51)
+        .map(|_| CHARSET[rng.gen_range(0..CHARSET.len())] as char)
+        .collect()
 }
 
 /// The flows an app client created without `ExplicitAuthFlows` supports.
@@ -362,13 +399,18 @@ pub fn build_client_response(client: &UserPoolClient) -> Value {
         response["AnalyticsConfiguration"] = json!(analytics_configuration);
     }
 
-    if !client.explicit_auth_flows.is_empty() {
-        response["ExplicitAuthFlows"] = json!(client.explicit_auth_flows);
-    }
-
-    if let Some(auth_session_validity) = client.auth_session_validity {
-        response["AuthSessionValidity"] = json!(auth_session_validity);
-    }
+    // A client stored before the emulator recorded these defaults behaves
+    // by them all the same, so it reads that way too.
+    response["ExplicitAuthFlows"] = if client.explicit_auth_flows.is_empty() {
+        json!(default_explicit_auth_flows())
+    } else {
+        json!(client.explicit_auth_flows)
+    };
+    response["AuthSessionValidity"] = json!(
+        client
+            .auth_session_validity
+            .unwrap_or(DEFAULT_AUTH_SESSION_VALIDITY_MINUTES)
+    );
 
     if let Some(validity) = client.access_token_validity {
         response["AccessTokenValidity"] = json!(validity);
@@ -378,9 +420,11 @@ pub fn build_client_response(client: &UserPoolClient) -> Value {
         response["IdTokenValidity"] = json!(validity);
     }
 
-    if let Some(validity) = client.refresh_token_validity {
-        response["RefreshTokenValidity"] = json!(validity);
-    }
+    response["RefreshTokenValidity"] = json!(
+        client
+            .refresh_token_validity
+            .unwrap_or(DEFAULT_REFRESH_TOKEN_VALIDITY_DAYS)
+    );
 
     // Cognito always returns the member, empty when no unit was chosen.
     response["TokenValidityUnits"] = json!({});
@@ -463,7 +507,79 @@ mod tests {
 
         assert!(result.is_ok());
         let body = result.unwrap();
-        assert!(body["UserPoolClient"]["ClientSecret"].as_str().is_some());
+        // Cognito's secrets are 51 lowercase letters and digits.
+        let secret = body["UserPoolClient"]["ClientSecret"].as_str().unwrap();
+        assert_eq!(secret.len(), 51);
+        assert!(
+            secret
+                .chars()
+                .all(|ch| ch.is_ascii_lowercase() || ch.is_ascii_digit())
+        );
+    }
+
+    #[tokio::test]
+    async fn test_create_user_pool_client_returns_cognitos_defaults() {
+        let storage = Storage::new();
+
+        let pool = create_user_pool::handler(&storage, json!({"PoolName": "test-pool"}))
+            .await
+            .unwrap();
+        let pool_id = pool["UserPool"]["Id"].as_str().unwrap();
+
+        let body = handler(
+            &storage,
+            json!({
+                "UserPoolId": pool_id,
+                "ClientName": "test-client"
+            }),
+        )
+        .await
+        .unwrap();
+
+        let mut client = body["UserPoolClient"].clone();
+        for generated in ["ClientId", "CreationDate", "LastModifiedDate"] {
+            assert!(client.as_object_mut().unwrap().remove(generated).is_some());
+        }
+        assert_eq!(
+            client,
+            json!({
+                "UserPoolId": pool_id,
+                "ClientName": "test-client",
+                "RefreshTokenValidity": 30,
+                "TokenValidityUnits": {},
+                "ExplicitAuthFlows": [
+                    "ALLOW_CUSTOM_AUTH",
+                    "ALLOW_USER_SRP_AUTH",
+                    "ALLOW_REFRESH_TOKEN_AUTH"
+                ],
+                "AllowedOAuthFlowsUserPoolClient": false,
+                "EnableTokenRevocation": true,
+                "EnablePropagateAdditionalUserContextData": false,
+                "AuthSessionValidity": 3
+            })
+        );
+    }
+
+    #[test]
+    fn test_client_from_an_older_snapshot_reads_with_the_defaults_it_behaves_by() {
+        // Stored before the emulator recorded the defaults: no explicit
+        // flows, no session or refresh token validity.
+        let client = UserPoolClient::new_for_test(
+            ClientId::generate(),
+            UserPoolId::new("us-east-1_Legacy").unwrap(),
+        );
+
+        let response = build_client_response(&client);
+        assert_eq!(
+            response["ExplicitAuthFlows"],
+            json!([
+                "ALLOW_CUSTOM_AUTH",
+                "ALLOW_USER_SRP_AUTH",
+                "ALLOW_REFRESH_TOKEN_AUTH"
+            ])
+        );
+        assert_eq!(response["AuthSessionValidity"], 3);
+        assert_eq!(response["RefreshTokenValidity"], 30);
     }
 
     #[tokio::test]
