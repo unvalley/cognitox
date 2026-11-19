@@ -42,13 +42,13 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
     set_user_password(&mut user, &req.password)?;
     user.last_modified_date = Utc::now();
 
-    if req.permanent {
-        if user.user_status == UserStatus::ForceChangePassword {
-            user.user_status = UserStatus::Confirmed;
-        }
+    // A permanent password leaves the user ready to sign in, whatever state
+    // the account was in; a temporary one has to be replaced at sign-in.
+    user.user_status = if req.permanent {
+        UserStatus::Confirmed
     } else {
-        user.user_status = UserStatus::ForceChangePassword;
-    }
+        UserStatus::ForceChangePassword
+    };
 
     storage.update_user(user).await;
 

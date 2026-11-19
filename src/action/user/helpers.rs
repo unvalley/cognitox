@@ -617,6 +617,8 @@ pub fn build_user_attributes(user: &User) -> Vec<Value> {
 
     attributes
         .into_iter()
+        // Emulator bookkeeping kept next to the real attributes.
+        .filter(|attribute| attribute.name != "preferred_mfa_setting")
         .map(|attribute| {
             json!({
                 "Name": attribute.name,

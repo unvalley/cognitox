@@ -34,19 +34,27 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
         .await
         .ok_or(AppError::UserNotFound)?;
     let user_mfa_setting_list = storage.list_user_auth_factors(&user.id).await;
-    let preferred_mfa_setting = preferred_mfa_setting(&user, &user_mfa_setting_list);
 
-    Ok(json!({
+    let mut response = json!({
         "Username": user.username,
         "Enabled": user.enabled,
         "UserStatus": user.user_status,
         "UserCreateDate": user.creation_date.timestamp(),
         "UserLastModifiedDate": user.last_modified_date.timestamp(),
-        "UserAttributes": build_user_attributes(&user),
-        "MFAOptions": build_mfa_options(&user, &user_mfa_setting_list),
-        "PreferredMfaSetting": preferred_mfa_setting,
-        "UserMFASettingList": user_mfa_setting_list
-    }))
+        "UserAttributes": build_user_attributes(&user)
+    });
+    // The MFA members are present only for users who have MFA factors.
+    let mfa_options = build_mfa_options(&user, &user_mfa_setting_list);
+    if !mfa_options.is_empty() {
+        response["MFAOptions"] = json!(mfa_options);
+    }
+    if !user_mfa_setting_list.is_empty() {
+        response["UserMFASettingList"] = json!(user_mfa_setting_list);
+        if let Some(preferred) = preferred_mfa_setting(&user, &[]) {
+            response["PreferredMfaSetting"] = json!(preferred);
+        }
+    }
+    Ok(response)
 }
 
 #[cfg(test)]
