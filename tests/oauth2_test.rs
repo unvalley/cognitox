@@ -3,11 +3,14 @@
 mod common;
 
 use axum::http::StatusCode;
-use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64_STANDARD};
+use base64::{
+    Engine as _,
+    engine::general_purpose::{STANDARD as BASE64_STANDARD, URL_SAFE_NO_PAD},
+};
 use cognitox::jwt::{verify_access_token, verify_id_token};
 use hmac::{Hmac, Mac};
 use serde_json::json;
-use sha2::Sha256;
+use sha2::{Digest, Sha256};
 
 use common::TestClient;
 
@@ -230,7 +233,7 @@ async fn test_authorization_code_flow() {
     let response = client.get(&auth_url).await;
 
     // Should redirect with code
-    assert_eq!(response.status(), StatusCode::TEMPORARY_REDIRECT);
+    assert_eq!(response.status(), StatusCode::FOUND);
 
     let location = response
         .headers()
@@ -297,7 +300,7 @@ async fn test_authorization_code_flow_returns_nonce_in_id_token() {
             urlencoding::encode(&password)
         ))
         .await;
-    assert_eq!(response.status(), StatusCode::TEMPORARY_REDIRECT);
+    assert_eq!(response.status(), StatusCode::FOUND);
     let location = response.headers()["location"].to_str().unwrap();
     let code = reqwest::Url::parse(location)
         .unwrap()
@@ -358,7 +361,7 @@ async fn test_implicit_flow_returns_nonce_in_id_token() {
             urlencoding::encode(&password)
         ))
         .await;
-    assert_eq!(response.status(), StatusCode::TEMPORARY_REDIRECT);
+    assert_eq!(response.status(), StatusCode::FOUND);
     let location = response.headers()["location"].to_str().unwrap();
     let fragment = reqwest::Url::parse(location)
         .unwrap()
@@ -416,7 +419,7 @@ async fn test_authorization_code_flow_accepts_email_alias_login() {
 
     let response = client.get(&auth_url).await;
 
-    assert_eq!(response.status(), StatusCode::TEMPORARY_REDIRECT);
+    assert_eq!(response.status(), StatusCode::FOUND);
     let location = response
         .headers()
         .get("location")
@@ -442,7 +445,7 @@ async fn test_authorization_redirect_encodes_state() {
     );
 
     let response = client.get(&auth_url).await;
-    assert_eq!(response.status(), StatusCode::TEMPORARY_REDIRECT);
+    assert_eq!(response.status(), StatusCode::FOUND);
 
     let location = response
         .headers()
@@ -489,7 +492,7 @@ async fn test_authorization_code_flow_with_pkce() {
     );
 
     let response = client.get(&auth_url).await;
-    assert_eq!(response.status(), StatusCode::TEMPORARY_REDIRECT);
+    assert_eq!(response.status(), StatusCode::FOUND);
 
     let location = response
         .headers()
@@ -883,7 +886,7 @@ async fn test_logout_redirects_to_allowed_logout_uri() {
         ))
         .await;
 
-    assert_eq!(response.status(), StatusCode::SEE_OTHER);
+    assert_eq!(response.status(), StatusCode::FOUND);
     assert_eq!(
         response.headers().get("location").unwrap(),
         "http://localhost:3000/"
@@ -1110,7 +1113,7 @@ async fn request_authorization_code(
             urlencoding::encode(password)
         ))
         .await;
-    assert_eq!(response.status(), StatusCode::TEMPORARY_REDIRECT);
+    assert_eq!(response.status(), StatusCode::FOUND);
     let location = response.headers()["location"].to_str().unwrap();
     reqwest::Url::parse(location)
         .unwrap()
@@ -1699,4 +1702,1079 @@ async fn test_disabling_user_permanently_revokes_existing_sessions() {
         .get_with_auth("/oauth2/userInfo", fresh["access_token"].as_str().unwrap())
         .await;
     assert_eq!(response.status(), StatusCode::OK);
+}
+
+// =============================================================================
+// Managed login parity
+// =============================================================================
+
+const CALLBACK: &str = "https://example.com/callback";
+
+fn jwt_claims(token: &serde_json::Value) -> serde_json::Value {
+    let payload = token.as_str().unwrap().split('.').nth(1).unwrap();
+    serde_json::from_slice(&URL_SAFE_NO_PAD.decode(payload).unwrap()).unwrap()
+}
+
+/// `at_hash` as OpenID Connect defines it, computed independently.
+fn at_hash(access_token: &serde_json::Value) -> String {
+    let digest = Sha256::digest(access_token.as_str().unwrap().as_bytes());
+    URL_SAFE_NO_PAD.encode(&digest[..16])
+}
+
+/// Sign `testuser` in at the authorize endpoint. `scope: None` leaves the
+/// parameter out.
+async fn authorize_code(client: &TestClient, client_id: &str, scope: Option<&str>) -> String {
+    let scope = scope
+        .map(|scope| format!("&scope={}", urlencoding::encode(scope)))
+        .unwrap_or_default();
+    let response = client
+        .get(&format!(
+            "/oauth2/authorize?response_type=code&client_id={client_id}&redirect_uri={CALLBACK}{scope}&username=testuser&password={}",
+            urlencoding::encode("Test123!")
+        ))
+        .await;
+    assert_eq!(response.status(), StatusCode::FOUND);
+    let location = response.headers()["location"].to_str().unwrap();
+    reqwest::Url::parse(location)
+        .unwrap()
+        .query_pairs()
+        .find(|(name, _)| name == "code")
+        .unwrap()
+        .1
+        .into_owned()
+}
+
+async fn exchange_code(client: &TestClient, client_id: &str, code: &str) -> serde_json::Value {
+    let response = client
+        .post_form(
+            "/oauth2/token",
+            &[
+                ("grant_type", "authorization_code"),
+                ("code", code),
+                ("client_id", client_id),
+                ("redirect_uri", CALLBACK),
+            ],
+        )
+        .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    response.json().await.unwrap()
+}
+
+async fn tokens_for_scope(client: &TestClient, client_id: &str, scope: &str) -> serde_json::Value {
+    let code = authorize_code(client, client_id, Some(scope)).await;
+    exchange_code(client, client_id, &code).await
+}
+
+async fn refresh(
+    client: &TestClient,
+    client_id: &str,
+    refresh_token: &serde_json::Value,
+    scope: Option<&str>,
+) -> common::TestResponse {
+    let mut form = vec![
+        ("grant_type", "refresh_token"),
+        ("client_id", client_id),
+        ("refresh_token", refresh_token.as_str().unwrap()),
+    ];
+    if let Some(scope) = scope {
+        form.push(("scope", scope));
+    }
+    client.post_form("/oauth2/token", &form).await
+}
+
+async fn expect_token_error(response: common::TestResponse, error: &str) {
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let body: serde_json::Value = response.json().await.unwrap();
+    assert_eq!(body["error"], error, "{body}");
+    assert!(body.get("access_token").is_none());
+}
+
+/// Another public OAuth client in the pool, with extra settings.
+async fn create_oauth_client(
+    client: &TestClient,
+    pool_id: &str,
+    settings: serde_json::Value,
+) -> serde_json::Value {
+    let mut request = json!({
+        "UserPoolId": pool_id,
+        "ClientName": "AnotherOAuthClient",
+        "AllowedOAuthFlows": ["code", "implicit"],
+        "AllowedOAuthScopes": ["openid", "email", "profile"],
+        "AllowedOAuthFlowsUserPoolClient": true,
+        "CallbackURLs": [CALLBACK],
+    });
+    request
+        .as_object_mut()
+        .unwrap()
+        .extend(settings.as_object().unwrap().clone());
+    let body = client
+        .cognito_request("CreateUserPoolClient", request)
+        .await;
+    body["UserPoolClient"].clone()
+}
+
+async fn userinfo(client: &TestClient, access_token: &serde_json::Value) -> serde_json::Value {
+    let response = client
+        .get_with_auth("/oauth2/userInfo", access_token.as_str().unwrap())
+        .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    response.json().await.unwrap()
+}
+
+#[tokio::test]
+async fn test_oauth_tokens_of_one_sign_in_share_a_session() {
+    let client = TestClient::new();
+    let (_, client_id, _, _) = setup_user_and_client(&client).await;
+
+    let tokens = tokens_for_scope(&client, &client_id, "openid email").await;
+    let access = jwt_claims(&tokens["access_token"]);
+    let id = jwt_claims(&tokens["id_token"]);
+
+    // Tokens from the OAuth 2.0 endpoints are version 2 and carry the
+    // granted scopes.
+    assert_eq!(access["version"], 2);
+    assert_eq!(access["scope"], "openid email");
+    assert_eq!(access["token_use"], "access");
+    for claim in ["origin_jti", "event_id", "auth_time"] {
+        assert!(!access[claim].is_null(), "access token lacks {claim}");
+        assert_eq!(access[claim], id[claim], "{claim} differs");
+    }
+    assert_ne!(access["jti"], id["jti"]);
+    assert_eq!(id["at_hash"], at_hash(&tokens["access_token"]));
+    assert_eq!(id["email"], "test@example.com");
+
+    // A refresh keeps the sign-in, its scopes, and the refresh token.
+    let response = refresh(&client, &client_id, &tokens["refresh_token"], None).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let refreshed: serde_json::Value = response.json().await.unwrap();
+    assert!(refreshed.get("refresh_token").is_none());
+    let refreshed_access = jwt_claims(&refreshed["access_token"]);
+    let refreshed_id = jwt_claims(&refreshed["id_token"]);
+    assert_eq!(refreshed_access["scope"], "openid email");
+    assert_eq!(refreshed_access["version"], 2);
+    assert_eq!(refreshed_access["origin_jti"], access["origin_jti"]);
+    assert_eq!(refreshed_access["auth_time"], access["auth_time"]);
+    assert_ne!(refreshed_access["jti"], access["jti"]);
+    assert_eq!(refreshed_id["origin_jti"], access["origin_jti"]);
+    assert_eq!(refreshed_id["at_hash"], at_hash(&refreshed["access_token"]));
+    // The nonce belongs to the authorization, not to later refreshes.
+    assert!(refreshed_id.get("nonce").is_none());
+}
+
+#[tokio::test]
+async fn test_authorization_time_becomes_auth_time() {
+    let client = TestClient::new();
+    let (_, client_id, _, _) = setup_user_and_client(&client).await;
+
+    // A code minted by a sign-in ten minutes ago.
+    let tokens = tokens_for_scope(&client, &client_id, "openid").await;
+    let user_id =
+        uuid::Uuid::parse_str(jwt_claims(&tokens["id_token"])["sub"].as_str().unwrap()).unwrap();
+    let signed_in_at = chrono::Utc::now().timestamp() - 600;
+    client
+        .storage()
+        .save_authorization_code(cognitox::types::AuthorizationCode {
+            code: "earlier-sign-in".to_string(),
+            user_id,
+            client_id: client_id.parse().unwrap(),
+            redirect_uri: CALLBACK.to_string(),
+            scope: vec!["openid".to_string()],
+            nonce: None,
+            code_challenge: None,
+            code_challenge_method: None,
+            expires_at: chrono::Utc::now() + chrono::Duration::minutes(1),
+            auth_time: Some(signed_in_at),
+        })
+        .await;
+
+    let tokens = exchange_code(&client, &client_id, "earlier-sign-in").await;
+    assert_eq!(
+        jwt_claims(&tokens["access_token"])["auth_time"],
+        signed_in_at
+    );
+    assert_eq!(jwt_claims(&tokens["id_token"])["auth_time"], signed_in_at);
+}
+
+#[tokio::test]
+async fn test_refresh_scope_can_narrow_but_not_widen() {
+    let client = TestClient::new();
+    let (_, client_id, _, _) = setup_user_and_client(&client).await;
+    let tokens = tokens_for_scope(&client, &client_id, "openid email").await;
+
+    let response = refresh(
+        &client,
+        &client_id,
+        &tokens["refresh_token"],
+        Some("openid"),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let narrowed: serde_json::Value = response.json().await.unwrap();
+    assert_eq!(jwt_claims(&narrowed["access_token"])["scope"], "openid");
+
+    // `profile` is allowed for the client but was not part of this grant.
+    let response = refresh(
+        &client,
+        &client_id,
+        &tokens["refresh_token"],
+        Some("openid profile"),
+    )
+    .await;
+    expect_token_error(response, "invalid_scope").await;
+
+    // Narrowing one refresh does not shrink the grant.
+    let response = refresh(&client, &client_id, &tokens["refresh_token"], None).await;
+    let full: serde_json::Value = response.json().await.unwrap();
+    assert_eq!(jwt_claims(&full["access_token"])["scope"], "openid email");
+}
+
+#[tokio::test]
+async fn test_token_endpoint_refreshes_a_user_pools_api_sign_in() {
+    let client = TestClient::new();
+    let (_, client_id, username, password) = setup_user_and_client(&client).await;
+    let auth = client
+        .cognito_request(
+            "InitiateAuth",
+            json!({
+                "ClientId": client_id,
+                "AuthFlow": "USER_PASSWORD_AUTH",
+                "AuthParameters": {"USERNAME": username, "PASSWORD": password}
+            }),
+        )
+        .await;
+    let api_tokens = &auth["AuthenticationResult"];
+
+    let response = refresh(&client, &client_id, &api_tokens["RefreshToken"], None).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let refreshed: serde_json::Value = response.json().await.unwrap();
+    let access = jwt_claims(&refreshed["access_token"]);
+    // The sign-in never had OAuth scopes, and a refresh does not add any.
+    assert_eq!(access["scope"], "aws.cognito.signin.user.admin");
+    assert_eq!(
+        access["origin_jti"],
+        jwt_claims(&api_tokens["AccessToken"])["origin_jti"]
+    );
+    assert!(refreshed["id_token"].is_string());
+}
+
+#[tokio::test]
+async fn test_refresh_token_rotation_replaces_the_refresh_token() {
+    let client = TestClient::new();
+    let (pool_id, _, _, _) = setup_user_and_client(&client).await;
+    let rotating = create_oauth_client(
+        &client,
+        &pool_id,
+        json!({"RefreshTokenRotation": {"Feature": "ENABLED", "RetryGracePeriodSeconds": 0}}),
+    )
+    .await;
+    let client_id = rotating["ClientId"].as_str().unwrap();
+    let tokens = tokens_for_scope(&client, client_id, "openid").await;
+
+    let response = refresh(&client, client_id, &tokens["refresh_token"], None).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let rotated: serde_json::Value = response.json().await.unwrap();
+    assert!(rotated["refresh_token"].is_string());
+    assert_ne!(rotated["refresh_token"], tokens["refresh_token"]);
+
+    // The presented token is spent; its replacement carries on.
+    tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+    let response = refresh(&client, client_id, &tokens["refresh_token"], None).await;
+    expect_token_error(response, "invalid_grant").await;
+    let response = refresh(&client, client_id, &rotated["refresh_token"], None).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let again: serde_json::Value = response.json().await.unwrap();
+    assert_eq!(
+        jwt_claims(&again["access_token"])["origin_jti"],
+        jwt_claims(&tokens["access_token"])["origin_jti"]
+    );
+}
+
+#[tokio::test]
+async fn test_read_attributes_limit_id_token_and_userinfo() {
+    let client = TestClient::new();
+    let (pool_id, open_client_id, _, _) = setup_user_and_client(&client).await;
+    client
+        .cognito_request(
+            "AdminUpdateUserAttributes",
+            json!({
+                "UserPoolId": pool_id,
+                "Username": "testuser",
+                "UserAttributes": [{"Name": "name", "Value": "Test User"}]
+            }),
+        )
+        .await;
+    let restricted = create_oauth_client(
+        &client,
+        &pool_id,
+        json!({"ReadAttributes": ["email", "email_verified"]}),
+    )
+    .await;
+    let restricted_id = restricted["ClientId"].as_str().unwrap();
+
+    let tokens = tokens_for_scope(&client, restricted_id, "openid email profile").await;
+    let id = jwt_claims(&tokens["id_token"]);
+    assert_eq!(id["email"], "test@example.com");
+    assert!(id.get("name").is_none());
+    let info = userinfo(&client, &tokens["access_token"]).await;
+    assert_eq!(info["email"], "test@example.com");
+    assert!(info.get("name").is_none());
+
+    // A client without ReadAttributes reads everything.
+    let tokens = tokens_for_scope(&client, &open_client_id, "openid email profile").await;
+    assert_eq!(jwt_claims(&tokens["id_token"])["name"], "Test User");
+    assert_eq!(
+        userinfo(&client, &tokens["access_token"]).await["name"],
+        "Test User"
+    );
+}
+
+#[tokio::test]
+async fn test_token_endpoint_reports_grant_failures_as_invalid_grant() {
+    let client = TestClient::new();
+    let (pool_id, client_id, _, _) = setup_user_and_client(&client).await;
+    // A code works once.
+    let code = authorize_code(&client, &client_id, Some("openid")).await;
+    let tokens = exchange_code(&client, &client_id, &code).await;
+    let replay = client
+        .post_form(
+            "/oauth2/token",
+            &[
+                ("grant_type", "authorization_code"),
+                ("code", &code),
+                ("client_id", &client_id),
+                ("redirect_uri", CALLBACK),
+            ],
+        )
+        .await;
+    expect_token_error(replay, "invalid_grant").await;
+
+    // It is bound to the redirect URI of its authorization...
+    let code = authorize_code(&client, &client_id, Some("openid")).await;
+    let response = client
+        .post_form(
+            "/oauth2/token",
+            &[
+                ("grant_type", "authorization_code"),
+                ("code", &code),
+                ("client_id", &client_id),
+                ("redirect_uri", "https://example.com/other"),
+            ],
+        )
+        .await;
+    expect_token_error(response, "invalid_grant").await;
+
+    // ...and to the client it was issued to.
+    let other = create_oauth_client(&client, &pool_id, json!({})).await;
+    let code = authorize_code(&client, &client_id, Some("openid")).await;
+    let response = client
+        .post_form(
+            "/oauth2/token",
+            &[
+                ("grant_type", "authorization_code"),
+                ("code", &code),
+                ("client_id", other["ClientId"].as_str().unwrap()),
+                ("redirect_uri", CALLBACK),
+            ],
+        )
+        .await;
+    expect_token_error(response, "invalid_grant").await;
+
+    // An expired code, and an expired refresh token.
+    let user_id =
+        uuid::Uuid::parse_str(jwt_claims(&tokens["id_token"])["sub"].as_str().unwrap()).unwrap();
+    let expired = chrono::Utc::now() - chrono::Duration::seconds(1);
+    client
+        .storage()
+        .save_authorization_code(cognitox::types::AuthorizationCode {
+            code: "expired-code".to_string(),
+            user_id,
+            client_id: client_id.parse().unwrap(),
+            redirect_uri: CALLBACK.to_string(),
+            scope: vec!["openid".to_string()],
+            nonce: None,
+            code_challenge: None,
+            code_challenge_method: None,
+            expires_at: expired,
+            auth_time: None,
+        })
+        .await;
+    let response = client
+        .post_form(
+            "/oauth2/token",
+            &[
+                ("grant_type", "authorization_code"),
+                ("code", "expired-code"),
+                ("client_id", &client_id),
+                ("redirect_uri", CALLBACK),
+            ],
+        )
+        .await;
+    expect_token_error(response, "invalid_grant").await;
+
+    client
+        .storage()
+        .save_refresh_token(cognitox::types::RefreshToken {
+            token: "expired-refresh-token".to_string(),
+            user_id,
+            client_id: client_id.parse().unwrap(),
+            expires_at: expired,
+            origin_jti: None,
+            auth_time: None,
+            scope: vec!["openid".to_string()],
+        })
+        .await;
+    let response = refresh(&client, &client_id, &json!("expired-refresh-token"), None).await;
+    expect_token_error(response, "invalid_grant").await;
+
+    // A revoked refresh token.
+    client
+        .cognito_request(
+            "RevokeToken",
+            json!({"ClientId": client_id, "Token": tokens["refresh_token"]}),
+        )
+        .await;
+    let response = refresh(&client, &client_id, &tokens["refresh_token"], None).await;
+    expect_token_error(response, "invalid_grant").await;
+}
+
+#[tokio::test]
+async fn test_pkce_verifier_mismatch_is_invalid_grant() {
+    let client = TestClient::new();
+    let (_, client_id, username, password) = setup_user_and_client(&client).await;
+    let code_challenge = "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM";
+
+    let response = client
+        .get(&format!(
+            "/oauth2/authorize?response_type=code&client_id={client_id}&redirect_uri={CALLBACK}&scope=openid&code_challenge={code_challenge}&code_challenge_method=S256&username={username}&password={}",
+            urlencoding::encode(&password)
+        ))
+        .await;
+    let location = response.headers()["location"].to_str().unwrap();
+    let code = location.split("code=").nth(1).unwrap();
+
+    let response = client
+        .post_form(
+            "/oauth2/token",
+            &[
+                ("grant_type", "authorization_code"),
+                ("code", code),
+                ("client_id", &client_id),
+                ("redirect_uri", CALLBACK),
+                (
+                    "code_verifier",
+                    "not-the-verifier-the-challenge-was-made-from",
+                ),
+            ],
+        )
+        .await;
+    expect_token_error(response, "invalid_grant").await;
+
+    // Cognito supports S256 only.
+    let response = client
+        .get(&format!(
+            "/oauth2/authorize?response_type=code&client_id={client_id}&redirect_uri={CALLBACK}&scope=openid&code_challenge={code_challenge}&code_challenge_method=plain"
+        ))
+        .await;
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let body: serde_json::Value = response.json().await.unwrap();
+    assert_eq!(body["error"], "invalid_request");
+}
+
+#[tokio::test]
+async fn test_token_endpoint_rejects_missing_and_unknown_grant_types() {
+    let client = TestClient::new();
+    let (_, client_id, _, _) = setup_user_and_client(&client).await;
+
+    let response = client
+        .post_form("/oauth2/token", &[("client_id", &client_id)])
+        .await;
+    expect_token_error(response, "invalid_request").await;
+
+    let response = client
+        .post_form(
+            "/oauth2/token",
+            &[("grant_type", "password"), ("client_id", &client_id)],
+        )
+        .await;
+    expect_token_error(response, "unsupported_grant_type").await;
+}
+
+#[tokio::test]
+async fn test_authorize_never_redirects_to_an_unregistered_uri() {
+    let client = TestClient::new();
+    let (pool_id, client_id, username, password) = setup_user_and_client(&client).await;
+    let credentials = format!(
+        "username={username}&password={}",
+        urlencoding::encode(&password)
+    );
+
+    // Even with valid credentials, an unregistered URI gets nothing.
+    let response = client
+        .get(&format!(
+            "/oauth2/authorize?response_type=code&client_id={client_id}&redirect_uri=https://attacker.example/cb&scope=openid&{credentials}"
+        ))
+        .await;
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    assert!(response.headers().get("location").is_none());
+    let body: serde_json::Value = response.json().await.unwrap();
+    assert_eq!(body["error"], "redirect_mismatch");
+
+    // An unknown client is not redirected either.
+    let response = client
+        .get(&format!(
+            "/oauth2/authorize?response_type=code&client_id=unknownclient&redirect_uri={CALLBACK}&scope=openid&{credentials}"
+        ))
+        .await;
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    assert!(response.headers().get("location").is_none());
+
+    // A client that registered no callback URL has none to redirect to.
+    let body = client
+        .cognito_request(
+            "CreateUserPoolClient",
+            json!({
+                "UserPoolId": pool_id,
+                "ClientName": "NoCallbacks",
+                "AllowedOAuthFlows": ["code"],
+                "AllowedOAuthScopes": ["openid"],
+                "AllowedOAuthFlowsUserPoolClient": true
+            }),
+        )
+        .await;
+    let response = client
+        .get(&format!(
+            "/oauth2/authorize?response_type=code&client_id={}&redirect_uri={CALLBACK}&scope=openid&{credentials}",
+            body["UserPoolClient"]["ClientId"].as_str().unwrap()
+        ))
+        .await;
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    assert!(response.headers().get("location").is_none());
+    let body: serde_json::Value = response.json().await.unwrap();
+    assert_eq!(body["error"], "redirect_mismatch");
+}
+
+#[tokio::test]
+async fn test_authorize_without_scope_grants_every_client_scope() {
+    let client = TestClient::new();
+    let (_, client_id, _, _) = setup_user_and_client(&client).await;
+
+    let code = authorize_code(&client, &client_id, None).await;
+    let tokens = exchange_code(&client, &client_id, &code).await;
+    assert_eq!(
+        jwt_claims(&tokens["access_token"])["scope"],
+        "openid email profile"
+    );
+    assert!(tokens["id_token"].is_string());
+}
+
+/// The reason the authorize endpoint gives for refusing a sign-in.
+async fn authorize_denial(
+    client: &TestClient,
+    client_id: &str,
+    username: &str,
+    password: &str,
+) -> String {
+    let response = client
+        .get(&format!(
+            "/oauth2/authorize?response_type=code&client_id={client_id}&redirect_uri={CALLBACK}&scope=openid&username={username}&password={}",
+            urlencoding::encode(password)
+        ))
+        .await;
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    assert!(response.headers().get("location").is_none());
+    let body: serde_json::Value = response.json().await.unwrap();
+    assert_eq!(body["error"], "access_denied");
+    body["error_description"].as_str().unwrap().to_string()
+}
+
+#[tokio::test]
+async fn test_authorize_refuses_accounts_that_cannot_sign_in() {
+    let client = TestClient::new();
+    let (pool_id, client_id, _, _) = setup_user_and_client(&client).await;
+    let authorize = |username, password| authorize_denial(&client, &client_id, username, password);
+
+    assert_eq!(
+        authorize("testuser", "Wrong123!").await,
+        "Incorrect username or password."
+    );
+    assert_eq!(
+        authorize("nobody", "Test123!").await,
+        "Incorrect username or password."
+    );
+
+    // An unconfirmed account, with the wrong and with the right password.
+    client
+        .cognito_request(
+            "SignUp",
+            json!({"ClientId": client_id, "Username": "pending", "Password": "Test123!"}),
+        )
+        .await;
+    assert_eq!(
+        authorize("pending", "Wrong123!").await,
+        "Incorrect username or password."
+    );
+    assert_eq!(
+        authorize("pending", "Test123!").await,
+        "User is not confirmed."
+    );
+
+    client
+        .cognito_request(
+            "AdminDisableUser",
+            json!({"UserPoolId": pool_id, "Username": "testuser"}),
+        )
+        .await;
+    assert_eq!(authorize("testuser", "Test123!").await, "User is disabled.");
+}
+
+#[tokio::test]
+async fn test_implicit_flow_returns_tokens_of_one_session_in_the_fragment() {
+    let client = TestClient::new();
+    let (_, client_id, username, password) = setup_user_and_client(&client).await;
+
+    let response = client
+        .get(&format!(
+            "/oauth2/authorize?response_type=token&client_id={client_id}&redirect_uri={CALLBACK}&scope=openid%20email&state=xyz&username={username}&password={}",
+            urlencoding::encode(&password)
+        ))
+        .await;
+    assert_eq!(response.status(), StatusCode::FOUND);
+    let location = response.headers()["location"].to_str().unwrap();
+    let url = reqwest::Url::parse(location).unwrap();
+    assert!(url.query().is_none());
+    let fragment: std::collections::HashMap<String, String> =
+        reqwest::Url::parse(&format!("https://example.com/?{}", url.fragment().unwrap()))
+            .unwrap()
+            .query_pairs()
+            .into_owned()
+            .collect();
+
+    assert_eq!(fragment["token_type"], "Bearer");
+    assert_eq!(fragment["expires_in"], "3600");
+    assert_eq!(fragment["state"], "xyz");
+    // The implicit grant never hands out a refresh token.
+    assert!(!fragment.contains_key("refresh_token"));
+    let access = jwt_claims(&json!(fragment["access_token"]));
+    let id = jwt_claims(&json!(fragment["id_token"]));
+    assert_eq!(access["version"], 2);
+    assert_eq!(access["origin_jti"], id["origin_jti"]);
+    assert_eq!(id["at_hash"], at_hash(&json!(fragment["access_token"])));
+}
+
+#[tokio::test]
+async fn test_openid_configuration_lists_cognitos_members() {
+    let client = TestClient::new();
+    let (pool_id, client_id, username, password) = setup_user_and_client(&client).await;
+
+    let response = client
+        .get(&format!("/{pool_id}/.well-known/openid-configuration"))
+        .await;
+    let discovery: serde_json::Value = response.json().await.unwrap();
+    let issuer = discovery["issuer"].as_str().unwrap();
+    let base = issuer.strip_suffix(&format!("/{pool_id}")).unwrap();
+
+    assert_eq!(
+        discovery,
+        json!({
+            "authorization_endpoint": format!("{base}/oauth2/authorize"),
+            "end_session_endpoint": format!("{base}/logout"),
+            "id_token_signing_alg_values_supported": ["RS256"],
+            "issuer": issuer,
+            "jwks_uri": format!("{issuer}/.well-known/jwks.json"),
+            "response_types_supported": ["code", "token"],
+            "revocation_endpoint": format!("{base}/oauth2/revoke"),
+            "scopes_supported": ["openid", "email", "phone", "profile"],
+            "subject_types_supported": ["public"],
+            "token_endpoint": format!("{base}/oauth2/token"),
+            "token_endpoint_auth_methods_supported": ["client_secret_basic", "client_secret_post"],
+            "userinfo_endpoint": format!("{base}/oauth2/userInfo")
+        })
+    );
+
+    // The key the tokens are signed with is the one the issuer publishes.
+    let jwks: serde_json::Value = client
+        .get(&format!("/{pool_id}/.well-known/jwks.json"))
+        .await
+        .json()
+        .await
+        .unwrap();
+    let tokens = oauth_tokens(&client, &client_id, &username, &password).await;
+    let header = tokens["id_token"]
+        .as_str()
+        .unwrap()
+        .split('.')
+        .next()
+        .unwrap();
+    let header: serde_json::Value =
+        serde_json::from_slice(&URL_SAFE_NO_PAD.decode(header).unwrap()).unwrap();
+    assert_eq!(header["kid"], jwks["keys"][0]["kid"]);
+    assert_eq!(jwt_claims(&tokens["id_token"])["iss"], issuer);
+}
+
+#[tokio::test]
+async fn test_userinfo_returns_the_attributes_the_scopes_cover() {
+    let client = TestClient::new();
+    let (pool_id, _, _, _) = setup_user_and_client(&client).await;
+    let all_scopes = create_oauth_client(
+        &client,
+        &pool_id,
+        json!({"AllowedOAuthScopes": ["openid", "email", "phone", "profile"]}),
+    )
+    .await;
+    let client_id = all_scopes["ClientId"].as_str().unwrap();
+    client
+        .cognito_request(
+            "AdminUpdateUserAttributes",
+            json!({
+                "UserPoolId": pool_id,
+                "Username": "testuser",
+                "UserAttributes": [
+                    {"Name": "name", "Value": "Test User"},
+                    {"Name": "phone_number", "Value": "+15555550100"},
+                    {"Name": "phone_number_verified", "Value": "true"}
+                ]
+            }),
+        )
+        .await;
+    let sub =
+        jwt_claims(&tokens_for_scope(&client, client_id, "openid").await["access_token"])["sub"]
+            .clone();
+
+    // `openid` alone identifies the user and nothing more.
+    let tokens = tokens_for_scope(&client, client_id, "openid").await;
+    assert_eq!(
+        userinfo(&client, &tokens["access_token"]).await,
+        json!({"sub": sub, "username": "testuser"})
+    );
+
+    // The address was never verified, and userInfo says so, as a string.
+    let tokens = tokens_for_scope(&client, client_id, "openid email").await;
+    assert_eq!(
+        userinfo(&client, &tokens["access_token"]).await,
+        json!({
+            "sub": sub,
+            "username": "testuser",
+            "email": "test@example.com",
+            "email_verified": "false"
+        })
+    );
+
+    let tokens = tokens_for_scope(&client, client_id, "openid phone").await;
+    assert_eq!(
+        userinfo(&client, &tokens["access_token"]).await,
+        json!({
+            "sub": sub,
+            "username": "testuser",
+            "phone_number": "+15555550100",
+            "phone_number_verified": "true"
+        })
+    );
+
+    let tokens = tokens_for_scope(&client, client_id, "openid profile").await;
+    assert_eq!(
+        userinfo(&client, &tokens["access_token"]).await,
+        json!({"sub": sub, "username": "testuser", "name": "Test User"})
+    );
+
+    client
+        .cognito_request(
+            "AdminUpdateUserAttributes",
+            json!({
+                "UserPoolId": pool_id,
+                "Username": "testuser",
+                "UserAttributes": [{"Name": "email_verified", "Value": "true"}]
+            }),
+        )
+        .await;
+    let tokens = tokens_for_scope(&client, client_id, "openid email phone profile").await;
+    let info = userinfo(&client, &tokens["access_token"]).await;
+    assert_eq!(info["email_verified"], "true");
+    assert_eq!(info["name"], "Test User");
+    assert_eq!(info["phone_number"], "+15555550100");
+    assert!(info.get("cognito:groups").is_none());
+}
+
+async fn revoke_token(
+    client: &TestClient,
+    token: &serde_json::Value,
+    client_id: &str,
+) -> common::TestResponse {
+    client
+        .post_form(
+            "/oauth2/revoke",
+            &[("token", token.as_str().unwrap()), ("client_id", client_id)],
+        )
+        .await
+}
+
+#[tokio::test]
+async fn test_revoke_ends_the_sign_in_of_a_refresh_token() {
+    let client = TestClient::new();
+    let (pool_id, client_id, username, password) = setup_user_and_client(&client).await;
+    let first = oauth_tokens(&client, &client_id, &username, &password).await;
+    let second = oauth_tokens(&client, &client_id, &username, &password).await;
+
+    let response = revoke_token(&client, &first["refresh_token"], &client_id).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert!(response.body_string().is_empty());
+
+    // The refresh token and the access token of that sign-in are dead...
+    let response = refresh(&client, &client_id, &first["refresh_token"], None).await;
+    expect_token_error(response, "invalid_grant").await;
+    assert_userinfo_invalid_token(&client, first["access_token"].as_str().unwrap()).await;
+    // ...the user's other sign-in is not.
+    userinfo(&client, &second["access_token"]).await;
+    let response = refresh(&client, &client_id, &second["refresh_token"], None).await;
+    assert_eq!(response.status(), StatusCode::OK);
+
+    // Revoking again, or revoking a token that never existed, is a success.
+    let response = revoke_token(&client, &first["refresh_token"], &client_id).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let response = revoke_token(&client, &json!("never-issued"), &client_id).await;
+    assert_eq!(response.status(), StatusCode::OK);
+
+    // Another client cannot revoke the token.
+    let other = create_oauth_client(&client, &pool_id, json!({})).await;
+    let response = revoke_token(
+        &client,
+        &second["refresh_token"],
+        other["ClientId"].as_str().unwrap(),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let response = refresh(&client, &client_id, &second["refresh_token"], None).await;
+    assert_eq!(response.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn test_revoke_rejects_what_it_cannot_revoke() {
+    let client = TestClient::new();
+    let (pool_id, client_id, username, password) = setup_user_and_client(&client).await;
+    let tokens = oauth_tokens(&client, &client_id, &username, &password).await;
+    let error_of = |response: common::TestResponse| async move {
+        let status = response.status();
+        let body: serde_json::Value = response.json().await.unwrap();
+        (status, body["error"].as_str().unwrap().to_string())
+    };
+
+    // Only refresh tokens can be revoked.
+    for token in ["access_token", "id_token"] {
+        let response = client
+            .post_form(
+                "/oauth2/revoke",
+                &[
+                    ("token", tokens[token].as_str().unwrap()),
+                    ("client_id", &client_id),
+                ],
+            )
+            .await;
+        assert_eq!(
+            error_of(response).await,
+            (
+                StatusCode::BAD_REQUEST,
+                "unsupported_token_type".to_string()
+            )
+        );
+    }
+
+    let response = client
+        .post_form("/oauth2/revoke", &[("client_id", &client_id)])
+        .await;
+    assert_eq!(
+        error_of(response).await,
+        (StatusCode::BAD_REQUEST, "invalid_request".to_string())
+    );
+
+    // A client with token revocation turned off.
+    let no_revocation =
+        create_oauth_client(&client, &pool_id, json!({"EnableTokenRevocation": false})).await;
+    let no_revocation_id = no_revocation["ClientId"].as_str().unwrap();
+    let its_tokens = oauth_tokens(&client, no_revocation_id, &username, &password).await;
+    let response = client
+        .post_form(
+            "/oauth2/revoke",
+            &[
+                ("token", its_tokens["refresh_token"].as_str().unwrap()),
+                ("client_id", no_revocation_id),
+            ],
+        )
+        .await;
+    assert_eq!(
+        error_of(response).await,
+        (StatusCode::BAD_REQUEST, "invalid_request".to_string())
+    );
+
+    // Bad client credentials are a 401 here.
+    let confidential =
+        create_oauth_client(&client, &pool_id, json!({"GenerateSecret": true})).await;
+    let confidential_id = confidential["ClientId"].as_str().unwrap();
+    let response = client
+        .post_form_with_headers(
+            "/oauth2/revoke",
+            &[("token", "anything")],
+            &[(
+                "authorization",
+                &basic_auth(confidential_id, "wrong-secret"),
+            )],
+        )
+        .await;
+    assert_eq!(
+        error_of(response).await,
+        (StatusCode::UNAUTHORIZED, "invalid_client".to_string())
+    );
+    let response = client
+        .post_form_with_headers(
+            "/oauth2/revoke",
+            &[("token", "anything")],
+            &[(
+                "authorization",
+                &basic_auth(
+                    confidential_id,
+                    confidential["ClientSecret"].as_str().unwrap(),
+                ),
+            )],
+        )
+        .await;
+    assert_eq!(response.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn test_logout_with_redirect_uri_restarts_sign_in() {
+    let client = TestClient::new();
+    let (pool_id, client_id, _, _) = setup_user_and_client(&client).await;
+
+    let response = client
+        .get(&format!(
+            "/logout?client_id={client_id}&redirect_uri={}&response_type=code&scope=openid&state=abc",
+            urlencoding::encode(CALLBACK)
+        ))
+        .await;
+    assert_eq!(response.status(), StatusCode::FOUND);
+    let location = response.headers()["location"].to_str().unwrap();
+    assert!(location.starts_with("/login?"));
+    let query: std::collections::HashMap<String, String> =
+        reqwest::Url::parse(&format!("https://example.com{location}"))
+            .unwrap()
+            .query_pairs()
+            .into_owned()
+            .collect();
+    assert_eq!(query["client_id"], client_id);
+    assert_eq!(query["redirect_uri"], CALLBACK);
+    assert_eq!(query["response_type"], "code");
+    assert_eq!(query["scope"], "openid");
+    assert_eq!(query["state"], "abc");
+    // The page it points to exists.
+    assert_eq!(client.get(location).await.status(), StatusCode::OK);
+
+    let error_of = |response: common::TestResponse| async move {
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        assert!(response.headers().get("location").is_none());
+        let body: serde_json::Value = response.json().await.unwrap();
+        body["error"].as_str().unwrap().to_string()
+    };
+
+    // The redirect URI has to be one of the client's callback URLs.
+    let response = client
+        .get(&format!(
+            "/logout?client_id={client_id}&redirect_uri={}&response_type=code",
+            urlencoding::encode("https://attacker.example/cb")
+        ))
+        .await;
+    assert_eq!(error_of(response).await, "redirect_mismatch");
+
+    // Neither form of the request.
+    let response = client.get(&format!("/logout?client_id={client_id}")).await;
+    assert_eq!(error_of(response).await, "invalid_request");
+    let response = client
+        .get(&format!(
+            "/logout?client_id={client_id}&redirect_uri={}",
+            urlencoding::encode(CALLBACK)
+        ))
+        .await;
+    assert_eq!(error_of(response).await, "invalid_request");
+    let response = client.get("/logout?logout_uri=https://example.com/").await;
+    assert_eq!(error_of(response).await, "invalid_request");
+
+    // A client that registered no sign-out URL has none to return to.
+    let response = client
+        .get(&format!(
+            "/logout?client_id={client_id}&logout_uri={}",
+            urlencoding::encode("https://example.com/signed-out")
+        ))
+        .await;
+    assert_eq!(error_of(response).await, "invalid_request");
+
+    // The other pool client is unaffected by this one's settings.
+    let with_logout = create_oauth_client(
+        &client,
+        &pool_id,
+        json!({"LogoutURLs": ["https://example.com/signed-out"]}),
+    )
+    .await;
+    let response = client
+        .get(&format!(
+            "/logout?client_id={}&logout_uri={}",
+            with_logout["ClientId"].as_str().unwrap(),
+            urlencoding::encode("https://example.com/signed-out")
+        ))
+        .await;
+    assert_eq!(response.status(), StatusCode::FOUND);
+    assert_eq!(
+        response.headers()["location"],
+        "https://example.com/signed-out"
+    );
+}
+
+#[tokio::test]
+async fn test_client_credentials_without_scope_grants_every_client_scope() {
+    let client = TestClient::new();
+    let (_, pool_body) = client
+        .request("CreateUserPool", json!({ "PoolName": "MachinePool" }))
+        .await;
+    let pool_id = pool_body["UserPool"]["Id"].as_str().unwrap();
+    let machine = client
+        .cognito_request(
+            "CreateUserPoolClient",
+            json!({
+                "UserPoolId": pool_id,
+                "ClientName": "MachineClient",
+                "GenerateSecret": true,
+                "AllowedOAuthFlows": ["client_credentials"],
+                "AllowedOAuthScopes": ["api/read", "api/write"],
+                "AllowedOAuthFlowsUserPoolClient": true
+            }),
+        )
+        .await;
+    let client_id = machine["UserPoolClient"]["ClientId"].as_str().unwrap();
+    let client_secret = machine["UserPoolClient"]["ClientSecret"].as_str().unwrap();
+
+    let response = client
+        .post_form_with_headers(
+            "/oauth2/token",
+            &[("grant_type", "client_credentials")],
+            &[("authorization", &basic_auth(client_id, client_secret))],
+        )
+        .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body: serde_json::Value = response.json().await.unwrap();
+    assert!(body.get("refresh_token").is_none());
+    assert!(body.get("id_token").is_none());
+
+    let claims = jwt_claims(&body["access_token"]);
+    assert_eq!(claims["scope"], "api/read api/write");
+    assert_eq!(claims["sub"], client_id);
+    assert_eq!(claims["client_id"], client_id);
+    assert_eq!(claims["version"], 2);
+    assert_eq!(claims["token_use"], "access");
+    // No user stands behind the token.
+    assert!(claims.get("username").is_none());
+
+    let response = client
+        .post_form_with_headers(
+            "/oauth2/token",
+            &[("grant_type", "client_credentials"), ("scope", "api/admin")],
+            &[("authorization", &basic_auth(client_id, client_secret))],
+        )
+        .await;
+    expect_token_error(response, "invalid_scope").await;
 }
