@@ -82,7 +82,8 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
         ));
     }
 
-    let code_delivery_details = recovery_delivery(&pool, &user, true)?;
+    let mfa_factors = storage.list_user_auth_factors(&user.id).await;
+    let code_delivery_details = recovery_delivery(&pool, &user, &mfa_factors, true)?;
 
     let code = generate_confirmation_code();
     let reset_code = PasswordResetCode {

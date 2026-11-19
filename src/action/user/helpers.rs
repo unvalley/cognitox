@@ -380,13 +380,25 @@ pub fn confirmation_delivery(pool: &UserPool, user: &User) -> Option<Value> {
 ///
 /// Cognito only delivers to a verified email address or phone number, in the
 /// order of the user pool's `AccountRecoverySetting` (the phone number first
-/// when the pool has none). `honor_admin_only` is false for the admin reset,
-/// which works even when users may not recover their own accounts.
+/// when the pool has none). With that setting, a contact the user also
+/// receives MFA codes on (`mfa_factors`) does not qualify: recovering an
+/// account must not need only what the second factor already depends on.
+/// `honor_admin_only` is false for the admin reset, which works even when
+/// users may not recover their own accounts.
 pub fn recovery_delivery(
     pool: &UserPool,
     user: &User,
+    mfa_factors: &[String],
     honor_admin_only: bool,
 ) -> crate::error::Result<Value> {
+    let has_setting = pool
+        .account_recovery_setting
+        .as_ref()
+        .and_then(|setting| setting.recovery_mechanisms.as_ref())
+        .is_some_and(|mechanisms| !mechanisms.is_empty());
+    let used_for_mfa =
+        |factor: &str| has_setting && mfa_factors.iter().any(|enabled| enabled == factor);
+
     let mut mechanisms: Vec<(i32, RecoveryMechanismName)> = pool
         .account_recovery_setting
         .as_ref()
@@ -423,11 +435,13 @@ pub fn recovery_delivery(
 
     for (_, name) in mechanisms {
         let details = match name {
-            RecoveryMechanismName::VerifiedEmail if user.attribute_verified("email") => {
+            RecoveryMechanismName::VerifiedEmail
+                if user.attribute_verified("email") && !used_for_mfa(EMAIL_OTP_FACTOR) =>
+            {
                 build_code_delivery_details(user.email.as_deref(), None)
             }
             RecoveryMechanismName::VerifiedPhoneNumber
-                if user.attribute_verified("phone_number") =>
+                if user.attribute_verified("phone_number") && !used_for_mfa(SMS_MFA_FACTOR) =>
             {
                 build_code_delivery_details(None, user.phone_number.as_deref())
             }

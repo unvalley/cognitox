@@ -15,7 +15,8 @@ use crate::{
 };
 
 use super::helpers::{
-    confirmation_attribute, normalize_confirmation_code, upsert_user_attribute, verify_secret_hash,
+    confirmation_attribute, hides_user_existence, normalize_confirmation_code,
+    upsert_user_attribute, verify_secret_hash,
 };
 
 #[derive(Debug, Deserialize)]
@@ -60,7 +61,11 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
     let mut user = storage
         .get_user_by_username(&client.user_pool_id, &req.username)
         .await
-        .ok_or(AppError::UserNotFound)?;
+        .ok_or(if hides_user_existence(&client) {
+            AppError::ExpiredCode
+        } else {
+            AppError::UserNotFound
+        })?;
 
     if user.user_status == UserStatus::Confirmed {
         return Err(AppError::NotAuthorized(

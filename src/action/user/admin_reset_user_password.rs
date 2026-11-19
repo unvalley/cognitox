@@ -50,7 +50,8 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
     }
 
     // The code needs a verified phone number or email address to go to.
-    recovery_delivery(&pool, &user, false)?;
+    let mfa_factors = storage.list_user_auth_factors(&user.id).await;
+    recovery_delivery(&pool, &user, &mfa_factors, false)?;
 
     let code = generate_confirmation_code();
     let reset_code = PasswordResetCode {

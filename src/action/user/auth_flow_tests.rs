@@ -1299,3 +1299,122 @@ async fn email_alias_pools_refuse_email_shaped_usernames() {
     let tokens = assert_tokens(&result);
     assert_eq!(claims(&tokens["IdToken"])["cognito:username"], "alice");
 }
+
+#[tokio::test]
+async fn rotating_clients_refresh_with_get_tokens_from_refresh_token() {
+    let fixture = Fixture::new(
+        json!({}),
+        json!({"RefreshTokenRotation": {"Feature": "ENABLED", "RetryGracePeriodSeconds": 0}}),
+    )
+    .await;
+    fixture.confirmed_user("alice", json!([])).await;
+    let signed_in = fixture.password_sign_in("alice", PASSWORD).await.unwrap();
+    let refresh_token = &signed_in["AuthenticationResult"]["RefreshToken"];
+
+    assert!(matches!(
+        fixture
+            .initiate(
+                "REFRESH_TOKEN_AUTH",
+                json!({"REFRESH_TOKEN": refresh_token})
+            )
+            .await,
+        Err(AppError::InvalidParameter(_))
+    ));
+
+    let rotated = crate::action::user::get_tokens_from_refresh_token::handler(
+        &fixture.storage,
+        json!({"ClientId": fixture.client_id, "RefreshToken": refresh_token}),
+    )
+    .await
+    .unwrap();
+    let next = &rotated["AuthenticationResult"]["RefreshToken"];
+    assert!(next.is_string());
+    assert_ne!(next, refresh_token);
+
+    // Without a grace period the presented token is spent.
+    assert!(
+        crate::action::user::get_tokens_from_refresh_token::handler(
+            &fixture.storage,
+            json!({"ClientId": fixture.client_id, "RefreshToken": refresh_token}),
+        )
+        .await
+        .is_err()
+    );
+    crate::action::user::get_tokens_from_refresh_token::handler(
+        &fixture.storage,
+        json!({"ClientId": fixture.client_id, "RefreshToken": next}),
+    )
+    .await
+    .unwrap();
+}
+
+#[tokio::test]
+async fn a_contact_used_for_mfa_does_not_recover_the_account() {
+    let fixture = Fixture::new(
+        json!({
+            "AutoVerifiedAttributes": ["email", "phone_number"],
+            "AccountRecoverySetting": {
+                "RecoveryMechanisms": [
+                    {"Name": "verified_phone_number", "Priority": 1},
+                    {"Name": "verified_email", "Priority": 2}
+                ]
+            }
+        }),
+        json!({}),
+    )
+    .await;
+    admin_create_user::handler(
+        &fixture.storage,
+        json!({
+            "UserPoolId": fixture.pool_id,
+            "Username": "alice",
+            "UserAttributes": [
+                {"Name": "email", "Value": "alice@example.com"},
+                {"Name": "email_verified", "Value": "true"},
+                {"Name": "phone_number", "Value": "+15555550100"},
+                {"Name": "phone_number_verified", "Value": "true"}
+            ],
+        }),
+    )
+    .await
+    .unwrap();
+    admin_set_user_password::handler(
+        &fixture.storage,
+        json!({
+            "UserPoolId": fixture.pool_id,
+            "Username": "alice",
+            "Password": PASSWORD,
+            "Permanent": true,
+        }),
+    )
+    .await
+    .unwrap();
+    let forgot = || {
+        crate::action::user::forgot_password::handler(
+            &fixture.storage,
+            json!({"ClientId": fixture.client_id, "Username": "alice"}),
+        )
+    };
+
+    // The phone number comes first in the recovery order...
+    assert_eq!(
+        forgot().await.unwrap()["CodeDeliveryDetails"]["DeliveryMedium"],
+        "SMS"
+    );
+
+    // ...until it is also where the MFA codes go.
+    let signed_in = fixture.password_sign_in("alice", PASSWORD).await.unwrap();
+    set_user_mfa_preference::handler(
+        &fixture.storage,
+        json!({
+            "AccessToken": signed_in["AuthenticationResult"]["AccessToken"],
+            "SMSMfaSettings": {"Enabled": true, "PreferredMfa": true},
+        }),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        forgot().await.unwrap()["CodeDeliveryDetails"]["DeliveryMedium"],
+        "EMAIL"
+    );
+}

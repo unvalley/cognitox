@@ -108,9 +108,11 @@ pub(crate) fn apply_user_pool_defaults(pool: &mut UserPool) {
         .get_or_insert(DeletionProtection::Inactive);
     pool.lambda_config.get_or_insert_with(|| json!({}));
     pool.user_pool_tier.get_or_insert(UserPoolTier::Essentials);
+    // Usernames are case sensitive unless the request says otherwise; the
+    // API reference names `true` as the default of `CaseSensitive`.
     pool.username_configuration
         .get_or_insert(UsernameConfiguration {
-            case_sensitive: false,
+            case_sensitive: true,
         });
     pool.account_recovery_setting
         .get_or_insert_with(default_account_recovery_setting);

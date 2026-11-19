@@ -192,7 +192,7 @@ mod tests {
         );
         assert_eq!(
             described["UsernameConfiguration"],
-            json!({"CaseSensitive": false})
+            json!({"CaseSensitive": true})
         );
 
         let schema = described["SchemaAttributes"].as_array().unwrap();

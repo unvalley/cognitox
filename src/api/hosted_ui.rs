@@ -1117,15 +1117,18 @@ pub async fn forgot_password_submit(
     // enabled user with a password of their own and a verified address or
     // number to send it to. The page does not reveal which of these failed,
     // nor whether the user exists.
-    if let Some(user) = storage
+    let user = storage
         .get_user_by_username(&client.user_pool_id, &form.username)
         .await
-        .filter(|user| {
-            user.enabled
-                && user.user_status != UserStatus::ForceChangePassword
-                && recovery_delivery(&pool, user, true).is_ok()
-        })
-    {
+        .filter(|user| user.enabled && user.user_status != UserStatus::ForceChangePassword);
+    let deliverable = match &user {
+        Some(user) => {
+            let mfa_factors = storage.list_user_auth_factors(&user.id).await;
+            recovery_delivery(&pool, user, &mfa_factors, true).is_ok()
+        }
+        None => false,
+    };
+    if let Some(user) = user.filter(|_| deliverable) {
         let reset_code = generate_confirmation_code();
         storage
             .save_confirmation_code(ConfirmationCode {

@@ -24,8 +24,9 @@ use crate::{
     storage::Storage,
     types::{
         AuthEvent, AuthFlow, ChallengeType, ExplicitAuthFlow, FirstAuthFactor, MfaConfiguration,
-        PendingAuthChallenge, PreventUserExistenceErrors, RefreshToken, SrpChallengeState, User,
-        UserAttribute, UserPool, UserPoolClient, UserStatus,
+        PendingAuthChallenge, PreventUserExistenceErrors, RefreshToken,
+        RefreshTokenRotationFeature, SrpChallengeState, User, UserAttribute, UserPool,
+        UserPoolClient, UserStatus,
     },
     validation::validate_password_against_policy,
 };
@@ -254,6 +255,22 @@ pub(crate) async fn initiate_auth(
             begin_srp(ctx, username, srp_a, false).await
         }
         AuthFlow::RefreshTokenAuth | AuthFlow::RefreshToken => {
+            // An app client that rotates refresh tokens has to refresh
+            // with GetTokensFromRefreshToken, which returns the new one.
+            // (The wording of this error is the emulator's own.)
+            let rotates = ctx
+                .client
+                .refresh_token_rotation
+                .as_ref()
+                .is_some_and(|rotation| {
+                    rotation.feature == Some(RefreshTokenRotationFeature::Enabled)
+                });
+            if rotates {
+                return Err(AppError::InvalidParameter(
+                    "Refresh token rotation is enabled for this client; use GetTokensFromRefreshToken"
+                        .to_string(),
+                ));
+            }
             let refresh_token = required(params, "REFRESH_TOKEN")?;
             let (user, stored) = authenticate_with_refresh_token(
                 ctx.storage,
