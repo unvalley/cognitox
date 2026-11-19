@@ -296,7 +296,18 @@ pub(crate) async fn initiate_auth(
             let available = available_first_factors(ctx, &user).await;
             match optional(params, "PREFERRED_CHALLENGE").and_then(ChallengeType::parse) {
                 Some(preferred) if available.contains(&preferred) => {
-                    start_first_factor(ctx, user, preferred, params).await
+                    let mut response = start_first_factor(ctx, user, preferred, params).await?;
+                    // A challenge that opens choice-based sign-in lists the
+                    // alternatives next to the one it issues.
+                    if response.get("ChallengeName").is_some() {
+                        response["AvailableChallenges"] = json!(
+                            available
+                                .iter()
+                                .map(|challenge| challenge.as_str())
+                                .collect::<Vec<_>>()
+                        );
+                    }
+                    Ok(response)
                 }
                 _ => select_challenge(ctx, &user, &available).await,
             }
@@ -994,8 +1005,8 @@ async fn available_first_factors(ctx: &AuthContext<'_>, user: &User) -> Vec<Chal
     for factor in allowed {
         match factor {
             FirstAuthFactor::Password => {
-                available.push(ChallengeType::Password);
                 available.push(ChallengeType::PasswordSrp);
+                available.push(ChallengeType::Password);
             }
             FirstAuthFactor::EmailOtp if user.email.is_some() => {
                 available.push(ChallengeType::EmailOtp);

@@ -1034,7 +1034,7 @@ async fn user_auth_offers_the_pools_first_factors() {
     assert_eq!(challenge["ChallengeName"], "SELECT_CHALLENGE");
     assert_eq!(
         challenge["AvailableChallenges"],
-        json!(["PASSWORD", "PASSWORD_SRP", "EMAIL_OTP"])
+        json!(["PASSWORD_SRP", "PASSWORD", "EMAIL_OTP"])
     );
 
     let challenge = fixture
@@ -1078,6 +1078,21 @@ async fn user_auth_offers_the_pools_first_factors() {
             )
             .await
             .unwrap(),
+    );
+
+    // A preferred factor that needs another step is issued together with
+    // the alternatives.
+    let challenge = fixture
+        .initiate(
+            "USER_AUTH",
+            json!({"USERNAME": "alice", "PREFERRED_CHALLENGE": "EMAIL_OTP"}),
+        )
+        .await
+        .unwrap();
+    assert_eq!(challenge["ChallengeName"], "EMAIL_OTP");
+    assert_eq!(
+        challenge["AvailableChallenges"],
+        json!(["PASSWORD_SRP", "PASSWORD", "EMAIL_OTP"])
     );
 
     // A preferred factor the pool does not offer falls back to the choice.
