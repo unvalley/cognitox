@@ -69,8 +69,12 @@ SPAs at `/ui/*`, `/admin/*`, and `/assets/*`; and `/health`.
 - **action/**: one file per operation, each exposing
   `pub async fn handler(storage: &Storage, body: Value) -> Result<Value>`.
   `action/io.rs` has `parse_request` / `to_response_value`;
-  `action/user/helpers.rs` and `action/user/auth_flow.rs` hold shared user and
-  auth logic (design notes: `docs/auth-flow-design.md`).
+  `action/user/helpers.rs` holds shared user logic (password storage,
+  attribute validation, naming, code delivery) and `action/user/auth_flow.rs`
+  the sign-in state machine behind the four auth operations (design notes:
+  `docs/auth-flow-design.md`). `action/pagination.rs` and
+  `action/user_pool/defaults.rs` hold list paging and Cognito's resource
+  defaults.
 - **storage.rs**: `Storage`, cheap to clone, backed by `Arc<RwLock<_>>`
   stores. Persistent mode autosaves every 500 ms when dirty and on shutdown.
 - **types.rs**: domain types (`UserPool`, `User`, `UserStatus`, ...), all
@@ -78,6 +82,7 @@ SPAs at `/ui/*`, `/admin/*`, and `/assets/*`; and `/health`.
 - **error.rs**: `AppError`, mapped to Cognito `{"__type", "message"}` errors;
   `OAuthError` for the OAuth endpoints.
 - **jwt.rs**: RS256 token issuance and JWKS.
+- **srp.rs**: the server side of Cognito's SRP-6a (`USER_SRP_AUTH`).
 - **bin/request_response_spec_diff.rs**: the spec drift tool.
 - **build.rs**: copies `ui/dist/` into `$OUT_DIR/ui/` for `rust-embed`, or
   writes a placeholder page when the UI has not been built.
@@ -105,9 +110,16 @@ drift baseline, then `scripts/check.sh`.
 ## Implementation Coverage
 
 `COVERAGE.md` is the source of truth: `[x]` rows are spec-aligned, `[ ]` rows
-are routed but partial. README "Known Limitations" lists behavioral gaps
-(SRP and `USER_AUTH` flows, Lambda triggers, email/SMS delivery, per-pool
-password policy, MFA enforcement).
+are routed but partial. README "Behavior that follows Cognito" lists where
+the emulator deliberately fails the way Cognito does (default app client auth
+flows, password policy, attribute schema, verified contacts), and "Known
+Limitations" lists the gaps (`CUSTOM_AUTH` and Lambda triggers, passkey
+sign-in, email/SMS delivery, account lockout).
+
+The goal is parity with Cognito, down to error types and message texts. When
+real behavior is uncertain, prefer leaving the current behavior and saying so
+over guessing; `demo/cognito-identity-js` checks sign-in against a real SRP
+client.
 
 ## Gotchas
 

@@ -26,7 +26,7 @@ use crate::{
         auth_flow::new_session_token,
         helpers::{
             confirmation_attribute, generate_confirmation_code, normalize_confirmation_code,
-            set_user_password, upsert_user_attribute,
+            recovery_delivery, set_user_password, upsert_user_attribute,
         },
     },
     error::OAuthError,
@@ -1108,15 +1108,23 @@ pub async fn forgot_password_submit(
     State(storage): State<Storage>,
     Form(form): Form<ForgotPasswordForm>,
 ) -> Response {
-    let Some((client, _pool)) = client_and_pool(&storage, &form.oauth.client_id).await else {
+    let Some((client, pool)) = client_and_pool(&storage, &form.oauth.client_id).await else {
         let error = Some("Invalid client");
         return render_page(&storage, &form.oauth, "forgot_password", &[], error).await;
     };
 
-    // Find user (we don't reveal if user exists or not for security)
+    // A code only goes out under the conditions ForgotPassword applies: an
+    // enabled user with a password of their own and a verified address or
+    // number to send it to. The page does not reveal which of these failed,
+    // nor whether the user exists.
     if let Some(user) = storage
         .get_user_by_username(&client.user_pool_id, &form.username)
         .await
+        .filter(|user| {
+            user.enabled
+                && user.user_status != UserStatus::ForceChangePassword
+                && recovery_delivery(&pool, user, true).is_ok()
+        })
     {
         let reset_code = generate_confirmation_code();
         storage

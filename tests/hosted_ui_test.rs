@@ -786,9 +786,34 @@ async fn test_reset_password_enforces_the_code_and_the_policy() {
         .client
         .cognito_request(
             "AdminCreateUser",
-            json!({"UserPoolId": hosted.pool_id, "Username": "dave", "MessageAction": "SUPPRESS"}),
+            json!({
+                "UserPoolId": hosted.pool_id,
+                "Username": "dave",
+                "MessageAction": "SUPPRESS",
+                "UserAttributes": [
+                    {"Name": "email", "Value": "dave@example.com"},
+                    {"Name": "email_verified", "Value": "true"}
+                ]
+            }),
         )
         .await;
+
+    // A user who still has a temporary password gets no reset code.
+    let response = hosted
+        .post("/forgot-password", &[("username", "dave")])
+        .await;
+    assert!(location(&response).starts_with("/reset-password?"));
+    let dave = hosted.admin_get_user("dave").await;
+    let sub = uuid::Uuid::parse_str(&attribute(&dave, "sub").unwrap()).unwrap();
+    assert!(
+        hosted
+            .client
+            .storage()
+            .get_confirmation_code(&sub)
+            .await
+            .is_none()
+    );
+
     hosted
         .client
         .cognito_request(
