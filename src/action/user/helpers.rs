@@ -179,13 +179,23 @@ pub fn verify_secret_hash(
     Ok(())
 }
 
+/// Scope every access token issued by the user pools API carries, and the
+/// one Cognito requires for token-authorized user pools API operations.
+pub const USER_ADMIN_SCOPE: &str = "aws.cognito.signin.user.admin";
+
+/// Authorize a token-authenticated user pools API call the way Cognito does:
+/// the access token must be valid, unexpired, not revoked, and carry the
+/// `aws.cognito.signin.user.admin` scope.
 pub async fn verify_and_extract_active_user_id(
     storage: &Storage,
     token: &str,
-) -> std::result::Result<Uuid, String> {
-    let token_data = jwt::verify_access_token(token)?;
-    let user_id = Uuid::parse_str(&token_data.claims.sub)
-        .map_err(|e| format!("Invalid user ID in token: {}", e))?;
+) -> crate::error::Result<Uuid> {
+    let token_data = jwt::decode_access_token(token).map_err(|e| match e {
+        jwt::AccessTokenError::Expired => AppError::AccessTokenExpired,
+        jwt::AccessTokenError::Invalid(_) => AppError::InvalidAccessToken,
+    })?;
+    let user_id =
+        Uuid::parse_str(&token_data.claims.sub).map_err(|_| AppError::InvalidAccessToken)?;
     if storage
         .is_access_token_revoked(
             &user_id,
@@ -194,7 +204,17 @@ pub async fn verify_and_extract_active_user_id(
         )
         .await
     {
-        return Err("Access token has been revoked".to_string());
+        return Err(AppError::AccessTokenRevoked);
+    }
+    if !token_data
+        .claims
+        .scope
+        .split_whitespace()
+        .any(|scope| scope == USER_ADMIN_SCOPE)
+    {
+        return Err(AppError::NotAuthorized(
+            "Access Token does not have required scopes".to_string(),
+        ));
     }
     Ok(user_id)
 }

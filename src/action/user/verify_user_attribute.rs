@@ -23,8 +23,7 @@ struct Request {
 }
 
 pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
-    let req: Request = serde_json::from_value(body)
-        .map_err(|e| AppError::InvalidParameter(format!("Invalid request: {}", e)))?;
+    let req: Request = crate::action::io::parse_request(body)?;
 
     // Validate attribute name
     let verified_attr_name = match req.attribute_name.as_str() {
@@ -38,9 +37,7 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
         }
     };
 
-    let user_id = verify_and_extract_active_user_id(storage, &req.access_token)
-        .await
-        .map_err(|_| AppError::InvalidAccessToken)?;
+    let user_id = verify_and_extract_active_user_id(storage, &req.access_token).await?;
 
     let mut user = storage
         .get_user(&user_id)

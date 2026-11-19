@@ -30,8 +30,7 @@ struct Request {
 }
 
 pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
-    let req: Request = serde_json::from_value(body)
-        .map_err(|e| AppError::InvalidParameter(format!("Invalid request: {}", e)))?;
+    let req: Request = crate::action::io::parse_request(body)?;
 
     if req.user_code.trim().is_empty() {
         return Err(AppError::InvalidParameter(
@@ -51,9 +50,7 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
             .ok_or_else(|| AppError::InvalidParameter("Invalid session".to_string()))?;
         (user_id, secret)
     } else if let Some(access_token) = req.access_token.as_deref() {
-        let user_id = verify_and_extract_active_user_id(storage, access_token)
-            .await
-            .map_err(|_| AppError::InvalidAccessToken)?;
+        let user_id = verify_and_extract_active_user_id(storage, access_token).await?;
         let secret = storage
             .get_software_token_secret(&user_id)
             .await

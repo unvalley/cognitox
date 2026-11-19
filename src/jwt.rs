@@ -329,18 +329,47 @@ pub fn generate_client_credentials_access_token(
         .map_err(|e| format!("Failed to encode client credentials access token: {e}"))
 }
 
-/// Verify and decode an access token
-pub fn verify_access_token(token: &str) -> Result<TokenData<AccessTokenClaims>, String> {
+/// Why an access token was rejected.
+#[derive(Debug)]
+pub enum AccessTokenError {
+    /// The signature is valid but `exp` has passed.
+    Expired,
+    Invalid(String),
+}
+
+impl std::fmt::Display for AccessTokenError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Expired => write!(f, "Token validation failed: ExpiredSignature"),
+            Self::Invalid(reason) => write!(f, "Token validation failed: {reason}"),
+        }
+    }
+}
+
+/// Verify and decode an access token, telling an expired token apart from an
+/// otherwise invalid one.
+pub fn decode_access_token(token: &str) -> Result<TokenData<AccessTokenClaims>, AccessTokenError> {
     let keys = get_jwt_keys();
 
     let mut validation = Validation::new(Algorithm::RS256);
     validation.set_required_spec_claims(&["sub", "iss", "exp", "iat"]);
     validation.validate_exp = true;
+    // Cognito allows no clock skew on its own tokens.
+    validation.leeway = 0;
     // Don't validate audience for access tokens (they use client_id instead)
     validation.validate_aud = false;
 
-    decode::<AccessTokenClaims>(token, &keys.decoding_key, &validation)
-        .map_err(|e| format!("Token validation failed: {}", e))
+    decode::<AccessTokenClaims>(token, &keys.decoding_key, &validation).map_err(|e| {
+        match e.kind() {
+            jsonwebtoken::errors::ErrorKind::ExpiredSignature => AccessTokenError::Expired,
+            _ => AccessTokenError::Invalid(e.to_string()),
+        }
+    })
+}
+
+/// Verify and decode an access token
+pub fn verify_access_token(token: &str) -> Result<TokenData<AccessTokenClaims>, String> {
+    decode_access_token(token).map_err(|e| e.to_string())
 }
 
 /// Verify and decode an ID token

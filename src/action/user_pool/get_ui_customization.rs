@@ -33,8 +33,7 @@ fn to_json(customization: &UiCustomization) -> Value {
 }
 
 pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
-    let req: Request = serde_json::from_value(body)
-        .map_err(|e| AppError::InvalidParameter(format!("Invalid request: {}", e)))?;
+    let req: Request = crate::action::io::parse_request(body)?;
 
     storage
         .get_user_pool(&req.user_pool_id)

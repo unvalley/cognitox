@@ -55,14 +55,14 @@ impl UserPoolId {
             return Err(UserPoolIdError::Empty);
         }
         if value.len() > Self::MAX_LENGTH {
-            return Err(UserPoolIdError::TooLong(value.len()));
+            return Err(UserPoolIdError::TooLong(value.to_string()));
         }
 
         // Pattern check: [\w-]+_[0-9a-zA-Z]+
         // Must contain exactly one underscore separating two parts
         let parts: Vec<&str> = value.splitn(2, '_').collect();
         if parts.len() != 2 {
-            return Err(UserPoolIdError::InvalidFormat);
+            return Err(UserPoolIdError::InvalidFormat(value.to_string()));
         }
 
         let (prefix, suffix) = (parts[0], parts[1]);
@@ -73,12 +73,12 @@ impl UserPoolId {
                 .chars()
                 .all(|c| c.is_alphanumeric() || c == '_' || c == '-')
         {
-            return Err(UserPoolIdError::InvalidFormat);
+            return Err(UserPoolIdError::InvalidFormat(value.to_string()));
         }
 
         // Suffix: [0-9a-zA-Z]+ (alphanumeric only)
         if suffix.is_empty() || !suffix.chars().all(|c| c.is_ascii_alphanumeric()) {
-            return Err(UserPoolIdError::InvalidFormat);
+            return Err(UserPoolIdError::InvalidFormat(value.to_string()));
         }
 
         Ok(())
@@ -120,31 +120,32 @@ impl AsRef<str> for UserPoolId {
 }
 
 /// Error type for UserPoolId validation
+///
+/// Displayed the way Cognito reports the constraint violation.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum UserPoolIdError {
     Empty,
-    TooLong(usize),
-    InvalidFormat,
+    TooLong(String),
+    InvalidFormat(String),
 }
 
 impl fmt::Display for UserPoolIdError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            UserPoolIdError::Empty => write!(f, "UserPoolId cannot be empty"),
-            UserPoolIdError::TooLong(len) => {
-                write!(
-                    f,
-                    "UserPoolId exceeds maximum length of {} (got {})",
-                    UserPoolId::MAX_LENGTH,
-                    len
-                )
-            }
-            UserPoolIdError::InvalidFormat => {
-                write!(
-                    f,
-                    "UserPoolId must match pattern [\\w-]+_[0-9a-zA-Z]+ (e.g., us-east-1_AbCdEfGhI)"
-                )
-            }
+            UserPoolIdError::Empty => write!(
+                f,
+                "1 validation error detected: Value '' at 'userPoolId' failed to satisfy constraint: Member must have length greater than or equal to {}",
+                UserPoolId::MIN_LENGTH
+            ),
+            UserPoolIdError::TooLong(value) => write!(
+                f,
+                "1 validation error detected: Value '{value}' at 'userPoolId' failed to satisfy constraint: Member must have length less than or equal to {}",
+                UserPoolId::MAX_LENGTH
+            ),
+            UserPoolIdError::InvalidFormat(value) => write!(
+                f,
+                "1 validation error detected: Value '{value}' at 'userPoolId' failed to satisfy constraint: Member must satisfy regular expression pattern: [\\w-]+_[0-9a-zA-Z]+"
+            ),
         }
     }
 }
@@ -213,7 +214,7 @@ impl ClientId {
             return Err(ClientIdError::Empty);
         }
         if value.len() > Self::MAX_LENGTH {
-            return Err(ClientIdError::TooLong(value.len()));
+            return Err(ClientIdError::TooLong(value.to_string()));
         }
 
         // Pattern: [\w+-]+ (alphanumeric, underscore, plus sign, hyphen)
@@ -221,7 +222,7 @@ impl ClientId {
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '+' || c == '-')
         {
-            return Err(ClientIdError::InvalidFormat);
+            return Err(ClientIdError::InvalidFormat(value.to_string()));
         }
 
         Ok(())
@@ -263,31 +264,32 @@ impl AsRef<str> for ClientId {
 }
 
 /// Error type for ClientId validation
+///
+/// Displayed the way Cognito reports the constraint violation.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ClientIdError {
     Empty,
-    TooLong(usize),
-    InvalidFormat,
+    TooLong(String),
+    InvalidFormat(String),
 }
 
 impl fmt::Display for ClientIdError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            ClientIdError::Empty => write!(f, "ClientId cannot be empty"),
-            ClientIdError::TooLong(len) => {
-                write!(
-                    f,
-                    "ClientId exceeds maximum length of {} (got {})",
-                    ClientId::MAX_LENGTH,
-                    len
-                )
-            }
-            ClientIdError::InvalidFormat => {
-                write!(
-                    f,
-                    "ClientId must contain only alphanumeric characters, underscores, or plus signs"
-                )
-            }
+            ClientIdError::Empty => write!(
+                f,
+                "1 validation error detected: Value '' at 'clientId' failed to satisfy constraint: Member must have length greater than or equal to {}",
+                ClientId::MIN_LENGTH
+            ),
+            ClientIdError::TooLong(value) => write!(
+                f,
+                "1 validation error detected: Value '{value}' at 'clientId' failed to satisfy constraint: Member must have length less than or equal to {}",
+                ClientId::MAX_LENGTH
+            ),
+            ClientIdError::InvalidFormat(value) => write!(
+                f,
+                "1 validation error detected: Value '{value}' at 'clientId' failed to satisfy constraint: Member must satisfy regular expression pattern: [\\w+]+"
+            ),
         }
     }
 }

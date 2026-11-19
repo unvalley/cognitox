@@ -47,12 +47,9 @@ fn upsert_device_attribute(attributes: &mut Vec<UserAttribute>, name: &str, valu
 }
 
 pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
-    let req: Request = serde_json::from_value(body)
-        .map_err(|e| AppError::InvalidParameter(format!("Invalid request: {}", e)))?;
+    let req: Request = crate::action::io::parse_request(body)?;
 
-    let user_id = verify_and_extract_active_user_id(storage, &req.access_token)
-        .await
-        .map_err(|_| AppError::InvalidAccessToken)?;
+    let user_id = verify_and_extract_active_user_id(storage, &req.access_token).await?;
 
     storage
         .get_user(&user_id)

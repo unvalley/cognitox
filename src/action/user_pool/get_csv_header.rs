@@ -43,8 +43,7 @@ const CSV_HEADER: &[&str] = &[
 ];
 
 pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
-    let req: Request = serde_json::from_value(body)
-        .map_err(|e| AppError::InvalidParameter(format!("Invalid request: {}", e)))?;
+    let req: Request = crate::action::io::parse_request(body)?;
 
     // Verify user pool exists
     storage

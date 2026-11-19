@@ -1651,7 +1651,7 @@ async fn test_disabling_user_permanently_revokes_existing_sessions() {
             let (status, body) = client
                 .request("GetUser", json!({"AccessToken": access_token}))
                 .await;
-            assert_eq!(status, StatusCode::UNAUTHORIZED);
+            assert_eq!(status, StatusCode::BAD_REQUEST);
             assert_eq!(body["__type"], "NotAuthorizedException");
             let (status, body) = client
                 .request(
@@ -1663,7 +1663,7 @@ async fn test_disabling_user_permanently_revokes_existing_sessions() {
                     }),
                 )
                 .await;
-            assert_eq!(status, StatusCode::UNAUTHORIZED);
+            assert_eq!(status, StatusCode::BAD_REQUEST);
             assert_eq!(body["__type"], "NotAuthorizedException");
             let refresh = client
                 .post_form(

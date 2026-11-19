@@ -110,9 +110,7 @@ pub(crate) async fn apply_user_mfa_preferences(
 pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
     let req: Request = parse_request(body)?;
 
-    let user_id = verify_and_extract_active_user_id(storage, &req.access_token)
-        .await
-        .map_err(|_| AppError::InvalidAccessToken)?;
+    let user_id = verify_and_extract_active_user_id(storage, &req.access_token).await?;
 
     let mut user = storage
         .get_user(&user_id)

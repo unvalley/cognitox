@@ -336,7 +336,7 @@ async fn test_initiate_auth_disabled_user() {
 
     assert_eq!(response.status(), 400);
     let body: serde_json::Value = response.json().await.unwrap();
-    assert_eq!(body["__type"], "UserDisabledException");
+    assert_eq!(body["__type"], "NotAuthorizedException");
 }
 
 #[tokio::test]
@@ -427,7 +427,7 @@ async fn test_refresh_token_disabled_user() {
         )
         .await;
 
-    assert_eq!(response.status(), 401);
+    assert_eq!(response.status(), 400);
     let body: serde_json::Value = response.json().await.unwrap();
     assert_eq!(body["__type"], "NotAuthorizedException");
 }
@@ -526,7 +526,7 @@ async fn test_refresh_token_after_global_signout() {
         )
         .await;
 
-    assert_eq!(response.status(), 401);
+    assert_eq!(response.status(), 400);
     let body: serde_json::Value = response.json().await.unwrap();
     assert_eq!(body["__type"], "NotAuthorizedException");
 }
@@ -750,7 +750,7 @@ async fn test_initiate_auth_rejects_flow_not_enabled_for_client() {
         )
         .await;
 
-    assert_eq!(response.status(), 401);
+    assert_eq!(response.status(), 400);
     let body: serde_json::Value = response.json().await.unwrap();
     assert_eq!(body["__type"], "NotAuthorizedException");
 }
@@ -867,13 +867,13 @@ async fn test_admin_delete_user_cascades_refresh_tokens_and_group_membership() {
         )
         .await;
 
-    assert_eq!(response.status(), 401);
+    assert_eq!(response.status(), 400);
     let body: serde_json::Value = response.json().await.unwrap();
     assert_eq!(body["__type"], "NotAuthorizedException");
     assert!(
         body["message"]
             .as_str()
             .unwrap()
-            .contains("Invalid refresh token")
+            .contains("Invalid Refresh Token")
     );
 }

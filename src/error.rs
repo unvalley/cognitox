@@ -50,13 +50,13 @@ fn build_error_response(
 
 #[derive(Debug, thiserror::Error)]
 pub enum AppError {
-    #[error("User not found")]
+    #[error("User does not exist.")]
     UserNotFound,
 
-    #[error("User pool not found")]
+    #[error("User pool does not exist.")]
     UserPoolNotFound,
 
-    #[error("User pool client not found")]
+    #[error("User pool client does not exist.")]
     UserPoolClientNotFound,
 
     #[error("User pool domain not found")]
@@ -95,44 +95,71 @@ pub enum AppError {
     #[error("User already exists")]
     UserAlreadyExists,
 
+    /// `UsernameExistsException` as AdminCreateUser words it.
+    #[error("User account already exists")]
+    UserAccountAlreadyExists,
+
     #[error("An account with the {0} already exists.")]
     AliasExists(&'static str),
 
     #[error("{0}")]
     UnsupportedUserState(String),
 
-    #[error("Invalid password")]
-    InvalidPassword,
+    #[error("{0}")]
+    InvalidPassword(String),
 
-    #[error("Invalid confirmation code")]
+    #[error("Invalid verification code provided, please try again.")]
     InvalidConfirmationCode,
 
-    #[error("Invalid access token")]
+    /// `CodeMismatchException` with an operation-specific message.
+    #[error("{0}")]
+    CodeMismatch(String),
+
+    #[error("Invalid Access Token")]
     InvalidAccessToken,
 
-    #[error("Invalid refresh token")]
+    #[error("Access Token has expired")]
+    AccessTokenExpired,
+
+    #[error("Access Token has been revoked")]
+    AccessTokenRevoked,
+
+    #[error("Invalid Refresh Token")]
     InvalidRefreshToken,
 
-    #[error("User not confirmed")]
+    #[error("Refresh Token has expired")]
+    RefreshTokenExpired,
+
+    #[error("Refresh Token has been revoked")]
+    RefreshTokenRevoked,
+
+    #[error("User is not confirmed.")]
     UserNotConfirmed,
 
-    #[error("User is disabled")]
+    #[error("User is disabled.")]
     UserDisabled,
 
-    #[error("Group not found")]
+    #[error("Password reset required for the user")]
+    PasswordResetRequired,
+
+    #[error("Group not found.")]
     GroupNotFound,
 
-    #[error("Group already exists")]
+    #[error("A group with the name already exists.")]
     GroupAlreadyExists,
 
-    #[error("Expired code")]
+    #[error("Invalid code provided, please request a code again.")]
     ExpiredCode,
 
-    #[error("Limit exceeded")]
+    #[error("Attempt limit exceeded, please try after some time.")]
     LimitExceeded,
 
-    #[error("Invalid parameter: {0}")]
+    #[error("{0}")]
     InvalidParameter(String),
+
+    /// The request body could not be mapped onto the operation's input shape.
+    #[error("{0}")]
+    Serialization(String),
 
     #[error("Internal server error: {0}")]
     Internal(String),
@@ -140,11 +167,14 @@ pub enum AppError {
     #[error("Storage error: {0}")]
     Storage(String),
 
-    #[error("Not authorized: {0}")]
+    #[error("{0}")]
     NotAuthorized(String),
 
     #[error("Not implemented: {0}")]
     NotImplemented(String),
+
+    #[error("Unknown operation {0}")]
+    UnknownOperation(String),
 }
 
 #[derive(Debug)]
@@ -153,69 +183,117 @@ pub struct OAuthError {
     pub error_description: Option<String>,
 }
 
-impl IntoResponse for AppError {
-    fn into_response(self) -> Response {
-        let (status, error_type) = match &self {
+impl AppError {
+    /// HTTP status and `__type` of the Cognito exception this error maps to.
+    ///
+    /// Cognito answers every client error with HTTP 400, including
+    /// `NotAuthorizedException`; only service faults are 5xx.
+    pub fn status_and_type(&self) -> (StatusCode, &'static str) {
+        match self {
             AppError::UserNotFound => (StatusCode::BAD_REQUEST, "UserNotFoundException"),
-            AppError::UserPoolNotFound => (StatusCode::BAD_REQUEST, "ResourceNotFoundException"),
-            AppError::UserPoolClientNotFound => {
-                (StatusCode::BAD_REQUEST, "ResourceNotFoundException")
-            }
-            AppError::UserPoolDomainNotFound => {
-                (StatusCode::BAD_REQUEST, "ResourceNotFoundException")
-            }
-            AppError::UserPoolDomainAlreadyExists => {
+            AppError::UserPoolNotFound
+            | AppError::UserPoolClientNotFound
+            | AppError::UserPoolDomainNotFound
+            | AppError::UserImportJobNotFound
+            | AppError::TermsNotFound
+            | AppError::WebAuthnCredentialNotFound
+            | AppError::IdentityProviderNotFound
+            | AppError::ResourceServerNotFound
+            | AppError::DeviceNotFound
+            | AppError::AuthEventNotFound
+            | AppError::GroupNotFound => (StatusCode::BAD_REQUEST, "ResourceNotFoundException"),
+            AppError::UserPoolDomainAlreadyExists
+            | AppError::IdentityProviderAlreadyExists
+            | AppError::ResourceServerAlreadyExists
+            | AppError::InvalidParameter(_) => {
                 (StatusCode::BAD_REQUEST, "InvalidParameterException")
             }
-            AppError::UserImportJobNotFound => {
-                (StatusCode::BAD_REQUEST, "ResourceNotFoundException")
+            AppError::Serialization(_) => (StatusCode::BAD_REQUEST, "SerializationException"),
+            AppError::UserAlreadyExists | AppError::UserAccountAlreadyExists => {
+                (StatusCode::BAD_REQUEST, "UsernameExistsException")
             }
-            AppError::TermsNotFound => (StatusCode::BAD_REQUEST, "ResourceNotFoundException"),
-            AppError::WebAuthnCredentialNotFound => {
-                (StatusCode::BAD_REQUEST, "ResourceNotFoundException")
-            }
-            AppError::IdentityProviderNotFound => {
-                (StatusCode::BAD_REQUEST, "ResourceNotFoundException")
-            }
-            AppError::IdentityProviderAlreadyExists => {
-                (StatusCode::BAD_REQUEST, "InvalidParameterException")
-            }
-            AppError::ResourceServerNotFound => {
-                (StatusCode::BAD_REQUEST, "ResourceNotFoundException")
-            }
-            AppError::ResourceServerAlreadyExists => {
-                (StatusCode::BAD_REQUEST, "InvalidParameterException")
-            }
-            AppError::DeviceNotFound => (StatusCode::BAD_REQUEST, "ResourceNotFoundException"),
-            AppError::AuthEventNotFound => (StatusCode::BAD_REQUEST, "ResourceNotFoundException"),
-            AppError::UserAlreadyExists => (StatusCode::BAD_REQUEST, "UsernameExistsException"),
             AppError::AliasExists(_) => (StatusCode::BAD_REQUEST, "AliasExistsException"),
             AppError::UnsupportedUserState(_) => {
                 (StatusCode::BAD_REQUEST, "UnsupportedUserStateException")
             }
-            AppError::InvalidPassword => (StatusCode::BAD_REQUEST, "InvalidPasswordException"),
-            AppError::InvalidConfirmationCode => (StatusCode::BAD_REQUEST, "CodeMismatchException"),
-            AppError::InvalidAccessToken => (StatusCode::UNAUTHORIZED, "NotAuthorizedException"),
-            AppError::InvalidRefreshToken => (StatusCode::UNAUTHORIZED, "NotAuthorizedException"),
+            AppError::InvalidPassword(_) => (StatusCode::BAD_REQUEST, "InvalidPasswordException"),
+            AppError::InvalidConfirmationCode | AppError::CodeMismatch(_) => {
+                (StatusCode::BAD_REQUEST, "CodeMismatchException")
+            }
+            // Cognito has no `UserDisabledException`: a disabled user is
+            // reported as `NotAuthorizedException: User is disabled.`
+            AppError::InvalidAccessToken
+            | AppError::AccessTokenExpired
+            | AppError::AccessTokenRevoked
+            | AppError::InvalidRefreshToken
+            | AppError::RefreshTokenExpired
+            | AppError::RefreshTokenRevoked
+            | AppError::UserDisabled
+            | AppError::NotAuthorized(_) => (StatusCode::BAD_REQUEST, "NotAuthorizedException"),
             AppError::UserNotConfirmed => (StatusCode::BAD_REQUEST, "UserNotConfirmedException"),
-            AppError::UserDisabled => (StatusCode::BAD_REQUEST, "UserDisabledException"),
-            AppError::GroupNotFound => (StatusCode::BAD_REQUEST, "ResourceNotFoundException"),
+            AppError::PasswordResetRequired => {
+                (StatusCode::BAD_REQUEST, "PasswordResetRequiredException")
+            }
             AppError::GroupAlreadyExists => (StatusCode::BAD_REQUEST, "GroupExistsException"),
             AppError::ExpiredCode => (StatusCode::BAD_REQUEST, "ExpiredCodeException"),
             AppError::LimitExceeded => (StatusCode::BAD_REQUEST, "LimitExceededException"),
-            AppError::InvalidParameter(_) => (StatusCode::BAD_REQUEST, "InvalidParameterException"),
-            AppError::Internal(_) => (StatusCode::INTERNAL_SERVER_ERROR, "InternalErrorException"),
-            AppError::Storage(_) => (StatusCode::INTERNAL_SERVER_ERROR, "InternalErrorException"),
-            AppError::NotAuthorized(_) => (StatusCode::UNAUTHORIZED, "NotAuthorizedException"),
+            AppError::Internal(_) | AppError::Storage(_) => {
+                (StatusCode::INTERNAL_SERVER_ERROR, "InternalErrorException")
+            }
             AppError::NotImplemented(_) => (StatusCode::NOT_IMPLEMENTED, "NotImplementedException"),
-        };
+            AppError::UnknownOperation(_) => (StatusCode::BAD_REQUEST, "UnknownOperationException"),
+        }
+    }
 
-        build_error_response(
+    /// The message Cognito would send, naming the resource from the request
+    /// where Cognito does (`User pool <id> does not exist.`).
+    pub fn message_for_request(&self, request: Option<&serde_json::Value>) -> String {
+        let field = |name: &str| {
+            request
+                .and_then(|body| body.get(name))
+                .and_then(serde_json::Value::as_str)
+        };
+        match self {
+            AppError::UserPoolNotFound => match field("UserPoolId") {
+                Some(id) => format!("User pool {id} does not exist."),
+                None => self.to_string(),
+            },
+            AppError::UserPoolClientNotFound => match field("ClientId") {
+                Some(id) => format!("User pool client {id} does not exist."),
+                None => self.to_string(),
+            },
+            _ => self.to_string(),
+        }
+    }
+
+    /// Render the error as the cognito-idp JSON 1.1 protocol does.
+    pub fn into_cognito_response(self, request: Option<&serde_json::Value>) -> Response {
+        let (status, error_type) = self.status_and_type();
+        let message = self.message_for_request(request);
+        let mut response = build_error_response(
             status,
             ErrorFormat::Cognito,
             error_type.to_string(),
-            Some(self.to_string()),
-        )
+            Some(message.clone()),
+        );
+        let headers = response.headers_mut();
+        headers.insert(
+            header::CONTENT_TYPE,
+            HeaderValue::from_static("application/x-amz-json-1.1"),
+        );
+        if let Ok(value) = HeaderValue::from_str(&format!("{error_type}:")) {
+            headers.insert("x-amzn-errortype", value);
+        }
+        if let Ok(value) = HeaderValue::from_str(&message) {
+            headers.insert("x-amzn-errormessage", value);
+        }
+        response
+    }
+}
+
+impl IntoResponse for AppError {
+    fn into_response(self) -> Response {
+        self.into_cognito_response(None)
     }
 }
 
