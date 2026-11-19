@@ -31,7 +31,8 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
 
     if pool.deletion_protection == Some(DeletionProtection::Active) {
         return Err(AppError::InvalidParameter(
-            "Cannot delete user pool while deletion protection is ACTIVE".to_string(),
+            "The user pool cannot be deleted because deletion protection is activated. Deletion protection must be inactivated first."
+                .to_string(),
         ));
     }
 
@@ -93,7 +94,11 @@ mod tests {
 
         let result = handler(&storage, json!({"UserPoolId": pool_id})).await;
 
-        assert!(matches!(result, Err(AppError::InvalidParameter(_))));
+        assert!(matches!(
+            result,
+            Err(AppError::InvalidParameter(message))
+                if message == "The user pool cannot be deleted because deletion protection is activated. Deletion protection must be inactivated first."
+        ));
         assert!(
             storage
                 .get_user_pool(&pool_id.parse().unwrap())

@@ -212,8 +212,10 @@ impl AppError {
             | AppError::DeviceNotFound
             | AppError::AuthEventNotFound
             | AppError::GroupNotFound => (StatusCode::BAD_REQUEST, "ResourceNotFoundException"),
+            AppError::IdentityProviderAlreadyExists => {
+                (StatusCode::BAD_REQUEST, "DuplicateProviderException")
+            }
             AppError::UserPoolDomainAlreadyExists
-            | AppError::IdentityProviderAlreadyExists
             | AppError::ResourceServerAlreadyExists
             | AppError::InvalidParameter(_) => {
                 (StatusCode::BAD_REQUEST, "InvalidParameterException")

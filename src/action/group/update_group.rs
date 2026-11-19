@@ -11,6 +11,7 @@ use crate::{
     error::{AppError, Result},
     storage::Storage,
     types::UserPoolId,
+    validation::validate_group_settings,
 };
 
 #[derive(Debug, Deserialize)]
@@ -25,6 +26,11 @@ struct Request {
 
 pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
     let req: Request = crate::action::io::parse_request(body)?;
+    validate_group_settings(
+        req.description.as_deref(),
+        req.role_arn.as_deref(),
+        req.precedence,
+    )?;
 
     storage
         .get_user_pool(&req.user_pool_id)
@@ -182,5 +188,42 @@ mod tests {
 
         assert!(result.is_err());
         assert!(matches!(result.unwrap_err(), AppError::UserPoolNotFound));
+    }
+
+    #[tokio::test]
+    async fn test_update_group_validates_the_new_settings() {
+        let storage = Storage::new();
+
+        let pool = create_user_pool::handler(&storage, json!({"PoolName": "test-pool"}))
+            .await
+            .unwrap();
+        let pool_id = pool["UserPool"]["Id"].as_str().unwrap();
+
+        create_group::handler(
+            &storage,
+            json!({"UserPoolId": pool_id, "GroupName": "admins", "Precedence": 1}),
+        )
+        .await
+        .unwrap();
+
+        let result = handler(
+            &storage,
+            json!({"UserPoolId": pool_id, "GroupName": "admins", "Precedence": -5}),
+        )
+        .await;
+        assert!(matches!(
+            result,
+            Err(AppError::InvalidParameter(message))
+                if message == "1 validation error detected: Value '-5' at 'precedence' failed to satisfy constraint: Member must have value greater than or equal to 0"
+        ));
+
+        let missing = handler(
+            &storage,
+            json!({"UserPoolId": pool_id, "GroupName": "nobody"}),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(missing.status_and_type().1, "ResourceNotFoundException");
+        assert_eq!(missing.to_string(), "Group not found.");
     }
 }
