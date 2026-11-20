@@ -146,5 +146,3 @@ client.
 **Before committing:** run `scripts/check.sh --fix`. It formats the code, then
 runs the spec drift check, `cargo clippy --all-targets -- -D warnings`, and
 `cargo test`, and stops at the first failure.
-
-**Important:** Commit your changes but **DO NOT push**. The user will review and push manually.
