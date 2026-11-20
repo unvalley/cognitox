@@ -9,6 +9,7 @@ export default defineConfig({
     port: 5173,
     proxy: {
       '/oauth2': 'http://localhost:9229',
+      '/mfa': 'http://localhost:9229',
       '/.well-known': 'http://localhost:9229',
     }
   }

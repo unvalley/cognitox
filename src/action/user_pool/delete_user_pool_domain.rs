@@ -19,26 +19,23 @@ struct Request {
 }
 
 pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
-    let req: Request = serde_json::from_value(body)
-        .map_err(|e| AppError::InvalidParameter(format!("Invalid request: {}", e)))?;
+    let req: Request = crate::action::io::parse_request(body)?;
 
-    // Check if domain exists
-    let existing = storage.get_user_pool_domain(&req.domain).await;
+    // A domain that does not exist and a domain of another user pool get
+    // the same answer.
+    let no_such_domain =
+        || AppError::InvalidParameter("No such domain or user pool exists.".to_string());
 
-    match existing {
-        Some(domain) => {
-            // Verify the domain belongs to the specified user pool
-            if domain.user_pool_id != req.user_pool_id {
-                return Err(AppError::InvalidParameter(
-                    "Domain does not belong to the specified user pool".to_string(),
-                ));
-            }
-
-            storage.delete_user_pool_domain(&req.domain).await;
-            Ok(json!({}))
-        }
-        None => Err(AppError::UserPoolDomainNotFound),
+    let domain = storage
+        .get_user_pool_domain(&req.domain)
+        .await
+        .ok_or_else(no_such_domain)?;
+    if domain.user_pool_id != req.user_pool_id {
+        return Err(no_such_domain());
     }
+
+    storage.delete_user_pool_domain(&req.domain).await;
+    Ok(json!({}))
 }
 
 #[cfg(test)]
@@ -98,7 +95,11 @@ mod tests {
         )
         .await;
 
-        assert!(result.is_err());
+        assert!(matches!(
+            result,
+            Err(AppError::InvalidParameter(message))
+                if message == "No such domain or user pool exists."
+        ));
     }
 
     #[tokio::test]
@@ -137,6 +138,17 @@ mod tests {
         )
         .await;
 
-        assert!(result.is_err());
+        // Indistinguishable from a domain that does not exist.
+        assert!(matches!(
+            result,
+            Err(AppError::InvalidParameter(message))
+                if message == "No such domain or user pool exists."
+        ));
+        assert!(
+            storage
+                .get_user_pool_domain(&"domain-1".to_string())
+                .await
+                .is_some()
+        );
     }
 }

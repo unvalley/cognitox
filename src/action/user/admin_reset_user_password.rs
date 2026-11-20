@@ -2,6 +2,8 @@
 //!
 //! <https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_AdminResetUserPassword.html>
 
+use std::collections::HashMap;
+
 use chrono::{Duration, Utc};
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -14,20 +16,22 @@ use crate::{
     validation::validate_username,
 };
 
-use super::helpers::{generate_confirmation_code, require_code_delivery_details};
+use super::helpers::{generate_confirmation_code, recovery_delivery};
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "PascalCase")]
 struct Request {
     user_pool_id: UserPoolId,
     username: String,
+    client_metadata: Option<HashMap<String, String>>,
 }
 
 pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
     let req: Request = parse_request(body)?;
+    let _ = &req.client_metadata;
     validate_username(&req.username)?;
 
-    storage
+    let pool = storage
         .get_user_pool(&req.user_pool_id)
         .await
         .ok_or(AppError::UserPoolNotFound)?;
@@ -37,9 +41,18 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
         .await
         .ok_or(AppError::UserNotFound)?;
 
-    let code_delivery_details = require_code_delivery_details(&user)?;
+    // A temporary password is replaced by resending the invitation, not by
+    // a reset.
+    if user.user_status == UserStatus::ForceChangePassword {
+        return Err(AppError::NotAuthorized(
+            "User password cannot be reset in the current state.".to_string(),
+        ));
+    }
 
-    // Generate password reset code
+    // The code needs a verified phone number or email address to go to.
+    let mfa_factors = storage.list_user_auth_factors(&user.id).await;
+    recovery_delivery(&pool, &user, &mfa_factors, false)?;
+
     let code = generate_confirmation_code();
     let reset_code = PasswordResetCode {
         user_id: user.id,
@@ -48,15 +61,15 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
     };
 
     storage.save_password_reset_code(reset_code).await;
+    tracing::debug!("AdminResetUserPassword code for {}: {}", req.username, code);
 
-    // Update user status to RESET_REQUIRED
+    // The current password stops working: sign-in answers
+    // PasswordResetRequiredException until ConfirmForgotPassword.
     user.user_status = UserStatus::ResetRequired;
     user.last_modified_date = Utc::now();
     storage.update_user(user.clone()).await;
 
-    Ok(json!({
-        "CodeDeliveryDetails": code_delivery_details
-    }))
+    Ok(json!({}))
 }
 
 #[cfg(test)]
@@ -80,9 +93,38 @@ mod tests {
             json!({
                 "UserPoolId": pool_id,
                 "Username": "testuser",
+                "TemporaryPassword": "TempPass123!",
                 "UserAttributes": [
-                    {"Name": "email", "Value": "test@example.com"}
+                    {"Name": "email", "Value": "test@example.com"},
+                    {"Name": "email_verified", "Value": "true"}
                 ]
+            }),
+        )
+        .await
+        .unwrap();
+
+        // A temporary password cannot be reset; the invitation is resent.
+        let result = handler(
+            &storage,
+            json!({
+                "UserPoolId": pool_id,
+                "Username": "testuser"
+            }),
+        )
+        .await;
+        assert!(matches!(
+            result,
+            Err(AppError::NotAuthorized(message))
+                if message == "User password cannot be reset in the current state."
+        ));
+
+        crate::action::user::admin_set_user_password::handler(
+            &storage,
+            json!({
+                "UserPoolId": pool_id,
+                "Username": "testuser",
+                "Password": "Password123!",
+                "Permanent": true
             }),
         )
         .await
@@ -98,8 +140,8 @@ mod tests {
         .await;
 
         assert!(result.is_ok());
-        let body = result.unwrap();
-        assert_eq!(body["CodeDeliveryDetails"]["DeliveryMedium"], "EMAIL");
+        // The response is empty; the code goes to the verified address.
+        assert_eq!(result.unwrap(), json!({}));
 
         // Verify user status changed to RESET_REQUIRED
         let pool_id_typed: UserPoolId = pool_id.parse().unwrap();
@@ -151,5 +193,53 @@ mod tests {
 
         assert!(result.is_err());
         assert!(matches!(result.unwrap_err(), AppError::UserPoolNotFound));
+    }
+
+    #[tokio::test]
+    async fn test_admin_reset_user_password_needs_a_verified_contact() {
+        let storage = Storage::new();
+
+        let pool = create_user_pool::handler(&storage, json!({"PoolName": "test"}))
+            .await
+            .unwrap();
+        let pool_id = pool["UserPool"]["Id"].as_str().unwrap();
+
+        admin_create_user::handler(
+            &storage,
+            json!({
+                "UserPoolId": pool_id,
+                "Username": "testuser",
+                "UserAttributes": [
+                    {"Name": "email", "Value": "test@example.com"}
+                ]
+            }),
+        )
+        .await
+        .unwrap();
+        crate::action::user::admin_set_user_password::handler(
+            &storage,
+            json!({
+                "UserPoolId": pool_id,
+                "Username": "testuser",
+                "Password": "Password123!",
+                "Permanent": true
+            }),
+        )
+        .await
+        .unwrap();
+
+        let result = handler(
+            &storage,
+            json!({
+                "UserPoolId": pool_id,
+                "Username": "testuser"
+            }),
+        )
+        .await;
+        assert!(matches!(
+            result,
+            Err(AppError::InvalidParameter(message))
+                if message == "Cannot reset password for the user as there is no registered/verified email or phone_number"
+        ));
     }
 }

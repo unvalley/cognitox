@@ -13,12 +13,16 @@ use crate::{
     error::{AppError, Result},
     storage::Storage,
     types::{ClientId, ConfirmationCode, User, UserAttribute, UserStatus},
-    validation::{validate_email, validate_password, validate_phone_number, validate_username},
+    validation::{
+        validate_email, validate_password_against_policy, validate_phone_number, validate_username,
+    },
 };
 
 use super::helpers::{
-    build_code_delivery_details, find_user_attribute_value, generate_confirmation_code,
-    hash_password, sync_user_profile_attributes, verify_secret_hash,
+    AttributeWriter, confirmation_delivery, find_user_attribute_value, generate_confirmation_code,
+    new_user_identity, remove_user_attribute, require_schema_attributes, set_user_password,
+    sync_user_profile_attributes, upsert_user_attribute, username_taken, validate_attribute_write,
+    verify_secret_hash,
 };
 
 #[derive(Debug, Deserialize)]
@@ -49,11 +53,9 @@ struct Request {
 }
 
 pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
-    let req: Request = serde_json::from_value(body)
-        .map_err(|e| AppError::InvalidParameter(format!("Invalid request: {}", e)))?;
+    let req: Request = crate::action::io::parse_request(body)?;
     let _ = (
         &req.validation_data,
-        &req.secret_hash,
         &req.client_metadata,
         req.user_context_data
             .as_ref()
@@ -65,7 +67,6 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
 
     // Validate input
     validate_username(&req.username)?;
-    validate_password(&req.password)?;
 
     if let Some(email) = req
         .user_attributes
@@ -87,69 +88,113 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
         .await
         .ok_or(AppError::UserPoolClientNotFound)?;
     verify_secret_hash(&client, &req.username, req.secret_hash.as_deref())?;
+    let pool = storage
+        .get_user_pool(&client.user_pool_id)
+        .await
+        .ok_or(AppError::UserPoolNotFound)?;
+
+    if pool
+        .admin_create_user_config
+        .as_ref()
+        .and_then(|config| config.allow_admin_create_user_only)
+        == Some(true)
+    {
+        return Err(AppError::NotAuthorized(
+            "SignUp is not permitted for this user pool".to_string(),
+        ));
+    }
+    validate_password_against_policy(&pool, &req.password)?;
+    validate_attribute_write(
+        &pool,
+        AttributeWriter::Client(Some(&client)),
+        req.user_attributes.as_deref().unwrap_or_default(),
+        false,
+    )?;
 
     if storage
         .get_user_by_username(&client.user_pool_id, &req.username)
         .await
         .is_some()
     {
-        return Err(AppError::UserAlreadyExists);
+        return Err(username_taken(
+            &pool,
+            &req.username,
+            AppError::UserAlreadyExists,
+        ));
     }
 
     let now = Utc::now();
     let user_id = Uuid::new_v4();
+    let mut attributes = req.user_attributes.unwrap_or_default();
+    let username = new_user_identity(&pool, &user_id, &req.username, &mut attributes)?;
+    require_schema_attributes(&pool, &attributes)?;
 
     let mut user = User {
         id: user_id,
         user_pool_id: client.user_pool_id.clone(),
-        username: req.username.clone(),
+        username,
         email: None,
         phone_number: None,
-        password_hash: hash_password(&req.password).map_err(AppError::Internal)?,
+        password_hash: String::new(),
         enabled: true,
         user_status: UserStatus::Unconfirmed,
-        attributes: req.user_attributes.unwrap_or_default(),
+        attributes,
         creation_date: now,
         last_modified_date: now,
+        srp_salt: None,
+        srp_verifier: None,
+        password_set_at: None,
     };
+    set_user_password(&mut user, &req.password)?;
     sync_user_profile_attributes(&mut user);
 
-    let email = user.email.clone();
-    let phone_number = user.phone_number.clone();
+    // A self-registered address or number starts out unverified, whatever
+    // the request claims.
+    for (present, verified_attribute) in [
+        (user.email.is_some(), "email_verified"),
+        (user.phone_number.is_some(), "phone_number_verified"),
+    ] {
+        if present {
+            upsert_user_attribute(
+                &mut user.attributes,
+                verified_attribute,
+                Some("false".to_string()),
+            );
+        } else {
+            remove_user_attribute(&mut user.attributes, verified_attribute);
+        }
+    }
+
+    let code_delivery_details = confirmation_delivery(&pool, &user);
 
     storage
         .try_create_user(user)
         .await
         .ok_or(AppError::UserAlreadyExists)?;
 
-    let code = generate_confirmation_code();
-    let confirmation = ConfirmationCode {
-        user_id,
-        attribute_name: None,
-        code: code.clone(),
-        expires_at: now + Duration::hours(24),
-    };
-    storage.save_confirmation_code(confirmation).await;
+    // A code only goes out when the user pool verifies an attribute the
+    // user has. Otherwise an administrator has to confirm the user.
+    if code_delivery_details.is_some() {
+        let code = generate_confirmation_code();
+        let confirmation = ConfirmationCode {
+            user_id,
+            attribute_name: None,
+            code: code.clone(),
+            expires_at: now + Duration::hours(24),
+        };
+        storage.save_confirmation_code(confirmation).await;
 
-    tracing::debug!("SignUp confirmation code for {}: {}", req.username, code);
+        tracing::debug!("SignUp confirmation code for {}: {}", req.username, code);
+    }
 
-    let code_delivery_details =
-        build_code_delivery_details(email.as_deref(), phone_number.as_deref()).unwrap_or_else(
-            || {
-                json!({
-                    "Destination": "",
-                    "DeliveryMedium": "EMAIL",
-                    "AttributeName": "email"
-                })
-            },
-        );
-
-    Ok(json!({
+    let mut response = json!({
         "UserConfirmed": false,
-        "UserSub": user_id.to_string(),
-        "Session": null,
-        "CodeDeliveryDetails": code_delivery_details
-    }))
+        "UserSub": user_id.to_string()
+    });
+    if let Some(code_delivery_details) = code_delivery_details {
+        response["CodeDeliveryDetails"] = code_delivery_details;
+    }
+    Ok(response)
 }
 
 #[cfg(test)]
@@ -162,15 +207,22 @@ mod tests {
     use crate::types::UserPoolId;
 
     async fn setup_pool_and_client(storage: &Storage) -> (String, String) {
-        let pool = create_user_pool::handler(storage, json!({"PoolName": "test"}))
-            .await
-            .unwrap();
+        let pool = create_user_pool::handler(
+            storage,
+            json!({
+                "PoolName": "test",
+                "AutoVerifiedAttributes": ["email", "phone_number"]
+            }),
+        )
+        .await
+        .unwrap();
         let pool_id = pool["UserPool"]["Id"].as_str().unwrap().to_string();
 
         let client = create_user_pool_client::handler(
             storage,
             json!({
                 "UserPoolId": pool_id,
+                "ExplicitAuthFlows": ["ALLOW_USER_PASSWORD_AUTH", "ALLOW_ADMIN_USER_PASSWORD_AUTH", "ALLOW_USER_SRP_AUTH", "ALLOW_REFRESH_TOKEN_AUTH"],
                 "ClientName": "test-client"
             }),
         )
@@ -206,12 +258,15 @@ mod tests {
         let body = result.unwrap();
         assert_eq!(body["UserConfirmed"], false);
         assert!(body["UserSub"].as_str().is_some());
-        assert!(
-            body["CodeDeliveryDetails"]["Destination"]
-                .as_str()
-                .unwrap()
-                .contains("***")
+        assert_eq!(
+            body["CodeDeliveryDetails"],
+            json!({
+                "Destination": "t***@e***",
+                "DeliveryMedium": "EMAIL",
+                "AttributeName": "email"
+            })
         );
+        assert!(body.get("Session").is_none());
 
         let pool_id = UserPoolId::new(pool_id).unwrap();
         let user = storage
@@ -219,6 +274,106 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(user.email.as_deref(), Some("test@example.com"));
+        // The address is unverified until the code comes back.
+        assert!(
+            user.attributes
+                .iter()
+                .any(|attribute| attribute.name == "email_verified"
+                    && attribute.value.as_deref() == Some("false"))
+        );
+        // Cognito sends six-digit codes.
+        let code = storage.get_confirmation_code(&user.id).await.unwrap().code;
+        assert_eq!(code.len(), 6);
+        assert!(code.chars().all(|ch| ch.is_ascii_digit()));
+    }
+
+    #[tokio::test]
+    async fn test_sign_up_without_auto_verification_delivers_no_code() {
+        let storage = Storage::new();
+        let pool = create_user_pool::handler(&storage, json!({"PoolName": "test"}))
+            .await
+            .unwrap();
+        let client = create_user_pool_client::handler(
+            &storage,
+            json!({"UserPoolId": pool["UserPool"]["Id"], "ClientName": "test-client"}),
+        )
+        .await
+        .unwrap();
+
+        let body = handler(
+            &storage,
+            json!({
+                "ClientId": client["UserPoolClient"]["ClientId"],
+                "Username": "testuser",
+                "Password": "Password123!",
+                "UserAttributes": [
+                    {"Name": "email", "Value": "test@example.com"}
+                ]
+            }),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(body["UserConfirmed"], false);
+        assert!(body.get("CodeDeliveryDetails").is_none());
+    }
+
+    #[tokio::test]
+    async fn test_sign_up_enforces_the_password_policy() {
+        let storage = Storage::new();
+        let (_pool_id, client_id) = setup_pool_and_client(&storage).await;
+
+        let result = handler(
+            &storage,
+            json!({
+                "ClientId": client_id,
+                "Username": "testuser",
+                "Password": "password"
+            }),
+        )
+        .await;
+
+        assert!(matches!(
+            result,
+            Err(AppError::InvalidPassword(message))
+                if message == "Password did not conform with policy: Password must have uppercase characters"
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_sign_up_is_refused_when_only_admins_create_users() {
+        let storage = Storage::new();
+        let pool = create_user_pool::handler(
+            &storage,
+            json!({
+                "PoolName": "test",
+                "AdminCreateUserConfig": {"AllowAdminCreateUserOnly": true}
+            }),
+        )
+        .await
+        .unwrap();
+        let client = create_user_pool_client::handler(
+            &storage,
+            json!({"UserPoolId": pool["UserPool"]["Id"], "ClientName": "test-client"}),
+        )
+        .await
+        .unwrap();
+
+        let result = handler(
+            &storage,
+            json!({
+                "ClientId": client["UserPoolClient"]["ClientId"],
+                "Username": "testuser",
+                "Password": "Password123!"
+            }),
+        )
+        .await;
+
+        assert!(matches!(
+            result,
+            Err(AppError::NotAuthorized(message))
+                if message == "SignUp is not permitted for this user pool"
+        ));
     }
 
     #[tokio::test]
@@ -292,6 +447,7 @@ mod tests {
             &storage,
             json!({
                 "UserPoolId": pool_id,
+                "ExplicitAuthFlows": ["ALLOW_USER_PASSWORD_AUTH", "ALLOW_ADMIN_USER_PASSWORD_AUTH", "ALLOW_USER_SRP_AUTH", "ALLOW_REFRESH_TOKEN_AUTH"],
                 "ClientName": "secret-client",
                 "GenerateSecret": true
             }),

@@ -11,8 +11,8 @@ use crate::{
 };
 
 use super::helpers::{
-    build_mfa_options, build_user_attributes, preferred_mfa_setting,
-    verify_and_extract_active_user_id,
+    build_mfa_options, build_user_attributes, preferred_mfa_setting, readable_attributes,
+    verify_access_token_with_client,
 };
 
 #[derive(Debug, Deserialize)]
@@ -22,27 +22,32 @@ struct Request {
 }
 
 pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
-    let req: Request = serde_json::from_value(body)
-        .map_err(|e| AppError::InvalidParameter(format!("Invalid request: {}", e)))?;
+    let req: Request = crate::action::io::parse_request(body)?;
 
-    let user_id = verify_and_extract_active_user_id(storage, &req.access_token)
-        .await
-        .map_err(|_| AppError::InvalidAccessToken)?;
+    let (user_id, client) = verify_access_token_with_client(storage, &req.access_token).await?;
 
     let user = storage
         .get_user(&user_id)
         .await
         .ok_or(AppError::UserNotFound)?;
     let user_mfa_setting_list = storage.list_user_auth_factors(&user_id).await;
-    let preferred_mfa_setting = preferred_mfa_setting(&user, &user_mfa_setting_list);
 
-    Ok(json!({
+    let mut response = json!({
         "Username": user.username,
-        "UserAttributes": build_user_attributes(&user),
-        "MFAOptions": build_mfa_options(&user, &user_mfa_setting_list),
-        "PreferredMfaSetting": preferred_mfa_setting,
-        "UserMFASettingList": user_mfa_setting_list
-    }))
+        "UserAttributes": readable_attributes(client.as_ref(), build_user_attributes(&user))
+    });
+    // The MFA members are present only for users who have MFA factors.
+    let mfa_options = build_mfa_options(&user, &user_mfa_setting_list);
+    if !mfa_options.is_empty() {
+        response["MFAOptions"] = json!(mfa_options);
+    }
+    if !user_mfa_setting_list.is_empty() {
+        response["UserMFASettingList"] = json!(user_mfa_setting_list);
+        if let Some(preferred) = preferred_mfa_setting(&user, &[]) {
+            response["PreferredMfaSetting"] = json!(preferred);
+        }
+    }
+    Ok(response)
 }
 
 #[cfg(test)]
@@ -63,6 +68,7 @@ mod tests {
             storage,
             json!({
                 "UserPoolId": pool_id,
+                "ExplicitAuthFlows": ["ALLOW_USER_PASSWORD_AUTH", "ALLOW_ADMIN_USER_PASSWORD_AUTH", "ALLOW_USER_SRP_AUTH", "ALLOW_REFRESH_TOKEN_AUTH"],
                 "ClientName": "test-client"
             }),
         )

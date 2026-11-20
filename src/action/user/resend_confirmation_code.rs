@@ -15,7 +15,8 @@ use crate::{
 };
 
 use super::helpers::{
-    generate_confirmation_code, require_code_delivery_details, verify_secret_hash,
+    confirmation_delivery, generate_confirmation_code, hides_user_existence,
+    simulated_code_delivery, verify_secret_hash,
 };
 
 #[derive(Debug, Deserialize)]
@@ -50,18 +51,35 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
         .ok_or(AppError::UserPoolClientNotFound)?;
     verify_secret_hash(&client, &req.username, req.secret_hash.as_deref())?;
 
-    let user = storage
+    let pool = storage
+        .get_user_pool(&client.user_pool_id)
+        .await
+        .ok_or(AppError::UserPoolNotFound)?;
+
+    let Some(user) = storage
         .get_user_by_username(&client.user_pool_id, &req.username)
         .await
-        .ok_or(AppError::UserNotFound)?;
+    else {
+        // An app client that hides user existence pretends a code went out.
+        return if hides_user_existence(&client) {
+            Ok(json!({
+                "CodeDeliveryDetails": simulated_code_delivery(&req.username)
+            }))
+        } else {
+            Err(AppError::UserNotFound)
+        };
+    };
 
-    if user.user_status == UserStatus::Confirmed {
-        return Err(AppError::NotAuthorized(
-            "User cannot be resent a confirmation code. Current status is CONFIRMED".to_string(),
+    if user.user_status != UserStatus::Unconfirmed {
+        return Err(AppError::InvalidParameter(
+            "User is already confirmed.".to_string(),
         ));
     }
 
-    let code_delivery_details = require_code_delivery_details(&user)?;
+    // The code goes to the attribute the user pool verifies automatically.
+    let code_delivery_details = confirmation_delivery(&pool, &user).ok_or_else(|| {
+        AppError::InvalidParameter("Auto verification not turned on.".to_string())
+    })?;
 
     let code = generate_confirmation_code();
     let confirmation = ConfirmationCode {
@@ -88,15 +106,19 @@ mod tests {
     use crate::action::user_pool::{create_user_pool, create_user_pool_client};
 
     async fn setup_pool_and_client(storage: &Storage) -> (String, String) {
-        let pool = create_user_pool::handler(storage, json!({"PoolName": "test"}))
-            .await
-            .unwrap();
+        let pool = create_user_pool::handler(
+            storage,
+            json!({"PoolName": "test", "AutoVerifiedAttributes": ["email", "phone_number"]}),
+        )
+        .await
+        .unwrap();
         let pool_id = pool["UserPool"]["Id"].as_str().unwrap().to_string();
 
         let client = create_user_pool_client::handler(
             storage,
             json!({
                 "UserPoolId": pool_id,
+                "ExplicitAuthFlows": ["ALLOW_USER_PASSWORD_AUTH", "ALLOW_ADMIN_USER_PASSWORD_AUTH", "ALLOW_USER_SRP_AUTH", "ALLOW_REFRESH_TOKEN_AUTH"],
                 "ClientName": "test-client"
             }),
         )
@@ -225,7 +247,10 @@ mod tests {
         )
         .await;
 
-        assert!(matches!(result, Err(AppError::NotAuthorized(_))));
+        assert!(matches!(
+            result,
+            Err(AppError::InvalidParameter(message)) if message == "User is already confirmed."
+        ));
     }
 
     #[tokio::test]

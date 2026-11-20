@@ -8,7 +8,7 @@ use std::str::FromStr;
 use axum::{
     Json,
     extract::State,
-    http::{HeaderMap, StatusCode},
+    http::{HeaderMap, HeaderValue, StatusCode},
     response::IntoResponse,
 };
 use serde_json::Value;
@@ -39,23 +39,43 @@ pub async fn handle_request(
 
     let operation_str = target.strip_prefix(TARGET_PREFIX).unwrap_or(target);
 
+    // Cognito names the missing resource in `ResourceNotFoundException`
+    // messages; keep the identifiers the request addressed for that.
+    let error_context = resource_identifiers(&body);
+
     let result = match operation_str.parse::<Action>() {
         Ok(op) => dispatch_action(&storage, op, body).await,
         Err(e) => {
             warn!("Unknown operation: {}", e.0);
-            Err(AppError::NotImplemented(e.0))
+            Err(AppError::UnknownOperation(e.0))
         }
     };
 
-    match result {
+    let mut response = match result {
         Ok(response) => (
             StatusCode::OK,
             [("content-type", "application/x-amz-json-1.1")],
             Json(response),
         )
             .into_response(),
-        Err(e) => e.into_response(),
+        Err(e) => e.into_cognito_response(Some(&error_context)),
+    };
+    if let Ok(request_id) = HeaderValue::from_str(&uuid::Uuid::new_v4().to_string()) {
+        response
+            .headers_mut()
+            .insert("x-amzn-requestid", request_id);
     }
+    response
+}
+
+fn resource_identifiers(body: &Value) -> Value {
+    let mut context = serde_json::Map::new();
+    for key in ["UserPoolId", "ClientId"] {
+        if let Some(value) = body.get(key).filter(|value| value.is_string()) {
+            context.insert(key.to_string(), value.clone());
+        }
+    }
+    Value::Object(context)
 }
 
 #[derive(Debug, Clone)]

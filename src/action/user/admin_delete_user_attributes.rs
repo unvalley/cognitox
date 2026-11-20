@@ -23,8 +23,7 @@ struct Request {
 }
 
 pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
-    let req: Request = serde_json::from_value(body)
-        .map_err(|e| AppError::InvalidParameter(format!("Invalid request: {}", e)))?;
+    let req: Request = crate::action::io::parse_request(body)?;
 
     storage
         .get_user_pool(&req.user_pool_id)
@@ -68,7 +67,7 @@ mod tests {
     async fn test_admin_delete_user_attributes_success() {
         let storage = Storage::new();
 
-        let pool = create_user_pool::handler(&storage, json!({"PoolName": "test"}))
+        let pool = create_user_pool::handler(&storage, json!({"PoolName": "test", "Schema": [{"Name": "role", "AttributeDataType": "String"}]}))
             .await
             .unwrap();
         let pool_id = pool["UserPool"]["Id"].as_str().unwrap();

@@ -27,8 +27,7 @@ struct CustomDomainConfigInput {
 }
 
 pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
-    let req: Request = serde_json::from_value(body)
-        .map_err(|e| AppError::InvalidParameter(format!("Invalid request: {}", e)))?;
+    let req: Request = crate::action::io::parse_request(body)?;
 
     // Get existing domain
     let existing = storage.get_user_pool_domain(&req.domain).await;

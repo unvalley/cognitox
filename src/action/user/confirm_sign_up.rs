@@ -10,11 +10,14 @@ use crate::{
     action::io::parse_request,
     error::{AppError, Result},
     storage::Storage,
-    types::{ClientId, UserStatus},
+    types::{AutoVerifiedAttribute, ClientId, UserStatus},
     validation::{validate_confirmation_code, validate_username},
 };
 
-use super::helpers::{normalize_confirmation_code, verify_secret_hash};
+use super::helpers::{
+    confirmation_attribute, ensure_alias_free, hides_user_existence, normalize_confirmation_code,
+    upsert_user_attribute, verify_secret_hash,
+};
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "PascalCase")]
@@ -41,7 +44,6 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
     let _ = (
         &req.analytics_metadata,
         &req.client_metadata,
-        &req.force_alias_creation,
         &req.secret_hash,
         &req.user_context_data,
     );
@@ -58,7 +60,11 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
     let mut user = storage
         .get_user_by_username(&client.user_pool_id, &req.username)
         .await
-        .ok_or(AppError::UserNotFound)?;
+        .ok_or(if hides_user_existence(&client) {
+            AppError::ExpiredCode
+        } else {
+            AppError::UserNotFound
+        })?;
 
     if user.user_status == UserStatus::Confirmed {
         return Err(AppError::NotAuthorized(
@@ -66,10 +72,12 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
         ));
     }
 
+    // Without a pending code there is nothing to match against; Cognito
+    // answers as it does for a code that has expired.
     let confirmation = storage
         .get_confirmation_code(&user.id)
         .await
-        .ok_or(AppError::InvalidConfirmationCode)?;
+        .ok_or(AppError::ExpiredCode)?;
 
     // Normalize codes for comparison (removes dashes, converts to uppercase)
     if normalize_confirmation_code(&confirmation.code)
@@ -83,6 +91,49 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
         return Err(AppError::ExpiredCode);
     }
 
+    // Returning the code proves control of the address or number it was
+    // sent to.
+    let pool = storage
+        .get_user_pool(&client.user_pool_id)
+        .await
+        .ok_or(AppError::UserPoolNotFound)?;
+    if let Some(attribute) = confirmation_attribute(&pool, &user) {
+        let (name, verified_attribute, value) = match attribute {
+            AutoVerifiedAttribute::Email => ("email", "email_verified", user.email.clone()),
+            AutoVerifiedAttribute::PhoneNumber => (
+                "phone_number",
+                "phone_number_verified",
+                user.phone_number.clone(),
+            ),
+        };
+        // The verified value becomes a sign-in alias. If another user holds
+        // it, confirmation fails unless the caller asks to take it over.
+        if let Err(taken) = ensure_alias_free(storage, &pool, &user, name).await {
+            if req.force_alias_creation != Some(true) {
+                return Err(taken);
+            }
+            while let Some(owner) = match value.as_deref() {
+                Some(value) => storage.get_user_by_alias(&pool.id, value).await,
+                None => None,
+            } {
+                storage
+                    .update_user_with(&owner.id, |owner| {
+                        upsert_user_attribute(
+                            &mut owner.attributes,
+                            verified_attribute,
+                            Some("false".to_string()),
+                        );
+                    })
+                    .await;
+            }
+        }
+        upsert_user_attribute(
+            &mut user.attributes,
+            verified_attribute,
+            Some("true".to_string()),
+        );
+    }
+
     user.user_status = UserStatus::Confirmed;
     user.last_modified_date = Utc::now();
     storage.update_user(user).await;
@@ -90,9 +141,11 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
         .delete_confirmation_code(&confirmation.user_id)
         .await;
 
-    Ok(json!({
-        "Session": req.session
-    }))
+    let mut response = json!({});
+    if let Some(session) = req.session {
+        response["Session"] = json!(session);
+    }
+    Ok(response)
 }
 
 #[cfg(test)]
@@ -105,15 +158,19 @@ mod tests {
     use crate::types::UserPoolId;
 
     async fn setup_pool_and_client(storage: &Storage) -> (String, String) {
-        let pool = create_user_pool::handler(storage, json!({"PoolName": "test"}))
-            .await
-            .unwrap();
+        let pool = create_user_pool::handler(
+            storage,
+            json!({"PoolName": "test", "AutoVerifiedAttributes": ["email", "phone_number"]}),
+        )
+        .await
+        .unwrap();
         let pool_id = pool["UserPool"]["Id"].as_str().unwrap().to_string();
 
         let client = create_user_pool_client::handler(
             storage,
             json!({
                 "UserPoolId": pool_id,
+                "ExplicitAuthFlows": ["ALLOW_USER_PASSWORD_AUTH", "ALLOW_ADMIN_USER_PASSWORD_AUTH", "ALLOW_USER_SRP_AUTH", "ALLOW_REFRESH_TOKEN_AUTH"],
                 "ClientName": "test-client"
             }),
         )
@@ -138,7 +195,10 @@ mod tests {
             json!({
                 "ClientId": client_id,
                 "Username": "testuser",
-                "Password": "Password123!"
+                "Password": "Password123!",
+                "UserAttributes": [
+                    {"Name": "email", "Value": "test@example.com"}
+                ]
             }),
         )
         .await
@@ -182,7 +242,10 @@ mod tests {
             json!({
                 "ClientId": client_id,
                 "Username": "testuser",
-                "Password": "Password123!"
+                "Password": "Password123!",
+                "UserAttributes": [
+                    {"Name": "email", "Value": "test@example.com"}
+                ]
             }),
         )
         .await
@@ -229,7 +292,10 @@ mod tests {
             json!({
                 "ClientId": client_id,
                 "Username": "testuser",
-                "Password": "Password123!"
+                "Password": "Password123!",
+                "UserAttributes": [
+                    {"Name": "email", "Value": "test@example.com"}
+                ]
             }),
         )
         .await
@@ -269,7 +335,10 @@ mod tests {
             json!({
                 "ClientId": client_id,
                 "Username": "testuser",
-                "Password": "Password123!"
+                "Password": "Password123!",
+                "UserAttributes": [
+                    {"Name": "email", "Value": "test@example.com"}
+                ]
             }),
         )
         .await

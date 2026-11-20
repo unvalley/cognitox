@@ -2,6 +2,7 @@
 //!
 //! <https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_ListUsers.html>
 
+use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use serde::Deserialize;
 use serde_json::{Value, json};
 
@@ -16,9 +17,14 @@ use crate::{
 #[serde(rename_all = "PascalCase")]
 struct Request {
     user_pool_id: UserPoolId,
-    limit: Option<u32>,
+    attributes_to_get: Option<Vec<String>>,
+    limit: Option<i64>,
+    pagination_token: Option<String>,
     filter: Option<String>,
 }
+
+/// Cognito returns at most 60 users per call, and that many by default.
+const MAX_LIMIT: i64 = 60;
 
 /// Attributes that `Filter` can search on. Custom attributes are not searchable.
 const SEARCHABLE_ATTRIBUTES: [&str; 10] = [
@@ -101,8 +107,20 @@ impl Filter {
 }
 
 pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
-    let req: Request = serde_json::from_value(body)
-        .map_err(|e| AppError::InvalidParameter(format!("Invalid request: {}", e)))?;
+    let req: Request = crate::action::io::parse_request(body)?;
+
+    if let Some(limit) = req.limit
+        && !(0..=MAX_LIMIT).contains(&limit)
+    {
+        let bound = if limit < 0 {
+            "greater than or equal to 0".to_string()
+        } else {
+            format!("less than or equal to {MAX_LIMIT}")
+        };
+        return Err(AppError::InvalidParameter(format!(
+            "1 validation error detected: Value '{limit}' at 'limit' failed to satisfy constraint: Member must have value {bound}"
+        )));
+    }
 
     storage
         .get_user_pool(&req.user_pool_id)
@@ -114,26 +132,75 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
         let filter = Filter::parse(filter)?;
         users.retain(|user| filter.matches(user));
     }
-    let limit = req.limit.unwrap_or(60) as usize;
+    // A stable order, so that pages do not overlap.
+    users.sort_by(|left, right| {
+        left.creation_date
+            .cmp(&right.creation_date)
+            .then_with(|| left.id.cmp(&right.id))
+    });
 
-    let users_json: Vec<_> = users
+    // The token names the last user of the previous page.
+    let start = match req.pagination_token.as_deref() {
+        Some(token) => {
+            let invalid =
+                || AppError::InvalidParameter("Invalid pagination token given.".to_string());
+            let last_seen = URL_SAFE_NO_PAD
+                .decode(token)
+                .ok()
+                .and_then(|bytes| String::from_utf8(bytes).ok())
+                .and_then(|id| uuid::Uuid::parse_str(&id).ok())
+                .ok_or_else(invalid)?;
+            users
+                .iter()
+                .position(|user| user.id == last_seen)
+                .map(|position| position + 1)
+                .ok_or_else(invalid)?
+        }
+        None => 0,
+    };
+
+    let limit = match req.limit {
+        Some(0) | None => MAX_LIMIT,
+        Some(limit) => limit,
+    } as usize;
+    let page: Vec<&User> = users.iter().skip(start).take(limit).collect();
+    let next_token = (start + page.len() < users.len())
+        .then(|| {
+            page.last()
+                .map(|user| URL_SAFE_NO_PAD.encode(user.id.to_string()))
+        })
+        .flatten();
+
+    let users_json: Vec<_> = page
         .into_iter()
-        .take(limit)
         .map(|u| {
+            let mut attributes = build_user_attributes(u);
+            // An empty list selects no attributes; a missing one, all.
+            if let Some(wanted) = &req.attributes_to_get {
+                attributes.retain(|attribute| {
+                    attribute["Name"]
+                        .as_str()
+                        .is_some_and(|name| wanted.iter().any(|wanted| wanted == name))
+                });
+            }
             json!({
                 "Username": u.username,
                 "Enabled": u.enabled,
                 "UserStatus": u.user_status,
                 "UserCreateDate": u.creation_date.timestamp(),
                 "UserLastModifiedDate": u.last_modified_date.timestamp(),
-                "Attributes": build_user_attributes(&u)
+                "Attributes": attributes
             })
         })
         .collect();
 
-    Ok(json!({
+    let mut response = json!({
         "Users": users_json
-    }))
+    });
+    if let Some(next_token) = next_token {
+        response["PaginationToken"] = json!(next_token);
+    }
+    Ok(response)
 }
 
 #[cfg(test)]
@@ -154,6 +221,7 @@ mod tests {
             storage,
             json!({
                 "UserPoolId": pool_id,
+                "ExplicitAuthFlows": ["ALLOW_USER_PASSWORD_AUTH", "ALLOW_ADMIN_USER_PASSWORD_AUTH", "ALLOW_USER_SRP_AUTH", "ALLOW_REFRESH_TOKEN_AUTH"],
                 "ClientName": "test-client"
             }),
         )
@@ -321,5 +389,76 @@ mod tests {
         let body = result.unwrap();
         let users = body["Users"].as_array().unwrap();
         assert!(users.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_list_users_pages_through_every_user_once() {
+        let storage = Storage::new();
+        let (pool_id, client_id) = setup_pool_and_client(&storage).await;
+        for index in 0..5 {
+            sign_up::handler(
+                &storage,
+                json!({
+                    "ClientId": client_id,
+                    "Username": format!("user{index}"),
+                    "Password": "Password123!",
+                    "UserAttributes": [
+                        {"Name": "email", "Value": format!("user{index}@example.com")},
+                        {"Name": "name", "Value": format!("User {index}")}
+                    ]
+                }),
+            )
+            .await
+            .unwrap();
+        }
+
+        let mut seen = Vec::new();
+        let mut token: Option<String> = None;
+        loop {
+            let mut request = json!({
+                "UserPoolId": pool_id,
+                "Limit": 2,
+                "AttributesToGet": ["email"]
+            });
+            if let Some(token) = &token {
+                request["PaginationToken"] = json!(token);
+            }
+            let page = handler(&storage, request).await.unwrap();
+            let users = page["Users"].as_array().unwrap();
+            assert!(users.len() <= 2);
+            for user in users {
+                let attributes = user["Attributes"].as_array().unwrap();
+                assert_eq!(attributes.len(), 1);
+                assert_eq!(attributes[0]["Name"], "email");
+                seen.push(user["Username"].as_str().unwrap().to_string());
+            }
+            match page.get("PaginationToken").and_then(Value::as_str) {
+                Some(next) => token = Some(next.to_string()),
+                None => break,
+            }
+        }
+
+        seen.sort();
+        assert_eq!(seen, ["user0", "user1", "user2", "user3", "user4"]);
+    }
+
+    #[tokio::test]
+    async fn test_list_users_validates_limit_and_token() {
+        let storage = Storage::new();
+        let (pool_id, _client_id) = setup_pool_and_client(&storage).await;
+
+        assert!(matches!(
+            handler(&storage, json!({"UserPoolId": pool_id, "Limit": 61})).await,
+            Err(AppError::InvalidParameter(message))
+                if message == "1 validation error detected: Value '61' at 'limit' failed to satisfy constraint: Member must have value less than or equal to 60"
+        ));
+        assert!(matches!(
+            handler(
+                &storage,
+                json!({"UserPoolId": pool_id, "PaginationToken": "garbage"})
+            )
+            .await,
+            Err(AppError::InvalidParameter(message)) if message == "Invalid pagination token given."
+        ));
     }
 }

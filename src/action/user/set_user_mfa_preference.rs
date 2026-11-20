@@ -57,17 +57,30 @@ pub(crate) async fn apply_user_mfa_preferences(
         }
     }
 
-    if sms_mfa_settings.and_then(|value| value.enabled) == Some(true) && user.phone_number.is_none()
-    {
-        return Err(AppError::InvalidParameter(
-            "SMS MFA requires a phone_number attribute".to_string(),
-        ));
+    // A factor can only be turned on once the user has what it delivers to:
+    // a phone number, an email address, or a verified TOTP device.
+    let turns_on = |settings: Option<&UserMfaPreferenceSettings>| {
+        settings
+            .is_some_and(|value| value.enabled == Some(true) || value.preferred_mfa == Some(true))
+    };
+    let missing_delivery = |factor: &str| {
+        Err(AppError::InvalidParameter(format!(
+            "User does not have delivery config set to turn on {factor}"
+        )))
+    };
+
+    if turns_on(sms_mfa_settings) && user.phone_number.is_none() {
+        return missing_delivery(SMS_MFA_FACTOR);
     }
 
-    if email_mfa_settings.and_then(|value| value.enabled) == Some(true) && user.email.is_none() {
-        return Err(AppError::InvalidParameter(
-            "Email MFA requires an email attribute".to_string(),
-        ));
+    if turns_on(email_mfa_settings) && user.email.is_none() {
+        return missing_delivery(EMAIL_OTP_FACTOR);
+    }
+
+    if turns_on(software_token_mfa_settings)
+        && storage.get_software_token_secret(&user.id).await.is_none()
+    {
+        return missing_delivery(SOFTWARE_TOKEN_MFA_FACTOR);
     }
 
     if email_mfa_settings.is_some()
@@ -90,6 +103,20 @@ pub(crate) async fn apply_user_mfa_preferences(
         }
     }
 
+    // Turning a factor off also ends its being the preferred one.
+    let current_preference = user
+        .attributes
+        .iter()
+        .find(|attribute| attribute.name == "preferred_mfa_setting")
+        .and_then(|attribute| attribute.value.clone());
+    let enabled_factors = storage.list_user_auth_factors(&user.id).await;
+    if current_preference
+        .as_ref()
+        .is_some_and(|preferred| !enabled_factors.contains(preferred))
+    {
+        remove_user_attribute(&mut user.attributes, "preferred_mfa_setting");
+    }
+
     if let Some(factor) = preferred_factor {
         storage.add_user_auth_factor(&user.id, factor).await;
         upsert_user_attribute(
@@ -110,9 +137,7 @@ pub(crate) async fn apply_user_mfa_preferences(
 pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
     let req: Request = parse_request(body)?;
 
-    let user_id = verify_and_extract_active_user_id(storage, &req.access_token)
-        .await
-        .map_err(|_| AppError::InvalidAccessToken)?;
+    let user_id = verify_and_extract_active_user_id(storage, &req.access_token).await?;
 
     let mut user = storage
         .get_user(&user_id)
@@ -156,6 +181,7 @@ mod tests {
             storage,
             json!({
                 "UserPoolId": pool_id,
+                "ExplicitAuthFlows": ["ALLOW_USER_PASSWORD_AUTH", "ALLOW_ADMIN_USER_PASSWORD_AUTH", "ALLOW_USER_SRP_AUTH", "ALLOW_REFRESH_TOKEN_AUTH"],
                 "ClientName": "test-client"
             }),
         )
@@ -206,6 +232,48 @@ mod tests {
     async fn test_set_user_mfa_preference_success() {
         let storage = Storage::new();
         let access_token = setup_and_get_token(&storage).await;
+
+        let result = handler(
+            &storage,
+            json!({
+                "AccessToken": access_token.clone(),
+                "SMSMfaSettings": {
+                    "Enabled": true,
+                    "PreferredMfa": false
+                },
+                "SoftwareTokenMfaSettings": {
+                    "Enabled": true,
+                    "PreferredMfa": true
+                }
+            }),
+        )
+        .await;
+
+        // TOTP cannot be turned on before a device is verified.
+        assert!(matches!(
+            result,
+            Err(AppError::InvalidParameter(message))
+                if message
+                    == "User does not have delivery config set to turn on SOFTWARE_TOKEN_MFA"
+        ));
+
+        let associated = crate::action::user::associate_software_token::handler(
+            &storage,
+            json!({ "AccessToken": access_token.clone() }),
+        )
+        .await
+        .unwrap();
+        let user_code = crate::action::user::verify_software_token::generate_totp_code(
+            associated["SecretCode"].as_str().unwrap(),
+            chrono::Utc::now().timestamp(),
+        )
+        .unwrap();
+        crate::action::user::verify_software_token::handler(
+            &storage,
+            json!({ "AccessToken": access_token.clone(), "UserCode": user_code }),
+        )
+        .await
+        .unwrap();
 
         let result = handler(
             &storage,

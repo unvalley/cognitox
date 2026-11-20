@@ -9,7 +9,10 @@ use serde::Deserialize;
 use serde_json::{Map, Value, json};
 
 use crate::{
-    action::io::parse_request,
+    action::{
+        io::parse_request,
+        user_pool::defaults::{apply_user_pool_defaults, schema_attributes_view, user_pool_arn},
+    },
     error::Result,
     storage::Storage,
     types::{
@@ -222,9 +225,17 @@ impl Request {
     }
 }
 
+/// `UserPoolType` as CreateUserPool and DescribeUserPool return it.
+///
+/// Cognito's defaults are part of the view even for a pool stored before the
+/// emulator recorded them, so every pool reads the way it behaves.
 pub(crate) fn build_user_pool_view(pool: &UserPool, estimated_number_of_users: usize) -> Value {
+    let mut pool = pool.clone();
+    apply_user_pool_defaults(&mut pool);
+
     let mut view = Map::new();
     view.insert("Id".to_string(), json!(pool.id));
+    view.insert("Arn".to_string(), json!(user_pool_arn(&pool.id)));
     view.insert("Name".to_string(), json!(pool.name));
     view.insert(
         "CreationDate".to_string(),
@@ -276,9 +287,12 @@ pub(crate) fn build_user_pool_view(pool: &UserPool, estimated_number_of_users: u
     if let Some(value) = &pool.policies {
         view.insert("Policies".to_string(), json!(value));
     }
-    if let Some(value) = &pool.schema_attributes {
-        view.insert("SchemaAttributes".to_string(), json!(value));
-    }
+    view.insert(
+        "SchemaAttributes".to_string(),
+        json!(schema_attributes_view(
+            pool.schema_attributes.as_deref().unwrap_or_default()
+        )),
+    );
     if let Some(value) = &pool.sms_authentication_message {
         view.insert("SmsAuthenticationMessage".to_string(), json!(value));
     }
@@ -327,7 +341,7 @@ pub(crate) async fn create(storage: &Storage, body: Value, id: UserPoolId) -> Re
     validate_user_pool_configuration(&config)?;
 
     let now = Utc::now();
-    let pool = UserPool {
+    let mut pool = UserPool {
         id,
         name: pool_name,
         creation_date: now,
@@ -360,6 +374,8 @@ pub(crate) async fn create(storage: &Storage, body: Value, id: UserPoolId) -> Re
         username_configuration: config.username_configuration,
         verification_message_template: config.verification_message_template,
     };
+    // Store what Cognito defaults, so the pool behaves the way it reads.
+    apply_user_pool_defaults(&mut pool);
 
     let created = storage.create_user_pool(pool).await;
 
@@ -448,11 +464,96 @@ mod tests {
             result["UserPool"]["Policies"]["PasswordPolicy"]["MinimumLength"],
             12
         );
+        // A partial policy requires only what it asks for.
         assert_eq!(
-            result["UserPool"]["SchemaAttributes"][0]["Name"],
-            "department"
+            result["UserPool"]["Policies"]["PasswordPolicy"],
+            json!({
+                "MinimumLength": 12,
+                "RequireUppercase": false,
+                "RequireLowercase": false,
+                "RequireNumbers": false,
+                "RequireSymbols": false,
+                "TemporaryPasswordValidityDays": 7
+            })
+        );
+        // Custom attributes follow the standard ones, under `custom:`.
+        let schema = result["UserPool"]["SchemaAttributes"].as_array().unwrap();
+        assert_eq!(schema[0]["Name"], "sub");
+        assert_eq!(
+            schema.last().unwrap(),
+            &json!({
+                "Name": "custom:department",
+                "AttributeDataType": "String",
+                "DeveloperOnlyAttribute": false,
+                "Mutable": true,
+                "Required": false,
+                "StringAttributeConstraints": {}
+            })
         );
         assert_eq!(result["UserPool"]["UserPoolTags"]["env"], "test");
+    }
+
+    #[tokio::test]
+    async fn test_create_user_pool_stores_cognitos_defaults() {
+        let storage = Storage::new();
+
+        let result = handler(&storage, json!({"PoolName": "bare-pool"}))
+            .await
+            .unwrap();
+        let id: UserPoolId = result["UserPool"]["Id"].as_str().unwrap().parse().unwrap();
+        let stored = storage.get_user_pool(&id).await.unwrap();
+
+        // The defaults are stored, not just reported, so sign-in and
+        // password validation see the same configuration as DescribeUserPool.
+        assert_eq!(stored.mfa_configuration, Some(MfaConfiguration::Off));
+        assert_eq!(
+            stored.deletion_protection,
+            Some(DeletionProtection::Inactive)
+        );
+        assert_eq!(stored.user_pool_tier, Some(UserPoolTier::Essentials));
+        assert_eq!(
+            stored
+                .policies
+                .as_ref()
+                .and_then(|policies| policies.password_policy.clone()),
+            Some(crate::validation::default_password_policy())
+        );
+        // The standard attributes are part of the view only: the stored
+        // schema keeps to what the caller defined.
+        assert!(stored.schema_attributes.is_none());
+        assert!(
+            result["UserPool"]["Arn"]
+                .as_str()
+                .unwrap()
+                .ends_with(&format!(":userpool/{id}"))
+        );
+    }
+
+    #[tokio::test]
+    async fn test_create_user_pool_schema_can_require_a_standard_attribute() {
+        let storage = Storage::new();
+
+        let result = handler(
+            &storage,
+            json!({
+                "PoolName": "schema-pool",
+                "Schema": [
+                    {"Name": "email", "Required": true, "Mutable": false}
+                ]
+            }),
+        )
+        .await
+        .unwrap();
+
+        let schema = result["UserPool"]["SchemaAttributes"].as_array().unwrap();
+        assert_eq!(schema.len(), 21);
+        let email = schema
+            .iter()
+            .find(|attribute| attribute["Name"] == "email")
+            .unwrap();
+        assert_eq!(email["Required"], true);
+        assert_eq!(email["Mutable"], false);
+        assert_eq!(email["AttributeDataType"], "String");
     }
 
     #[tokio::test]

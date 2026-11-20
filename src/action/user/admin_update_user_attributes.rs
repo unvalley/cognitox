@@ -14,7 +14,10 @@ use crate::{
     validation::{validate_email, validate_phone_number},
 };
 
-use super::helpers::{apply_user_attribute_updates, upsert_user_attribute};
+use super::helpers::{
+    AttributeWriter, apply_user_attribute_updates, ensure_alias_free, ensure_sign_in_names_free,
+    upsert_user_attribute, validate_attribute_write,
+};
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "PascalCase")]
@@ -30,7 +33,7 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
     let req: Request = parse_request(body)?;
     let _ = &req.client_metadata;
 
-    storage
+    let pool = storage
         .get_user_pool(&req.user_pool_id)
         .await
         .ok_or(AppError::UserPoolNotFound)?;
@@ -39,6 +42,9 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
         .get_user_by_username(&req.user_pool_id, &req.username)
         .await
         .ok_or(AppError::UserNotFound)?;
+
+    validate_attribute_write(&pool, AttributeWriter::Admin, &req.user_attributes, true)?;
+    ensure_sign_in_names_free(storage, &pool, &user.id, &req.user_attributes).await?;
 
     for new_attr in &req.user_attributes {
         match new_attr.name.as_str() {
@@ -73,6 +79,14 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
         );
     }
 
+    // An address or number an administrator marks verified becomes an alias,
+    // which only one user can hold.
+    for attribute in ["email", "phone_number"] {
+        if user.attribute_verified(attribute) {
+            ensure_alias_free(storage, &pool, &user, attribute).await?;
+        }
+    }
+
     user.last_modified_date = Utc::now();
 
     storage.update_user(user).await;
@@ -92,7 +106,7 @@ mod tests {
     async fn test_admin_update_user_attributes_success() {
         let storage = Storage::new();
 
-        let pool = create_user_pool::handler(&storage, json!({"PoolName": "test"}))
+        let pool = create_user_pool::handler(&storage, json!({"PoolName": "test", "Schema": [{"Name": "role", "AttributeDataType": "String"}]}))
             .await
             .unwrap();
         let pool_id = pool["UserPool"]["Id"].as_str().unwrap();

@@ -12,7 +12,10 @@ use crate::{
     types::UserAttribute,
 };
 
-use super::helpers::{normalize_confirmation_code, verify_and_extract_active_user_id};
+use super::helpers::{
+    apply_user_attribute_updates, ensure_alias_free, normalize_confirmation_code,
+    verify_and_extract_active_user_id,
+};
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "PascalCase")]
@@ -23,8 +26,7 @@ struct Request {
 }
 
 pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
-    let req: Request = serde_json::from_value(body)
-        .map_err(|e| AppError::InvalidParameter(format!("Invalid request: {}", e)))?;
+    let req: Request = crate::action::io::parse_request(body)?;
 
     // Validate attribute name
     let verified_attr_name = match req.attribute_name.as_str() {
@@ -38,9 +40,7 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
         }
     };
 
-    let user_id = verify_and_extract_active_user_id(storage, &req.access_token)
-        .await
-        .map_err(|_| AppError::InvalidAccessToken)?;
+    let user_id = verify_and_extract_active_user_id(storage, &req.access_token).await?;
 
     let mut user = storage
         .get_user(&user_id)
@@ -48,14 +48,12 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
         .ok_or(AppError::UserNotFound)?;
 
     // Verify the confirmation code
+    // No code was requested for this attribute, or it was already used.
     let stored_code = storage
         .get_confirmation_code(&user_id)
         .await
-        .ok_or(AppError::InvalidConfirmationCode)?;
-
-    if stored_code.attribute_name.as_deref() != Some(req.attribute_name.as_str()) {
-        return Err(AppError::InvalidConfirmationCode);
-    }
+        .filter(|code| code.attribute_name.as_deref() == Some(req.attribute_name.as_str()))
+        .ok_or(AppError::ExpiredCode)?;
 
     if stored_code.expires_at < Utc::now() {
         return Err(AppError::ExpiredCode);
@@ -67,6 +65,32 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
     if normalized_input != normalized_stored {
         return Err(AppError::InvalidConfirmationCode);
     }
+
+    // A value that was waiting for this verification takes effect now.
+    if let Some(value) = storage
+        .take_pending_attribute_update(&user_id, &req.attribute_name)
+        .await
+    {
+        apply_user_attribute_updates(
+            &mut user,
+            [UserAttribute {
+                name: req.attribute_name.clone(),
+                value: Some(value),
+            }],
+        );
+    }
+
+    // Once verified the value is a sign-in alias, which must be free.
+    let pool = storage
+        .get_user_pool(&user.user_pool_id)
+        .await
+        .ok_or(AppError::UserPoolNotFound)?;
+    let attribute: &'static str = if req.attribute_name == "email" {
+        "email"
+    } else {
+        "phone_number"
+    };
+    ensure_alias_free(storage, &pool, &user, attribute).await?;
 
     // Code is valid, mark the attribute as verified
     // Remove existing verified attribute if present
@@ -108,6 +132,7 @@ mod tests {
             storage,
             json!({
                 "UserPoolId": pool_id,
+                "ExplicitAuthFlows": ["ALLOW_USER_PASSWORD_AUTH", "ALLOW_ADMIN_USER_PASSWORD_AUTH", "ALLOW_USER_SRP_AUTH", "ALLOW_REFRESH_TOKEN_AUTH"],
                 "ClientName": "test-client"
             }),
         )
@@ -270,7 +295,8 @@ mod tests {
         )
         .await;
 
-        assert!(matches!(result, Err(AppError::InvalidConfirmationCode)));
+        // No code is pending for that attribute.
+        assert!(matches!(result, Err(AppError::ExpiredCode)));
     }
 
     #[tokio::test]

@@ -4,21 +4,17 @@
 
 use std::collections::HashMap;
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::{
-    action::io::parse_request,
+    action::io::{parse_request, to_response_value},
     error::{AppError, Result},
     storage::Storage,
     types::{ClientId, UserPoolId},
 };
 
-use super::auth_flow::{
-    AdminInitiateAuthFlow, AuthParameters, PasswordAuthResult, authenticate_with_password,
-    authenticate_with_refresh_token, build_auth_response, issue_authentication_result,
-    require_admin_password_auth_flow, require_refresh_token_auth_flow,
-};
+use super::auth_flow::{AuthApi, AuthContext, initiate_auth};
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "PascalCase")]
@@ -57,10 +53,28 @@ struct Request {
     client_metadata: Option<HashMap<String, String>>,
 }
 
+/// What a step of a sign-in answers with: tokens once it is complete, or
+/// the next challenge. Members that do not apply are left out.
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+struct Response {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    authentication_result: Option<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    available_challenges: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    challenge_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    challenge_parameters: Option<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    session: Option<String>,
+}
+
 pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
     let req: Request = parse_request(body)?;
+    // Accepted for SDK compatibility; they feed analytics, threat
+    // protection, and Lambda triggers, none of which the emulator runs.
     let _ = (
-        &req.session,
         &req.client_metadata,
         req.analytics_metadata
             .as_ref()
@@ -81,7 +95,7 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
         }),
     );
 
-    storage
+    let pool = storage
         .get_user_pool(&req.user_pool_id)
         .await
         .ok_or(AppError::UserPoolNotFound)?;
@@ -96,78 +110,22 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
         return Err(AppError::UserPoolClientNotFound);
     }
 
-    match AdminInitiateAuthFlow::parse(&req.auth_flow)? {
-        AdminInitiateAuthFlow::PasswordAuth => {
-            require_admin_password_auth_flow(&client)?;
-            let params = req
-                .auth_parameters
-                .as_ref()
-                .ok_or_else(|| AppError::InvalidParameter("AuthParameters required".to_string()))
-                .map(AuthParameters::new)?;
-
-            let username = params.require("USERNAME")?;
-            let password = params.require("PASSWORD")?;
-
-            match authenticate_with_password(
-                storage,
-                &client,
-                &req.client_id,
-                &req.user_pool_id,
-                username,
-                password,
-                params.secret_hash(),
-            )
-            .await?
-            {
-                PasswordAuthResult::Authenticated(user) => Ok(build_auth_response(
-                    issue_authentication_result(
-                        storage,
-                        &client,
-                        &req.client_id,
-                        &req.user_pool_id,
-                        &user,
-                        true,
-                        true,
-                    )
-                    .await?,
-                )),
-                PasswordAuthResult::Challenged(response) => Ok(response),
-            }
-        }
-        AdminInitiateAuthFlow::RefreshTokenAuth => {
-            require_refresh_token_auth_flow(&client)?;
-            let params = req
-                .auth_parameters
-                .as_ref()
-                .ok_or_else(|| AppError::InvalidParameter("AuthParameters required".to_string()))
-                .map(AuthParameters::new)?;
-
-            let refresh_token = params.require("REFRESH_TOKEN")?;
-
-            let user = authenticate_with_refresh_token(
-                storage,
-                &client,
-                &req.client_id,
-                &req.user_pool_id,
-                refresh_token,
-                params.secret_hash(),
-            )
-            .await?;
-
-            Ok(build_auth_response(
-                issue_authentication_result(
-                    storage,
-                    &client,
-                    &req.client_id,
-                    &req.user_pool_id,
-                    &user,
-                    false,
-                    false,
-                )
-                .await?,
-            ))
-        }
-    }
+    let ctx = AuthContext {
+        storage,
+        pool: &pool,
+        client: &client,
+        api: AuthApi::Admin,
+    };
+    let outcome = initiate_auth(
+        &ctx,
+        &req.auth_flow,
+        &req.auth_parameters.unwrap_or_default(),
+        req.session.as_deref(),
+    )
+    .await?;
+    let response: Response = serde_json::from_value(outcome)
+        .map_err(|e| AppError::Internal(format!("Invalid response: {e}")))?;
+    to_response_value(response)
 }
 
 #[cfg(test)]
@@ -190,6 +148,7 @@ mod tests {
             storage,
             json!({
                 "UserPoolId": pool_id,
+                "ExplicitAuthFlows": ["ALLOW_USER_PASSWORD_AUTH", "ALLOW_ADMIN_USER_PASSWORD_AUTH", "ALLOW_USER_SRP_AUTH", "ALLOW_REFRESH_TOKEN_AUTH"],
                 "ClientName": "test-client"
             }),
         )
@@ -416,6 +375,7 @@ mod tests {
             &storage,
             json!({
                 "UserPoolId": pool_id,
+                "ExplicitAuthFlows": ["ALLOW_USER_PASSWORD_AUTH", "ALLOW_ADMIN_USER_PASSWORD_AUTH", "ALLOW_USER_SRP_AUTH", "ALLOW_REFRESH_TOKEN_AUTH"],
                 "ClientName": "test-client-2"
             }),
         )

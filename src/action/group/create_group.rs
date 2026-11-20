@@ -7,10 +7,11 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 use crate::{
+    action::group::build_group_response,
     error::{AppError, Result},
     storage::Storage,
     types::{Group, UserPoolId},
-    validation::validate_group_name,
+    validation::{validate_group_name, validate_group_settings},
 };
 
 #[derive(Debug, Deserialize)]
@@ -24,11 +25,15 @@ struct Request {
 }
 
 pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
-    let req: Request = serde_json::from_value(body)
-        .map_err(|e| AppError::InvalidParameter(format!("Invalid request: {}", e)))?;
+    let req: Request = crate::action::io::parse_request(body)?;
 
     // Validate input
     validate_group_name(&req.group_name)?;
+    validate_group_settings(
+        req.description.as_deref(),
+        req.role_arn.as_deref(),
+        req.precedence,
+    )?;
 
     storage
         .get_user_pool(&req.user_pool_id)
@@ -57,15 +62,7 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
     let created = storage.create_group(group).await;
 
     Ok(json!({
-        "Group": {
-            "GroupName": created.group_name,
-            "UserPoolId": created.user_pool_id,
-            "Description": created.description,
-            "RoleArn": created.role_arn,
-            "Precedence": created.precedence,
-            "CreationDate": created.creation_date.timestamp(),
-            "LastModifiedDate": created.last_modified_date.timestamp()
-        }
+        "Group": build_group_response(&created)
     }))
 }
 
@@ -100,6 +97,9 @@ mod tests {
         assert_eq!(body["Group"]["GroupName"], "admins");
         assert_eq!(body["Group"]["Description"], "Admin group");
         assert_eq!(body["Group"]["Precedence"], 1);
+        // No role was given, so the group has no RoleArn member.
+        assert!(body["Group"].get("RoleArn").is_none());
+        assert!(body["Group"]["CreationDate"].is_number());
     }
 
     #[tokio::test]
@@ -147,5 +147,81 @@ mod tests {
         .await;
 
         assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_create_group_reports_constraint_violations_like_cognito() {
+        let storage = Storage::new();
+
+        let pool = create_user_pool::handler(&storage, json!({"PoolName": "test-pool"}))
+            .await
+            .unwrap();
+        let pool_id = pool["UserPool"]["Id"].as_str().unwrap();
+
+        let message = |result: Result<Value>| match result {
+            Err(AppError::InvalidParameter(message)) => message,
+            other => panic!("expected InvalidParameterException, got {other:?}"),
+        };
+
+        assert_eq!(
+            message(handler(&storage, json!({"UserPoolId": pool_id, "GroupName": ""})).await),
+            "1 validation error detected: Value '' at 'groupName' failed to satisfy constraint: Member must have length greater than or equal to 1"
+        );
+        assert_eq!(
+            message(
+                handler(
+                    &storage,
+                    json!({"UserPoolId": pool_id, "GroupName": "two words"})
+                )
+                .await
+            ),
+            r"1 validation error detected: Value 'two words' at 'groupName' failed to satisfy constraint: Member must satisfy regular expression pattern: [\p{L}\p{M}\p{S}\p{N}\p{P}]+"
+        );
+        assert_eq!(
+            message(
+                handler(
+                    &storage,
+                    json!({"UserPoolId": pool_id, "GroupName": "admins", "Precedence": -1})
+                )
+                .await
+            ),
+            "1 validation error detected: Value '-1' at 'precedence' failed to satisfy constraint: Member must have value greater than or equal to 0"
+        );
+        assert_eq!(
+            message(
+                handler(
+                    &storage,
+                    json!({"UserPoolId": pool_id, "GroupName": "admins", "RoleArn": "not-an-arn"})
+                )
+                .await
+            ),
+            "1 validation error detected: Value 'not-an-arn' at 'roleArn' failed to satisfy constraint: Member must have length greater than or equal to 20"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_create_group_duplicate_is_group_exists_exception() {
+        let storage = Storage::new();
+
+        let pool = create_user_pool::handler(&storage, json!({"PoolName": "test-pool"}))
+            .await
+            .unwrap();
+        let pool_id = pool["UserPool"]["Id"].as_str().unwrap();
+
+        handler(
+            &storage,
+            json!({"UserPoolId": pool_id, "GroupName": "admins"}),
+        )
+        .await
+        .unwrap();
+        let error = handler(
+            &storage,
+            json!({"UserPoolId": pool_id, "GroupName": "admins"}),
+        )
+        .await
+        .unwrap_err();
+
+        assert_eq!(error.status_and_type().1, "GroupExistsException");
+        assert_eq!(error.to_string(), "A group with the name already exists.");
     }
 }
