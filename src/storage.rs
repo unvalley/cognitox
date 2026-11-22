@@ -21,11 +21,13 @@ use tracing::error;
 
 use crate::config::{StorageConfig, StorageMode};
 use crate::types::{
-    AuthEvent, AuthorizationCode, BrandingId, ClientId, ConfirmationCode, Device, DomainPrefix,
-    FederatedUserLink, Group, GroupName, IdentityProvider, ManagedLoginBranding, PasswordResetCode,
-    PendingAuthChallenge, ProviderUserIdentifier, RefreshToken, ResourceServer, TermsDocument,
-    UiCustomization, User, UserId, UserImportJob, UserPool, UserPoolClient, UserPoolDomain,
-    UserPoolId, WebAuthnCredential,
+    AliasAttribute, AttributeDataType, AuthEvent, AuthorizationCode, AutoVerifiedAttribute,
+    BrandingId, ClientId, ConfirmationCode, Device, DomainPrefix, ExplicitAuthFlow,
+    FederatedUserLink, Group, GroupName, IdentityProvider, ManagedLoginBranding, PasswordPolicy,
+    PasswordResetCode, PendingAuthChallenge, ProviderUserIdentifier, RefreshToken, ResourceServer,
+    SchemaAttributeType, TermsDocument, UiCustomization, User, UserAttribute, UserId,
+    UserImportJob, UserPool, UserPoolClient, UserPoolDomain, UserPoolId, UserPoolPolicies,
+    UsernameAttribute, UsernameConfiguration, WebAuthnCredential,
 };
 
 // ==================== Persistence Backend Trait ====================
@@ -154,6 +156,48 @@ struct PoolStore {
     log_delivery_configurations: HashMap<UserPoolId, Vec<Value>>,
 }
 
+/// The ways a user pool lets its users be named.
+struct UserNaming {
+    case_sensitive: bool,
+    username_attributes: Vec<UsernameAttribute>,
+    alias_attributes: Vec<AliasAttribute>,
+}
+
+impl UserNaming {
+    fn same(&self, left: &str, right: &str) -> bool {
+        if self.case_sensitive {
+            left == right
+        } else {
+            left.to_lowercase() == right.to_lowercase()
+        }
+    }
+
+    /// Whether `name` is the username in another case, in a pool that
+    /// ignores case.
+    fn is_username_of(&self, user: &User, name: &str) -> bool {
+        !self.case_sensitive && self.same(&user.username, name)
+    }
+
+    /// Whether `name` is the email address or phone number the user signs
+    /// in with (`UsernameAttributes`).
+    fn is_sign_in_attribute_of(&self, user: &User, name: &str) -> bool {
+        self.username_attributes.iter().any(|attribute| {
+            let value = match attribute {
+                UsernameAttribute::Email => user.email.as_deref(),
+                UsernameAttribute::PhoneNumber => user.phone_number.as_deref(),
+            };
+            value.is_some_and(|value| self.same(value, name))
+        })
+    }
+
+    fn is_alias_of(&self, user: &User, alias: &str) -> bool {
+        self.alias_attributes.iter().any(|attribute| {
+            user.alias_value(*attribute)
+                .is_some_and(|value| self.same(value, alias))
+        })
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 struct PrincipalStore {
     users: HashMap<UserId, User>,
@@ -176,6 +220,59 @@ struct PrincipalStore {
     federated_user_links: HashMap<(UserPoolId, ProviderUserIdentifier), FederatedUserLink>,
     #[serde(default)]
     access_tokens_invalid_before: HashMap<UserId, chrono::DateTime<chrono::Utc>>,
+    /// Refresh tokens that were revoked rather than never issued, so that a
+    /// later use reports `Refresh Token has been revoked`.
+    #[serde(default)]
+    revoked_refresh_tokens: HashSet<String>,
+    /// `origin_jti` values whose access and ID tokens `RevokeToken` voided.
+    #[serde(default)]
+    revoked_origin_jtis: HashSet<String>,
+    /// TOTP secrets handed out by a token-authorized AssociateSoftwareToken
+    /// that the user has yet to verify. Kept apart from the session map so
+    /// that no `Session` value can reach them.
+    #[serde(default)]
+    pending_software_token_secrets: HashMap<UserId, String>,
+    /// New attribute values waiting for their verification code, in user
+    /// pools that verify an email address or phone number before changing it.
+    #[serde(default)]
+    pending_attribute_updates: HashMap<(UserId, String), String>,
+}
+
+impl PrincipalStore {
+    /// Remove a refresh token and remember that it, and the tokens derived
+    /// from it, were revoked.
+    fn revoke_refresh_token(&mut self, token: &str) -> Option<RefreshToken> {
+        let revoked = self.refresh_tokens.remove(token)?;
+        self.revoked_refresh_tokens.insert(revoked.token.clone());
+        if let Some(origin_jti) = &revoked.origin_jti {
+            self.revoked_origin_jtis.insert(origin_jti.clone());
+            // Rotation leaves several refresh tokens of one sign-in; they
+            // all end with it.
+            let family: Vec<String> = self
+                .refresh_tokens
+                .values()
+                .filter(|other| other.origin_jti.as_ref() == Some(origin_jti))
+                .map(|other| other.token.clone())
+                .collect();
+            for sibling in family {
+                self.refresh_tokens.remove(&sibling);
+                self.revoked_refresh_tokens.insert(sibling);
+            }
+        }
+        Some(revoked)
+    }
+
+    fn revoke_refresh_tokens_for_user(&mut self, user_id: &UserId) {
+        let tokens: Vec<String> = self
+            .refresh_tokens
+            .values()
+            .filter(|token| &token.user_id == user_id)
+            .map(|token| token.token.clone())
+            .collect();
+        for token in tokens {
+            self.revoke_refresh_token(&token);
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -212,7 +309,19 @@ struct PersistedSnapshot {
     version: u32,
     encoding: String,
     payload: String,
+    /// Which emulator semantics the data was written under; see
+    /// [`DATA_REVISION`]. Absent in snapshots older than revision 1.
+    #[serde(default)]
+    data_revision: u32,
 }
+
+/// Revision 1 is where the emulator began to follow Cognito's defaults
+/// instead of being permissive: app clients default to a restricted set of
+/// auth flows, password policies and attribute schemas are enforced, and an
+/// email address or phone number counts as verified only when marked so.
+/// Older data is adjusted on load ([`keep_pre_revision_1_behavior`]) so it
+/// keeps working the way it did when it was written.
+const DATA_REVISION: u32 = 1;
 
 const SNAPSHOT_VERSION: u32 = 2;
 const SNAPSHOT_ENCODING: &str = "msgpack+base64";
@@ -245,13 +354,119 @@ fn decode_snapshot(content: &str) -> Result<PersistedStorageState, String> {
         .decode(snapshot.payload.as_bytes())
         .map_err(|e| format!("Invalid snapshot payload encoding: {e}"))?;
 
+    // bincode is positional: a version 1 snapshot only decodes while it
+    // holds none of the records whose types have gained fields since.
     if snapshot.version == LEGACY_SNAPSHOT_VERSION {
-        return bincode::deserialize::<PersistedStorageState>(&payload)
-            .map_err(|e| format!("Failed to deserialize snapshot payload: {e}"));
+        let mut state = bincode::deserialize::<PersistedStorageState>(&payload)
+            .map_err(|e| format!("Failed to deserialize snapshot payload: {e}"))?;
+        keep_pre_revision_1_behavior(&mut state);
+        return Ok(state);
     }
 
-    rmp_serde::from_slice::<PersistedStorageState>(&payload)
-        .map_err(|e| format!("Failed to deserialize snapshot payload: {e}"))
+    let mut state = rmp_serde::from_slice::<PersistedStorageState>(&payload)
+        .map_err(|e| format!("Failed to deserialize snapshot payload: {e}"))?;
+    if snapshot.data_revision < 1 {
+        keep_pre_revision_1_behavior(&mut state);
+    }
+    Ok(state)
+}
+
+/// Make data written before [`DATA_REVISION`] 1 explicit about what it used
+/// to get implicitly, so that an upgrade does not lock anyone out:
+///
+/// - an app client without `ExplicitAuthFlows` allowed every flow;
+/// - a user pool without a password policy accepted any password of six
+///   characters, issued sign-up codes whatever it auto-verified, and matched
+///   usernames exactly;
+/// - an email address or phone number was treated as verified unless it was
+///   marked otherwise;
+/// - custom attributes needed no declaration in the schema.
+fn keep_pre_revision_1_behavior(state: &mut PersistedStorageState) {
+    for client in state.pool_store.user_pool_clients.values_mut() {
+        if client.explicit_auth_flows.is_empty() {
+            client.explicit_auth_flows = vec![
+                ExplicitAuthFlow::AllowAdminUserPasswordAuth,
+                ExplicitAuthFlow::AllowCustomAuth,
+                ExplicitAuthFlow::AllowUserPasswordAuth,
+                ExplicitAuthFlow::AllowUserSrpAuth,
+                ExplicitAuthFlow::AllowRefreshTokenAuth,
+            ];
+        }
+    }
+
+    let mut custom_attributes: HashMap<UserPoolId, Vec<String>> = HashMap::new();
+    for user in state.principal_store.users.values_mut() {
+        for (present, verified_attribute) in [
+            (user.email.is_some(), "email_verified"),
+            (user.phone_number.is_some(), "phone_number_verified"),
+        ] {
+            let recorded = user
+                .attributes
+                .iter()
+                .any(|attribute| attribute.name == verified_attribute);
+            if present && !recorded {
+                user.attributes.push(UserAttribute {
+                    name: verified_attribute.to_string(),
+                    value: Some("true".to_string()),
+                });
+            }
+        }
+
+        let declared = custom_attributes
+            .entry(user.user_pool_id.clone())
+            .or_default();
+        for attribute in &user.attributes {
+            if let Some(name) = attribute.name.strip_prefix("custom:")
+                && !declared.iter().any(|declared| declared == name)
+            {
+                declared.push(name.to_string());
+            }
+        }
+    }
+
+    for pool in state.pool_store.user_pools.values_mut() {
+        let policies = pool.policies.get_or_insert(UserPoolPolicies {
+            password_policy: None,
+            sign_in_policy: None,
+        });
+        policies.password_policy.get_or_insert(PasswordPolicy {
+            minimum_length: Some(6),
+            password_history_size: None,
+            require_lowercase: Some(false),
+            require_numbers: Some(false),
+            require_symbols: Some(false),
+            require_uppercase: Some(false),
+            temporary_password_validity_days: Some(7),
+        });
+        pool.username_configuration
+            .get_or_insert(UsernameConfiguration {
+                case_sensitive: true,
+            });
+        pool.auto_verified_attributes.get_or_insert_with(|| {
+            vec![
+                AutoVerifiedAttribute::Email,
+                AutoVerifiedAttribute::PhoneNumber,
+            ]
+        });
+
+        let schema = pool.schema_attributes.get_or_insert_with(Vec::new);
+        for name in custom_attributes.remove(&pool.id).unwrap_or_default() {
+            let known = schema.iter().any(|attribute| {
+                attribute.name == name || attribute.name.strip_prefix("custom:") == Some(&name)
+            });
+            if !known {
+                schema.push(SchemaAttributeType {
+                    name,
+                    attribute_data_type: Some(AttributeDataType::String),
+                    developer_only_attribute: Some(false),
+                    mutable: Some(true),
+                    number_attribute_constraints: None,
+                    required: Some(false),
+                    string_attribute_constraints: None,
+                });
+            }
+        }
+    }
 }
 
 fn encode_snapshot<T: Serialize>(state: &T) -> Result<Vec<u8>, String> {
@@ -263,6 +478,7 @@ fn encode_snapshot<T: Serialize>(state: &T) -> Result<Vec<u8>, String> {
         version: SNAPSHOT_VERSION,
         encoding: SNAPSHOT_ENCODING.to_string(),
         payload: BASE64_STANDARD.encode(payload),
+        data_revision: DATA_REVISION,
     };
 
     serde_json::to_vec_pretty(&snapshot).map_err(|e| format!("Failed to encode snapshot: {e}"))
@@ -545,6 +761,7 @@ impl Storage {
             .retain(|_, (uid, _)| !user_id_set.contains(uid));
         for uid in &user_ids {
             principal_store.software_token_secrets.remove(uid);
+            principal_store.pending_software_token_secrets.remove(uid);
         }
         principal_store
             .authorization_codes
@@ -977,9 +1194,11 @@ impl Storage {
         store.users.get(id).map(f)
     }
 
-    /// Look up a user by username, or by one of the user pool's alias
-    /// attributes (`AliasAttributes`), which Cognito accepts wherever a
-    /// `Username` is expected.
+    /// Look up a user by any name Cognito accepts where a `Username` is
+    /// expected: the username itself, the `sub`, a sign-in attribute of a
+    /// `UsernameAttributes` pool, or a verified alias (`AliasAttributes`).
+    /// Names compare without regard to case unless the user pool is case
+    /// sensitive.
     pub async fn get_user_by_username(
         &self,
         user_pool_id: &UserPoolId,
@@ -994,31 +1213,98 @@ impl Storage {
                 return store.users.get(user_id).cloned();
             }
         }
-        self.get_user_by_alias(user_pool_id, username).await
+
+        let naming = self.user_naming(user_pool_id).await?;
+        let store = self.principal_store.read().await;
+
+        if let Ok(user_id) = uuid::Uuid::parse_str(username)
+            && let Some(user) = store.users.get(&user_id)
+            && &user.user_pool_id == user_pool_id
+        {
+            return Some(user.clone());
+        }
+
+        // Sign-in names are kept unique on write. Should older data hold a
+        // collision anyway, resolve it the same way every time: the username
+        // before an attribute, the earlier user before the later.
+        let in_pool = || {
+            store
+                .users
+                .values()
+                .filter(|user| &user.user_pool_id == user_pool_id)
+        };
+        let earliest = |matches: &mut dyn Iterator<Item = &User>| {
+            matches
+                .min_by_key(|user| (user.creation_date, user.id))
+                .cloned()
+        };
+        earliest(&mut in_pool().filter(|user| naming.is_username_of(user, username)))
+            .or_else(|| {
+                earliest(
+                    &mut in_pool().filter(|user| naming.is_sign_in_attribute_of(user, username)),
+                )
+            })
+            .or_else(|| earliest(&mut in_pool().filter(|user| naming.is_alias_of(user, username))))
+    }
+
+    /// Whether another user of the pool already signs in with `value` as its
+    /// `attribute` (`email`, `phone_number`, or `preferred_username`).
+    /// `verified_only` limits the check to addresses and numbers that are
+    /// verified, which is when they act as aliases.
+    pub async fn sign_in_value_taken(
+        &self,
+        user_pool_id: &UserPoolId,
+        attribute: &str,
+        value: &str,
+        except: &UserId,
+        verified_only: bool,
+    ) -> bool {
+        let Some(naming) = self.user_naming(user_pool_id).await else {
+            return false;
+        };
+        let store = self.principal_store.read().await;
+        store.users.values().any(|user| {
+            &user.user_pool_id == user_pool_id
+                && &user.id != except
+                && (!verified_only
+                    || attribute == "preferred_username"
+                    || user.attribute_verified(attribute))
+                && match attribute {
+                    "email" => user.email.as_deref(),
+                    "phone_number" => user.phone_number.as_deref(),
+                    name => user
+                        .attributes
+                        .iter()
+                        .find(|candidate| candidate.name == name)
+                        .and_then(|candidate| candidate.value.as_deref()),
+                }
+                .is_some_and(|existing| naming.same(existing, value))
+        })
     }
 
     /// Look up the user that owns `alias` through one of the user pool's
     /// alias attributes.
     pub async fn get_user_by_alias(&self, user_pool_id: &UserPoolId, alias: &str) -> Option<User> {
-        let alias_attributes = {
-            let store = self.pool_store.read().await;
-            store
-                .user_pools
-                .get(user_pool_id)?
-                .alias_attributes
-                .clone()?
-        };
+        let naming = self.user_naming(user_pool_id).await?;
         let store = self.principal_store.read().await;
         store
             .users
             .values()
-            .find(|user| {
-                &user.user_pool_id == user_pool_id
-                    && alias_attributes
-                        .iter()
-                        .any(|attribute| user.alias_value(*attribute) == Some(alias))
-            })
+            .find(|user| &user.user_pool_id == user_pool_id && naming.is_alias_of(user, alias))
             .cloned()
+    }
+
+    async fn user_naming(&self, user_pool_id: &UserPoolId) -> Option<UserNaming> {
+        let store = self.pool_store.read().await;
+        let pool = store.user_pools.get(user_pool_id)?;
+        Some(UserNaming {
+            case_sensitive: pool
+                .username_configuration
+                .as_ref()
+                .is_none_or(|configuration| configuration.case_sensitive),
+            username_attributes: pool.username_attributes.clone().unwrap_or_default(),
+            alias_attributes: pool.alias_attributes.clone().unwrap_or_default(),
+        })
     }
 
     pub async fn update_user(&self, user: User) -> Option<User> {
@@ -1047,7 +1333,7 @@ impl Storage {
         let user = store.users.get_mut(id)?;
         user.enabled = false;
         user.last_modified_date = now;
-        store.refresh_tokens.retain(|_, token| &token.user_id != id);
+        store.revoke_refresh_tokens_for_user(id);
         store.access_tokens_invalid_before.insert(*id, now);
         Some(())
     }
@@ -1063,6 +1349,9 @@ impl Storage {
             principal_store.confirmation_codes.remove(id);
             principal_store.password_reset_codes.remove(id);
             principal_store
+                .pending_attribute_updates
+                .retain(|(user_id, _), _| user_id != id);
+            principal_store
                 .devices
                 .retain(|(user_id, _), _| user_id != id);
             principal_store.user_auth_factors.remove(id);
@@ -1075,6 +1364,7 @@ impl Storage {
                 .software_token_sessions
                 .retain(|_, (user_id, _)| user_id != id);
             principal_store.software_token_secrets.remove(id);
+            principal_store.pending_software_token_secrets.remove(id);
             principal_store
                 .refresh_tokens
                 .retain(|_, token| &token.user_id != id);
@@ -1175,15 +1465,6 @@ impl Storage {
         store.confirmation_codes.remove(user_id);
     }
 
-    /// Set the password for a user
-    pub async fn set_user_password(&self, user_id: &UserId, password_hash: &str) {
-        let mut store = self.principal_store.write().await;
-        if let Some(user) = store.users.get_mut(user_id) {
-            user.password_hash = password_hash.to_string();
-            user.last_modified_date = chrono::Utc::now();
-        }
-    }
-
     // ==================== Confirmation Code Operations ====================
 
     pub async fn save_confirmation_code(&self, code: ConfirmationCode) {
@@ -1199,6 +1480,26 @@ impl Storage {
     pub async fn delete_confirmation_code(&self, user_id: &UserId) {
         let mut store = self.principal_store.write().await;
         store.confirmation_codes.remove(user_id);
+    }
+
+    /// Hold a new attribute value until its verification code comes back.
+    pub async fn set_pending_attribute_update(&self, user_id: &UserId, name: &str, value: String) {
+        let mut store = self.principal_store.write().await;
+        store
+            .pending_attribute_updates
+            .insert((*user_id, name.to_string()), value);
+    }
+
+    /// Take the attribute value that was waiting for verification, if any.
+    pub async fn take_pending_attribute_update(
+        &self,
+        user_id: &UserId,
+        name: &str,
+    ) -> Option<String> {
+        let mut store = self.principal_store.write().await;
+        store
+            .pending_attribute_updates
+            .remove(&(*user_id, name.to_string()))
     }
 
     // ==================== Refresh Token Operations ====================
@@ -1225,19 +1526,38 @@ impl Storage {
         store.auth_challenge_sessions.remove(session);
     }
 
+    /// Change a pending challenge in place.
+    pub async fn update_auth_challenge_session<R>(
+        &self,
+        session: &str,
+        f: impl FnOnce(&mut PendingAuthChallenge) -> R,
+    ) -> Option<R> {
+        let mut store = self.principal_store.write().await;
+        store.auth_challenge_sessions.get_mut(session).map(f)
+    }
+
     pub async fn get_refresh_token(&self, token: &str) -> Option<RefreshToken> {
         let store = self.principal_store.read().await;
         store.refresh_tokens.get(token).cloned()
     }
 
-    pub async fn delete_refresh_token(&self, token: &str) {
+    /// Revoke one refresh token together with the access and ID tokens that
+    /// descend from the same authentication.
+    pub async fn delete_refresh_token(&self, token: &str) -> Option<RefreshToken> {
         let mut store = self.principal_store.write().await;
-        store.refresh_tokens.remove(token);
+        store.revoke_refresh_token(token)
     }
 
+    /// Revoke every refresh token of a user.
     pub async fn delete_refresh_tokens_for_user(&self, user_id: &UserId) {
         let mut store = self.principal_store.write().await;
-        store.refresh_tokens.retain(|_, v| &v.user_id != user_id);
+        store.revoke_refresh_tokens_for_user(user_id);
+    }
+
+    /// Whether the token was issued by this emulator and later revoked.
+    pub async fn is_refresh_token_revoked(&self, token: &str) -> bool {
+        let store = self.principal_store.read().await;
+        store.revoked_refresh_tokens.contains(token)
     }
 
     pub async fn invalidate_access_tokens_for_user(&self, user_id: &UserId) {
@@ -1252,8 +1572,12 @@ impl Storage {
         user_id: &UserId,
         issued_at: i64,
         issued_at_ms: Option<i64>,
+        origin_jti: Option<&str>,
     ) -> bool {
         let store = self.principal_store.read().await;
+        if origin_jti.is_some_and(|origin_jti| store.revoked_origin_jtis.contains(origin_jti)) {
+            return true;
+        }
         store
             .access_tokens_invalid_before
             .get(user_id)
@@ -1285,6 +1609,24 @@ impl Storage {
     pub async fn delete_software_token_session(&self, session: &str) {
         let mut store = self.principal_store.write().await;
         store.software_token_sessions.remove(session);
+    }
+
+    /// Remember the secret a signed-in user is about to verify.
+    pub async fn set_pending_software_token_secret(&self, user_id: &UserId, secret: String) {
+        let mut store = self.principal_store.write().await;
+        store
+            .pending_software_token_secrets
+            .insert(*user_id, secret);
+    }
+
+    pub async fn get_pending_software_token_secret(&self, user_id: &UserId) -> Option<String> {
+        let store = self.principal_store.read().await;
+        store.pending_software_token_secrets.get(user_id).cloned()
+    }
+
+    pub async fn clear_pending_software_token_secret(&self, user_id: &UserId) {
+        let mut store = self.principal_store.write().await;
+        store.pending_software_token_secrets.remove(user_id);
     }
 
     pub async fn save_software_token_secret(&self, user_id: &UserId, secret: String) {
@@ -2047,6 +2389,143 @@ mod tests {
         let _ = fs::remove_file(path);
     }
 
+    /// A snapshot as a version before data revision 1 wrote it.
+    fn write_pre_revision_1_snapshot(path: &Path, state: &PersistedStorageState) {
+        let payload = rmp_serde::to_vec_named(state).unwrap();
+        let snapshot = serde_json::json!({
+            "version": SNAPSHOT_VERSION,
+            "encoding": SNAPSHOT_ENCODING,
+            "payload": BASE64_STANDARD.encode(payload),
+        });
+        fs::write(path, serde_json::to_vec(&snapshot).unwrap()).unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_older_snapshot_keeps_its_permissive_behavior() {
+        let path = temp_data_file();
+        let pool_id = UserPoolId::new("us-east-1_OldPool1").unwrap();
+        let client_id = ClientId::generate();
+        let user_id = uuid::Uuid::new_v4();
+
+        let mut state = PersistedStorageState::default();
+        state
+            .pool_store
+            .user_pools
+            .insert(pool_id.clone(), UserPool::new_for_test(pool_id.clone()));
+        state.pool_store.user_pool_clients.insert(
+            client_id.clone(),
+            UserPoolClient::new_for_test(client_id.clone(), pool_id.clone()),
+        );
+        state.principal_store.users.insert(
+            user_id,
+            User {
+                id: user_id,
+                user_pool_id: pool_id.clone(),
+                username: "olduser".to_string(),
+                email: Some("old@example.com".to_string()),
+                phone_number: None,
+                password_hash: "hash".to_string(),
+                enabled: true,
+                user_status: crate::types::UserStatus::Confirmed,
+                attributes: vec![
+                    UserAttribute {
+                        name: "email".to_string(),
+                        value: Some("old@example.com".to_string()),
+                    },
+                    UserAttribute {
+                        name: "custom:team".to_string(),
+                        value: Some("blue".to_string()),
+                    },
+                ],
+                creation_date: chrono::Utc::now(),
+                last_modified_date: chrono::Utc::now(),
+                srp_salt: None,
+                srp_verifier: None,
+                password_set_at: None,
+            },
+        );
+        write_pre_revision_1_snapshot(&path, &state);
+
+        let loaded = Storage::with_config(StorageConfig::persistent(path.clone())).unwrap();
+
+        // The app client keeps every flow it used to allow.
+        let client = loaded.get_user_pool_client(&client_id).await.unwrap();
+        assert!(
+            client
+                .explicit_auth_flows
+                .contains(&ExplicitAuthFlow::AllowUserPasswordAuth)
+        );
+        assert!(
+            client
+                .explicit_auth_flows
+                .contains(&ExplicitAuthFlow::AllowAdminUserPasswordAuth)
+        );
+
+        // The user pool keeps accepting what it accepted.
+        let pool = loaded.get_user_pool(&pool_id).await.unwrap();
+        let policy = pool.policies.unwrap().password_policy.unwrap();
+        assert_eq!(policy.minimum_length, Some(6));
+        assert_eq!(policy.require_symbols, Some(false));
+        assert!(pool.username_configuration.unwrap().case_sensitive);
+        assert!(
+            pool.schema_attributes
+                .unwrap()
+                .iter()
+                .any(|attribute| attribute.name == "team")
+        );
+
+        // The address was treated as verified, and still is.
+        let user = loaded.get_user(&user_id).await.unwrap();
+        assert!(user.attribute_verified("email"));
+
+        // Once saved, the data is at the current revision and is left alone.
+        loaded.flush_persistence().await.unwrap();
+        let saved: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(saved["data_revision"], DATA_REVISION);
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[tokio::test]
+    async fn test_current_snapshot_is_not_migrated() {
+        let path = temp_data_file();
+        let pool_id = UserPoolId::new("us-east-1_NewPool1").unwrap();
+        let client_id = ClientId::generate();
+
+        let storage = Storage::with_config(StorageConfig::persistent(path.clone())).unwrap();
+        storage
+            .create_user_pool(UserPool::new_for_test(pool_id.clone()))
+            .await;
+        storage
+            .create_user_pool_client(UserPoolClient::new_for_test(
+                client_id.clone(),
+                pool_id.clone(),
+            ))
+            .await;
+        storage.flush_persistence().await.unwrap();
+
+        let loaded = Storage::with_config(StorageConfig::persistent(path.clone())).unwrap();
+        assert!(
+            loaded
+                .get_user_pool_client(&client_id)
+                .await
+                .unwrap()
+                .explicit_auth_flows
+                .is_empty()
+        );
+        assert!(
+            loaded
+                .get_user_pool(&pool_id)
+                .await
+                .unwrap()
+                .policies
+                .is_none()
+        );
+
+        let _ = fs::remove_file(path);
+    }
+
     #[test]
     fn test_legacy_bincode_snapshot_is_loaded() {
         let path = temp_data_file();
@@ -2055,6 +2534,7 @@ mod tests {
             version: LEGACY_SNAPSHOT_VERSION,
             encoding: LEGACY_SNAPSHOT_ENCODING.to_string(),
             payload: BASE64_STANDARD.encode(payload),
+            data_revision: 0,
         })
         .unwrap();
         fs::write(&path, snapshot).unwrap();

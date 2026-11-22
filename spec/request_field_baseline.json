@@ -134,6 +134,17 @@
         "extra": []
       }
     },
+    "AdminInitiateAuth": {
+      "path": "src/action/user/admin_initiate_auth.rs",
+      "request": {
+        "missing": [],
+        "extra": []
+      },
+      "response": {
+        "missing": [],
+        "extra": []
+      }
+    },
     "AdminLinkProviderForUser": {
       "path": "src/action/user/admin_link_provider_for_user.rs",
       "request": {
@@ -180,6 +191,28 @@
     },
     "AdminRemoveUserFromGroup": {
       "path": "src/action/group/admin_remove_user_from_group.rs",
+      "request": {
+        "missing": [],
+        "extra": []
+      },
+      "response": {
+        "missing": [],
+        "extra": []
+      }
+    },
+    "AdminResetUserPassword": {
+      "path": "src/action/user/admin_reset_user_password.rs",
+      "request": {
+        "missing": [],
+        "extra": []
+      },
+      "response": {
+        "missing": [],
+        "extra": []
+      }
+    },
+    "AdminRespondToAuthChallenge": {
+      "path": "src/action/user/admin_respond_to_auth_challenge.rs",
       "request": {
         "missing": [],
         "extra": []
@@ -750,6 +783,17 @@
         "extra": []
       }
     },
+    "InitiateAuth": {
+      "path": "src/action/user/initiate_auth.rs",
+      "request": {
+        "missing": [],
+        "extra": []
+      },
+      "response": {
+        "missing": [],
+        "extra": []
+      }
+    },
     "ListDevices": {
       "path": "src/action/user/list_devices.rs",
       "request": {
@@ -849,6 +893,17 @@
         "extra": []
       }
     },
+    "ListUsers": {
+      "path": "src/action/user/list_users.rs",
+      "request": {
+        "missing": [],
+        "extra": []
+      },
+      "response": {
+        "missing": [],
+        "extra": []
+      }
+    },
     "ListUsersInGroup": {
       "path": "src/action/group/list_users_in_group.rs",
       "request": {
@@ -862,6 +917,17 @@
     },
     "ResendConfirmationCode": {
       "path": "src/action/user/resend_confirmation_code.rs",
+      "request": {
+        "missing": [],
+        "extra": []
+      },
+      "response": {
+        "missing": [],
+        "extra": []
+      }
+    },
+    "RespondToAuthChallenge": {
+      "path": "src/action/user/respond_to_auth_challenge.rs",
       "request": {
         "missing": [],
         "extra": []
@@ -955,7 +1021,9 @@
         "extra": []
       },
       "response": {
-        "missing": [],
+        "missing": [
+          "Session"
+        ],
         "extra": []
       }
     },

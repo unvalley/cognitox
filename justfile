@@ -200,7 +200,7 @@ demo-setup:
     CLIENT_RESPONSE=$(curl -s -X POST http://localhost:9229/ \
         -H "Content-Type: application/x-amz-json-1.1" \
         -H "X-Amz-Target: AWSCognitoIdentityProviderService.CreateUserPoolClient" \
-        -d "{\"UserPoolId\": \"$POOL_ID\", \"ClientName\": \"demo-client\", \"CallbackURLs\": [\"http://localhost:3000/callback\"], \"AllowedOAuthFlows\": [\"code\"], \"AllowedOAuthScopes\": [\"openid\", \"email\", \"profile\"]}")
+        -d "{\"UserPoolId\": \"$POOL_ID\", \"ClientName\": \"demo-client\", \"CallbackURLs\": [\"http://localhost:3000/callback\"], \"AllowedOAuthFlowsUserPoolClient\": true, \"AllowedOAuthFlows\": [\"code\"], \"AllowedOAuthScopes\": [\"openid\", \"email\", \"profile\"]}")
 
     CLIENT_ID=$(echo $CLIENT_RESPONSE | grep -o '"ClientId":"[^"]*"' | cut -d'"' -f4)
     echo "Created client: $CLIENT_ID"

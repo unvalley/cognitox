@@ -6,7 +6,7 @@ Based on [Amazon Cognito User Pools API Reference](https://docs.aws.amazon.com/c
 
 All 119 Cognito IDP operations are routed to handlers.
 
-85% spec-aligned (101/119). In the operation lists below, `[x]` means the
+90% spec-aligned (107/119). In the operation lists below, `[x]` means the
 handler is intended to be spec-aligned enough for normal SDK use; `[ ]` means
 the operation is routed but still partial, simplified, or intentionally limited
 for emulator use.
@@ -23,14 +23,14 @@ for emulator use.
 - [x] AdminForgetDevice ([spec](https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_AdminForgetDevice.html), [cognitox](src/action/user/admin_forget_device.rs))
 - [x] AdminGetDevice ([spec](https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_AdminGetDevice.html), [cognitox](src/action/user/admin_get_device.rs))
 - [x] AdminGetUser ([spec](https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_AdminGetUser.html), [cognitox](src/action/user/admin_get_user.rs))
-- [ ] AdminInitiateAuth ([spec](https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_AdminInitiateAuth.html), [cognitox](src/action/user/admin_initiate_auth.rs))
+- [x] AdminInitiateAuth ([spec](https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_AdminInitiateAuth.html), [cognitox](src/action/user/admin_initiate_auth.rs))
 - [x] AdminLinkProviderForUser ([spec](https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_AdminLinkProviderForUser.html), [cognitox](src/action/user/admin_link_provider_for_user.rs))
 - [x] AdminListDevices ([spec](https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_AdminListDevices.html), [cognitox](src/action/user/admin_list_devices.rs))
 - [x] AdminListGroupsForUser ([spec](https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_AdminListGroupsForUser.html), [cognitox](src/action/group/admin_list_groups_for_user.rs))
 - [x] AdminListUserAuthEvents ([spec](https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_AdminListUserAuthEvents.html), [cognitox](src/action/user/admin_list_user_auth_events.rs))
 - [x] AdminRemoveUserFromGroup ([spec](https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_AdminRemoveUserFromGroup.html), [cognitox](src/action/group/admin_remove_user_from_group.rs))
-- [ ] AdminResetUserPassword ([spec](https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_AdminResetUserPassword.html), [cognitox](src/action/user/admin_reset_user_password.rs))
-- [ ] AdminRespondToAuthChallenge ([spec](https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_AdminRespondToAuthChallenge.html), [cognitox](src/action/user/admin_respond_to_auth_challenge.rs))
+- [x] AdminResetUserPassword ([spec](https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_AdminResetUserPassword.html), [cognitox](src/action/user/admin_reset_user_password.rs))
+- [x] AdminRespondToAuthChallenge ([spec](https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_AdminRespondToAuthChallenge.html), [cognitox](src/action/user/admin_respond_to_auth_challenge.rs))
 - [x] AdminSetUserMFAPreference ([spec](https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_AdminSetUserMFAPreference.html), [cognitox](src/action/user/admin_set_user_mfa_preference.rs))
 - [x] AdminSetUserPassword ([spec](https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_AdminSetUserPassword.html), [cognitox](src/action/user/admin_set_user_password.rs))
 - [x] AdminSetUserSettings ([spec](https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_AdminSetUserSettings.html), [cognitox](src/action/user/admin_set_user_settings.rs))
@@ -63,7 +63,7 @@ for emulator use.
 - [x] DeleteUser ([spec](https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_DeleteUser.html), [cognitox](src/action/user/delete_user.rs))
 - [x] DeleteUserAttributes ([spec](https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_DeleteUserAttributes.html), [cognitox](src/action/user/delete_user_attributes.rs))
 - [x] GetUser ([spec](https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_GetUser.html), [cognitox](src/action/user/get_user.rs))
-- [ ] ListUsers ([spec](https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_ListUsers.html), [cognitox](src/action/user/list_users.rs))
+- [x] ListUsers ([spec](https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_ListUsers.html), [cognitox](src/action/user/list_users.rs))
 - [x] UpdateUserAttributes ([spec](https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_UpdateUserAttributes.html), [cognitox](src/action/user/update_user_attributes.rs))
 - [x] VerifyUserAttribute ([spec](https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_VerifyUserAttribute.html), [cognitox](src/action/user/verify_user_attribute.rs))
 
@@ -73,9 +73,9 @@ for emulator use.
 - [x] ConfirmSignUp ([spec](https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_ConfirmSignUp.html), [cognitox](src/action/user/confirm_sign_up.rs))
 - [x] ForgotPassword ([spec](https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_ForgotPassword.html), [cognitox](src/action/user/forgot_password.rs))
 - [x] GlobalSignOut ([spec](https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_GlobalSignOut.html), [cognitox](src/action/user/global_sign_out.rs))
-- [ ] InitiateAuth ([spec](https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_InitiateAuth.html), [cognitox](src/action/user/initiate_auth.rs))
+- [x] InitiateAuth ([spec](https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_InitiateAuth.html), [cognitox](src/action/user/initiate_auth.rs))
 - [x] ResendConfirmationCode ([spec](https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_ResendConfirmationCode.html), [cognitox](src/action/user/resend_confirmation_code.rs))
-- [ ] RespondToAuthChallenge ([spec](https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_RespondToAuthChallenge.html), [cognitox](src/action/user/respond_to_auth_challenge.rs))
+- [x] RespondToAuthChallenge ([spec](https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_RespondToAuthChallenge.html), [cognitox](src/action/user/respond_to_auth_challenge.rs))
 - [x] RevokeToken ([spec](https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_RevokeToken.html), [cognitox](src/action/user/revoke_token.rs))
 - [x] SignUp ([spec](https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_SignUp.html), [cognitox](src/action/user/sign_up.rs))
 - [x] GetUserAttributeVerificationCode ([spec](https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_GetUserAttributeVerificationCode.html), [cognitox](src/action/user/get_user_attribute_verification_code.rs))

@@ -327,9 +327,72 @@ export async function describeUserPool(userPoolId: string): Promise<UserPool> {
   return data.UserPool
 }
 
+// UpdateUserPool and UpdateUserPoolClient replace the configuration: as in
+// Cognito, a setting the request leaves out goes back to its default. To
+// change one setting, send the current ones along with it.
+const USER_POOL_SETTINGS = [
+  'AccountRecoverySetting',
+  'AdminCreateUserConfig',
+  'AutoVerifiedAttributes',
+  'DeletionProtection',
+  'DeviceConfiguration',
+  'EmailConfiguration',
+  'EmailVerificationMessage',
+  'EmailVerificationSubject',
+  'LambdaConfig',
+  'MfaConfiguration',
+  'Policies',
+  'SmsAuthenticationMessage',
+  'SmsConfiguration',
+  'SmsVerificationMessage',
+  'UserAttributeUpdateSettings',
+  'UserPoolAddOns',
+  'UserPoolTags',
+  'UserPoolTier',
+  'VerificationMessageTemplate',
+]
+
+const USER_POOL_CLIENT_SETTINGS = [
+  'ClientName',
+  'AccessTokenValidity',
+  'AllowedOAuthFlows',
+  'AllowedOAuthFlowsUserPoolClient',
+  'AllowedOAuthScopes',
+  'AnalyticsConfiguration',
+  'AuthSessionValidity',
+  'CallbackURLs',
+  'DefaultRedirectURI',
+  'EnablePropagateAdditionalUserContextData',
+  'EnableTokenRevocation',
+  'ExplicitAuthFlows',
+  'IdTokenValidity',
+  'LogoutURLs',
+  'PreventUserExistenceErrors',
+  'ReadAttributes',
+  'RefreshTokenRotation',
+  'RefreshTokenValidity',
+  'SupportedIdentityProviders',
+  'TokenValidityUnits',
+  'WriteAttributes',
+]
+
+function pickSettings(source: Record<string, unknown>, names: string[]): Record<string, unknown> {
+  const settings: Record<string, unknown> = {}
+  for (const name of names) {
+    if (source[name] !== undefined && source[name] !== null) {
+      settings[name] = source[name]
+    }
+  }
+  return settings
+}
+
 export async function updateUserPool(userPoolId: string, updates: { PoolName?: string }): Promise<void> {
+  const current = await cognitoRequest<{ UserPool: Record<string, unknown> }>('DescribeUserPool', {
+    UserPoolId: userPoolId,
+  })
   await cognitoRequest<Record<string, never>>('UpdateUserPool', {
     UserPoolId: userPoolId,
+    ...pickSettings(current.UserPool, USER_POOL_SETTINGS),
     ...updates,
   })
 }
@@ -480,9 +543,17 @@ export async function updateUserPoolClient(
     AllowedOAuthFlowsUserPoolClient?: boolean
   }
 ): Promise<UserPoolClient> {
+  const current = await cognitoRequest<{ UserPoolClient: Record<string, unknown> }>(
+    'DescribeUserPoolClient',
+    {
+      UserPoolId: userPoolId,
+      ClientId: clientId,
+    }
+  )
   const data = await cognitoRequest<{ UserPoolClient: UserPoolClient }>('UpdateUserPoolClient', {
     UserPoolId: userPoolId,
     ClientId: clientId,
+    ...pickSettings(current.UserPoolClient, USER_POOL_CLIENT_SETTINGS),
     ...updates,
   })
   return data.UserPoolClient

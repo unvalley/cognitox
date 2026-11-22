@@ -68,6 +68,13 @@ impl TestClient {
         }
     }
 
+    /// The emulator state behind the router, for arranging what no request
+    /// can (an expired code) and reading what is never returned (a "sent"
+    /// confirmation code).
+    pub fn storage(&self) -> &Storage {
+        &self.storage
+    }
+
     /// Make a Cognito API request and return just the JSON body (for success cases)
     pub async fn cognito_request(&self, target: &str, body: Value) -> Value {
         let (status, json) = self.request(target, body).await;

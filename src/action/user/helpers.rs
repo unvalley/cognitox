@@ -9,9 +9,14 @@ use uuid::Uuid;
 
 use crate::{
     error::AppError,
-    jwt,
+    jwt, srp,
     storage::Storage,
-    types::{Device, User, UserAttribute, UserPoolClient},
+    types::{
+        AliasAttribute, AutoVerifiedAttribute, Device, PreventUserExistenceErrors,
+        RecoveryMechanismName, SchemaAttributeType, User, UserAttribute, UserPool, UserPoolClient,
+        UsernameAttribute,
+    },
+    validation::{validate_email, validate_phone_number},
 };
 
 pub const SOFTWARE_TOKEN_MFA_FACTOR: &str = "SOFTWARE_TOKEN_MFA";
@@ -35,30 +40,18 @@ fn configured_bcrypt_cost() -> u32 {
     })
 }
 
-/// Generate a secure confirmation code
-/// Uses 20 alphanumeric characters for high entropy (~119 bits)
-/// Format: XXXX-XXXX-XXXX-XXXX-XXXX for readability
+/// Generate a confirmation code.
+///
+/// Cognito sends six-digit numeric codes for sign-up confirmation, attribute
+/// verification, and password reset.
 pub fn generate_confirmation_code() -> String {
+    generate_numeric_code()
+}
+
+/// A six-digit one-time code, the form Cognito sends by email and SMS.
+pub fn generate_numeric_code() -> String {
     use rand::Rng;
-    const CHARSET: &[u8] = b"ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; // Excludes confusing chars: 0/O, 1/I/L
-    let mut rng = rand::thread_rng();
-
-    let code: String = (0..20)
-        .map(|_| {
-            let idx = rng.gen_range(0..CHARSET.len());
-            CHARSET[idx] as char
-        })
-        .collect();
-
-    // Format as XXXX-XXXX-XXXX-XXXX-XXXX for readability
-    format!(
-        "{}-{}-{}-{}-{}",
-        &code[0..4],
-        &code[4..8],
-        &code[8..12],
-        &code[12..16],
-        &code[16..20]
-    )
+    format!("{:06}", rand::thread_rng().gen_range(0..1_000_000))
 }
 
 /// Normalize a confirmation code by removing dashes and converting to uppercase
@@ -75,30 +68,52 @@ pub fn hash_password(password: &str) -> std::result::Result<String, String> {
         .map_err(|e| format!("Failed to hash password: {}", e))
 }
 
+/// Store a new password on a user.
+///
+/// Keeps a bcrypt hash for the flows that present the password in clear and
+/// an SRP verifier for `USER_SRP_AUTH`, as Cognito does.
+pub fn set_user_password(user: &mut User, password: &str) -> crate::error::Result<()> {
+    user.password_hash = hash_password(password).map_err(AppError::Internal)?;
+    store_srp_verifier(user, password);
+    user.password_set_at = Some(chrono::Utc::now());
+    Ok(())
+}
+
+/// Derive and store the SRP verifier for a password known to be the user's.
+pub fn store_srp_verifier(user: &mut User, password: &str) {
+    let verifier = srp::generate_verifier(user.user_pool_id.as_str(), &user.username, password);
+    user.srp_salt = Some(verifier.salt);
+    user.srp_verifier = Some(verifier.verifier);
+}
+
 /// Verify password against bcrypt hash
 pub fn verify_password(password: &str, hash: &str) -> bool {
     bcrypt::verify(password, hash).unwrap_or(false)
 }
 
+/// Mask an email address the way Cognito does in `Destination`:
+/// `alice@example.com` becomes `a***@e***`.
 pub fn mask_email(email: &str) -> String {
-    if let Some((local, domain)) = email.split_once('@') {
-        if local.len() > 2 {
-            format!("{}***@{}", &local[..2], domain)
-        } else {
-            format!("***@{}", domain)
-        }
-    } else {
-        "***".to_string()
+    let initial = |part: &str| part.chars().next().map(String::from).unwrap_or_default();
+    match email.split_once('@') {
+        Some((local, domain)) => format!("{}***@{}***", initial(local), initial(domain)),
+        None => "***".to_string(),
     }
 }
 
+/// Mask a phone number the way Cognito does in `Destination`:
+/// `+15555550100` becomes `+*******0100`.
 pub fn mask_phone_number(phone_number: &str) -> String {
     let digits: String = phone_number
         .chars()
         .filter(|c| c.is_ascii_digit())
         .collect();
     if digits.len() >= 4 {
-        format!("***{}", &digits[digits.len().saturating_sub(4)..])
+        format!(
+            "+{}{}",
+            "*".repeat(digits.len() - 4),
+            &digits[digits.len() - 4..]
+        )
     } else {
         "***".to_string()
     }
@@ -132,14 +147,415 @@ pub fn build_code_delivery_details(
     })
 }
 
-pub fn require_code_delivery_details(user: &User) -> crate::error::Result<Value> {
-    build_code_delivery_details(user.email.as_deref(), user.phone_number.as_deref()).ok_or_else(
-        || {
-            AppError::InvalidParameter(
-                "User does not have an email or phone_number attribute".to_string(),
-            )
-        },
-    )
+/// Attributes of the OpenID Connect standard set that every user pool has.
+const STANDARD_ATTRIBUTES: &[&str] = &[
+    "address",
+    "birthdate",
+    "email",
+    "email_verified",
+    "family_name",
+    "gender",
+    "given_name",
+    "locale",
+    "middle_name",
+    "name",
+    "nickname",
+    "phone_number",
+    "phone_number_verified",
+    "picture",
+    "preferred_username",
+    "profile",
+    "sub",
+    "updated_at",
+    "website",
+    "zoneinfo",
+];
+
+/// Attributes only Cognito or an administrator sets.
+const CLIENT_READ_ONLY_ATTRIBUTES: &[&str] = &[
+    "sub",
+    "email_verified",
+    "phone_number_verified",
+    "identities",
+];
+
+/// Who is writing user attributes.
+#[derive(Clone, Copy)]
+pub enum AttributeWriter<'a> {
+    /// A user, through an app client whose `WriteAttributes` apply.
+    Client(Option<&'a UserPoolClient>),
+    /// An administrator, who may also set the verification flags.
+    Admin,
+}
+
+fn schema_attribute<'a>(pool: &'a UserPool, name: &str) -> Option<&'a SchemaAttributeType> {
+    let unprefixed = name
+        .strip_prefix("custom:")
+        .or_else(|| name.strip_prefix("dev:custom:"));
+    pool.schema_attributes.iter().flatten().find(|attribute| {
+        attribute.name == name || unprefixed.is_some_and(|short| attribute.name == short)
+    })
+}
+
+/// Check attributes a caller wants to set against the user pool's schema
+/// and the app client's write permissions. `updating` is true when the user
+/// already exists, which is when immutable attributes are off limits.
+pub fn validate_attribute_write(
+    pool: &UserPool,
+    writer: AttributeWriter<'_>,
+    attributes: &[UserAttribute],
+    updating: bool,
+) -> crate::error::Result<()> {
+    for attribute in attributes {
+        let name = attribute.name.as_str();
+
+        if let AttributeWriter::Client(client) = writer {
+            // Developer-only attributes are for administrators.
+            let writable = !CLIENT_READ_ONLY_ATTRIBUTES.contains(&name)
+                && !name.starts_with("dev:")
+                && client.is_none_or(|client| {
+                    client.write_attributes.is_empty()
+                        || client
+                            .write_attributes
+                            .iter()
+                            .any(|allowed| allowed == name)
+                });
+            if !writable {
+                return Err(AppError::NotAuthorized(
+                    "A client attempted to write unauthorized attribute".to_string(),
+                ));
+            }
+        }
+
+        let schema = schema_attribute(pool, name);
+        if schema.is_none() && !STANDARD_ATTRIBUTES.contains(&name) {
+            return Err(AppError::InvalidParameter(format!(
+                "Attributes did not conform to the schema: Type for attribute {{{name}}} could not be determined"
+            )));
+        }
+        if updating && schema.is_some_and(|schema| schema.mutable == Some(false)) {
+            return Err(AppError::InvalidParameter(format!(
+                "user.{name}: Attribute cannot be updated."
+            )));
+        }
+    }
+    Ok(())
+}
+
+/// Whether the schema fixes an attribute once it has a value: it is
+/// immutable, or required.
+pub fn attribute_is_fixed(pool: &UserPool, name: &str) -> bool {
+    schema_attribute(pool, name)
+        .is_some_and(|schema| schema.mutable == Some(false) || schema.required == Some(true))
+}
+
+/// Refuse an attribute change that would let two users sign in under the
+/// same name: the email address or phone number of a `UsernameAttributes`
+/// pool, or a `preferred_username` alias.
+///
+/// An email or phone alias is different: it only acts as a sign-in name once
+/// verified, so it is checked then ([`ensure_alias_free`]).
+pub async fn ensure_sign_in_names_free(
+    storage: &Storage,
+    pool: &UserPool,
+    user_id: &Uuid,
+    updates: &[UserAttribute],
+) -> crate::error::Result<()> {
+    let username_attributes = pool.username_attributes.as_deref().unwrap_or_default();
+    let alias_attributes = pool.alias_attributes.as_deref().unwrap_or_default();
+    for update in updates {
+        let Some(value) = update.value.as_deref() else {
+            continue;
+        };
+        let (name, signs_in): (&'static str, bool) = match update.name.as_str() {
+            "email" => (
+                "email",
+                username_attributes.contains(&UsernameAttribute::Email),
+            ),
+            "phone_number" => (
+                "phone_number",
+                username_attributes.contains(&UsernameAttribute::PhoneNumber),
+            ),
+            "preferred_username" => (
+                "preferred_username",
+                alias_attributes.contains(&AliasAttribute::PreferredUsername),
+            ),
+            _ => continue,
+        };
+        if signs_in
+            && storage
+                .sign_in_value_taken(&pool.id, name, value, user_id, false)
+                .await
+        {
+            return Err(AppError::AliasExists(name));
+        }
+    }
+    Ok(())
+}
+
+/// Refuse to verify an email address or phone number that is already
+/// another user's verified alias.
+pub async fn ensure_alias_free(
+    storage: &Storage,
+    pool: &UserPool,
+    user: &User,
+    attribute: &'static str,
+) -> crate::error::Result<()> {
+    let alias = match attribute {
+        "email" => AliasAttribute::Email,
+        _ => AliasAttribute::PhoneNumber,
+    };
+    let value = match alias {
+        AliasAttribute::Email => user.email.as_deref(),
+        _ => user.phone_number.as_deref(),
+    };
+    let is_alias = pool
+        .alias_attributes
+        .as_deref()
+        .unwrap_or_default()
+        .contains(&alias);
+    if let Some(value) = value
+        && is_alias
+        && storage
+            .sign_in_value_taken(&pool.id, attribute, value, &user.id, true)
+            .await
+    {
+        return Err(AppError::AliasExists(attribute));
+    }
+    Ok(())
+}
+
+/// The schema's required attributes a new user was not given.
+pub fn require_schema_attributes(
+    pool: &UserPool,
+    attributes: &[UserAttribute],
+) -> crate::error::Result<()> {
+    let missing: Vec<String> = pool
+        .schema_attributes
+        .iter()
+        .flatten()
+        .filter(|schema| schema.required == Some(true) && schema.name != "sub")
+        .filter(|schema| {
+            !attributes
+                .iter()
+                .any(|attribute| attribute.name == schema.name && attribute.value.is_some())
+        })
+        .map(|schema| format!("{}: The attribute is required", schema.name))
+        .collect();
+    if missing.is_empty() {
+        Ok(())
+    } else {
+        Err(AppError::InvalidParameter(format!(
+            "Attributes did not conform to the schema: {}",
+            missing.join("\n")
+        )))
+    }
+}
+
+/// The attributes an app client may read: all of them unless it lists
+/// `ReadAttributes`. `sub` is always readable.
+pub fn readable_attributes(client: Option<&UserPoolClient>, attributes: Vec<Value>) -> Vec<Value> {
+    let Some(client) = client.filter(|client| !client.read_attributes.is_empty()) else {
+        return attributes;
+    };
+    attributes
+        .into_iter()
+        .filter(|attribute| {
+            attribute["Name"].as_str().is_some_and(|name| {
+                name == "sub" || client.read_attributes.iter().any(|allowed| allowed == name)
+            })
+        })
+        .collect()
+}
+
+/// Settle how a new user is named.
+///
+/// In a user pool that signs users in with their email address or phone
+/// number (`UsernameAttributes`), the requested username is that address or
+/// number: it becomes the attribute, and the user's actual username is the
+/// `sub`. Otherwise the requested username is the username, which must not
+/// look like an email address when email is an alias.
+pub fn new_user_identity(
+    pool: &UserPool,
+    user_id: &Uuid,
+    requested: &str,
+    attributes: &mut Vec<UserAttribute>,
+) -> crate::error::Result<String> {
+    let looks_like_email = requested.contains('@') && validate_email(requested).is_ok();
+    let looks_like_phone = validate_phone_number(requested).is_ok();
+
+    let username_attributes = pool.username_attributes.as_deref().unwrap_or_default();
+    if username_attributes.is_empty() {
+        let email_is_alias = pool
+            .alias_attributes
+            .as_deref()
+            .unwrap_or_default()
+            .contains(&AliasAttribute::Email);
+        if email_is_alias && looks_like_email {
+            return Err(AppError::InvalidParameter(
+                "Username cannot be of email format, since user pool is configured for email alias."
+                    .to_string(),
+            ));
+        }
+        return Ok(requested.to_string());
+    }
+
+    let accepts_email = username_attributes.contains(&UsernameAttribute::Email);
+    let accepts_phone = username_attributes.contains(&UsernameAttribute::PhoneNumber);
+    let attribute = if accepts_email && looks_like_email {
+        "email"
+    } else if accepts_phone && looks_like_phone {
+        "phone_number"
+    } else {
+        return Err(AppError::InvalidParameter(
+            match (accepts_email, accepts_phone) {
+                (true, true) => "Username should be either an email or a phone number.",
+                (true, false) => "Username should be an email.",
+                _ => "Username should be a phone number.",
+            }
+            .to_string(),
+        ));
+    };
+    upsert_user_attribute(attributes, attribute, Some(requested.to_string()));
+    Ok(user_id.to_string())
+}
+
+/// `UsernameExistsException` for a sign-up that collides with an existing
+/// user, worded for how the user pool names its users.
+pub fn username_taken(pool: &UserPool, requested: &str, default: AppError) -> AppError {
+    let username_attributes = pool.username_attributes.as_deref().unwrap_or_default();
+    if username_attributes.is_empty() {
+        return default;
+    }
+    let attribute = if requested.contains('@') {
+        "email"
+    } else {
+        "phone_number"
+    };
+    AppError::UsernameExists(format!(
+        "An account with the given {attribute} already exists."
+    ))
+}
+
+/// Where a sign-up confirmation code goes: the attribute the user pool
+/// verifies automatically. Cognito texts the code when it verifies both.
+/// `None` when the pool verifies nothing the user has.
+pub fn confirmation_attribute(pool: &UserPool, user: &User) -> Option<AutoVerifiedAttribute> {
+    let auto_verified = pool.auto_verified_attributes.as_deref().unwrap_or_default();
+    if auto_verified.contains(&AutoVerifiedAttribute::PhoneNumber) && user.phone_number.is_some() {
+        Some(AutoVerifiedAttribute::PhoneNumber)
+    } else if auto_verified.contains(&AutoVerifiedAttribute::Email) && user.email.is_some() {
+        Some(AutoVerifiedAttribute::Email)
+    } else {
+        None
+    }
+}
+
+/// `CodeDeliveryDetails` for a sign-up confirmation code.
+pub fn confirmation_delivery(pool: &UserPool, user: &User) -> Option<Value> {
+    match confirmation_attribute(pool, user)? {
+        AutoVerifiedAttribute::Email => build_code_delivery_details(user.email.as_deref(), None),
+        AutoVerifiedAttribute::PhoneNumber => {
+            build_code_delivery_details(None, user.phone_number.as_deref())
+        }
+    }
+}
+
+/// Where a password reset code goes.
+///
+/// Cognito only delivers to a verified email address or phone number, in the
+/// order of the user pool's `AccountRecoverySetting` (the phone number first
+/// when the pool has none). With that setting, a contact the user also
+/// receives MFA codes on (`mfa_factors`) does not qualify: recovering an
+/// account must not need only what the second factor already depends on.
+/// `honor_admin_only` is false for the admin reset, which works even when
+/// users may not recover their own accounts.
+pub fn recovery_delivery(
+    pool: &UserPool,
+    user: &User,
+    mfa_factors: &[String],
+    honor_admin_only: bool,
+) -> crate::error::Result<Value> {
+    let has_setting = pool
+        .account_recovery_setting
+        .as_ref()
+        .and_then(|setting| setting.recovery_mechanisms.as_ref())
+        .is_some_and(|mechanisms| !mechanisms.is_empty());
+    let used_for_mfa =
+        |factor: &str| has_setting && mfa_factors.iter().any(|enabled| enabled == factor);
+
+    let mut mechanisms: Vec<(i32, RecoveryMechanismName)> = pool
+        .account_recovery_setting
+        .as_ref()
+        .and_then(|setting| setting.recovery_mechanisms.as_ref())
+        .filter(|mechanisms| !mechanisms.is_empty())
+        .map(|mechanisms| {
+            mechanisms
+                .iter()
+                .map(|mechanism| (mechanism.priority.unwrap_or(i32::MAX), mechanism.name))
+                .collect()
+        })
+        .unwrap_or_else(|| {
+            vec![
+                (1, RecoveryMechanismName::VerifiedPhoneNumber),
+                (2, RecoveryMechanismName::VerifiedEmail),
+            ]
+        });
+    mechanisms.sort_by_key(|(priority, _)| *priority);
+
+    let admin_only = mechanisms
+        .iter()
+        .all(|(_, name)| *name == RecoveryMechanismName::AdminOnly);
+    if admin_only {
+        if honor_admin_only {
+            return Err(AppError::NotAuthorized(
+                "Contact administrator to reset password.".to_string(),
+            ));
+        }
+        mechanisms = vec![
+            (1, RecoveryMechanismName::VerifiedPhoneNumber),
+            (2, RecoveryMechanismName::VerifiedEmail),
+        ];
+    }
+
+    for (_, name) in mechanisms {
+        let details = match name {
+            RecoveryMechanismName::VerifiedEmail
+                if user.attribute_verified("email") && !used_for_mfa(EMAIL_OTP_FACTOR) =>
+            {
+                build_code_delivery_details(user.email.as_deref(), None)
+            }
+            RecoveryMechanismName::VerifiedPhoneNumber
+                if user.attribute_verified("phone_number") && !used_for_mfa(SMS_MFA_FACTOR) =>
+            {
+                build_code_delivery_details(None, user.phone_number.as_deref())
+            }
+            _ => None,
+        };
+        if let Some(details) = details {
+            return Ok(details);
+        }
+    }
+
+    Err(AppError::InvalidParameter(
+        "Cannot reset password for the user as there is no registered/verified email or phone_number"
+            .to_string(),
+    ))
+}
+
+/// The `CodeDeliveryDetails` Cognito makes up for a user that does not
+/// exist when the app client hides user existence.
+pub fn simulated_code_delivery(username: &str) -> Value {
+    let destination = if username.contains('@') {
+        mask_email(username)
+    } else {
+        mask_email(&format!("{username}@example.com"))
+    };
+    json!({
+        "Destination": destination,
+        "DeliveryMedium": "EMAIL",
+        "AttributeName": "email"
+    })
 }
 
 pub(crate) fn calculate_secret_hash(
@@ -179,22 +595,67 @@ pub fn verify_secret_hash(
     Ok(())
 }
 
+/// Whether the app client reports a missing user as a generic failure
+/// (`PreventUserExistenceErrors: ENABLED`).
+pub fn hides_user_existence(client: &UserPoolClient) -> bool {
+    client.prevent_user_existence_errors == Some(PreventUserExistenceErrors::Enabled)
+}
+
+/// Scope every access token issued by the user pools API carries, and the
+/// one Cognito requires for token-authorized user pools API operations.
+pub const USER_ADMIN_SCOPE: &str = "aws.cognito.signin.user.admin";
+
+/// Like [`verify_and_extract_active_user_id`], also returning the app client
+/// the token was issued to, whose `ReadAttributes` and `WriteAttributes`
+/// bound what the caller may see and change.
+pub async fn verify_access_token_with_client(
+    storage: &Storage,
+    token: &str,
+) -> crate::error::Result<(Uuid, Option<UserPoolClient>)> {
+    let user_id = verify_and_extract_active_user_id(storage, token).await?;
+    let client = match jwt::decode_access_token(token) {
+        Ok(token_data) => match token_data.claims.client_id.parse() {
+            Ok(client_id) => storage.get_user_pool_client(&client_id).await,
+            Err(_) => None,
+        },
+        Err(_) => None,
+    };
+    Ok((user_id, client))
+}
+
+/// Authorize a token-authenticated user pools API call the way Cognito does:
+/// the access token must be valid, unexpired, not revoked, and carry the
+/// `aws.cognito.signin.user.admin` scope.
 pub async fn verify_and_extract_active_user_id(
     storage: &Storage,
     token: &str,
-) -> std::result::Result<Uuid, String> {
-    let token_data = jwt::verify_access_token(token)?;
-    let user_id = Uuid::parse_str(&token_data.claims.sub)
-        .map_err(|e| format!("Invalid user ID in token: {}", e))?;
+) -> crate::error::Result<Uuid> {
+    let token_data = jwt::decode_access_token(token).map_err(|e| match e {
+        jwt::AccessTokenError::Expired => AppError::AccessTokenExpired,
+        jwt::AccessTokenError::Invalid(_) => AppError::InvalidAccessToken,
+    })?;
+    let user_id =
+        Uuid::parse_str(&token_data.claims.sub).map_err(|_| AppError::InvalidAccessToken)?;
     if storage
         .is_access_token_revoked(
             &user_id,
             token_data.claims.iat,
             token_data.claims.cognitox_iat_ms,
+            token_data.claims.origin_jti.as_deref(),
         )
         .await
     {
-        return Err("Access token has been revoked".to_string());
+        return Err(AppError::AccessTokenRevoked);
+    }
+    if !token_data
+        .claims
+        .scope
+        .split_whitespace()
+        .any(|scope| scope == USER_ADMIN_SCOPE)
+    {
+        return Err(AppError::NotAuthorized(
+            "Access Token does not have required scopes".to_string(),
+        ));
     }
     Ok(user_id)
 }
@@ -255,6 +716,8 @@ pub fn build_user_attributes(user: &User) -> Vec<Value> {
 
     attributes
         .into_iter()
+        // Emulator bookkeeping kept next to the real attributes.
+        .filter(|attribute| attribute.name != "preferred_mfa_setting")
         .map(|attribute| {
             json!({
                 "Name": attribute.name,

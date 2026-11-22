@@ -9,10 +9,10 @@ use serde_json::{Value, json};
 use crate::{
     error::{AppError, Result},
     storage::Storage,
-    validation::validate_password,
+    validation::validate_password_against_policy,
 };
 
-use super::helpers::{hash_password, verify_and_extract_active_user_id, verify_password};
+use super::helpers::{set_user_password, verify_and_extract_active_user_id, verify_password};
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "PascalCase")]
@@ -23,15 +23,9 @@ struct Request {
 }
 
 pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
-    let req: Request = serde_json::from_value(body)
-        .map_err(|e| AppError::InvalidParameter(format!("Invalid request: {}", e)))?;
+    let req: Request = crate::action::io::parse_request(body)?;
 
-    // Validate new password
-    validate_password(&req.proposed_password)?;
-
-    let user_id = verify_and_extract_active_user_id(storage, &req.access_token)
-        .await
-        .map_err(|_| AppError::InvalidAccessToken)?;
+    let user_id = verify_and_extract_active_user_id(storage, &req.access_token).await?;
 
     let mut user = storage
         .get_user(&user_id)
@@ -44,7 +38,13 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
         ));
     }
 
-    user.password_hash = hash_password(&req.proposed_password).map_err(AppError::Internal)?;
+    let pool = storage
+        .get_user_pool(&user.user_pool_id)
+        .await
+        .ok_or(AppError::UserPoolNotFound)?;
+    validate_password_against_policy(&pool, &req.proposed_password)?;
+
+    set_user_password(&mut user, &req.proposed_password)?;
     user.last_modified_date = Utc::now();
 
     storage.update_user(user).await;
@@ -70,6 +70,7 @@ mod tests {
             storage,
             json!({
                 "UserPoolId": pool_id,
+                "ExplicitAuthFlows": ["ALLOW_USER_PASSWORD_AUTH", "ALLOW_ADMIN_USER_PASSWORD_AUTH", "ALLOW_USER_SRP_AUTH", "ALLOW_REFRESH_TOKEN_AUTH"],
                 "ClientName": "test-client"
             }),
         )

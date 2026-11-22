@@ -27,8 +27,7 @@ struct CustomDomainConfigInput {
 }
 
 pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
-    let req: Request = serde_json::from_value(body)
-        .map_err(|e| AppError::InvalidParameter(format!("Invalid request: {}", e)))?;
+    let req: Request = crate::action::io::parse_request(body)?;
 
     // Validate domain format (alphanumeric and hyphens only, 1-63 chars)
     if req.domain.is_empty() || req.domain.len() > 63 {
@@ -54,7 +53,9 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
 
     // Check if domain already exists
     if storage.get_user_pool_domain(&req.domain).await.is_some() {
-        return Err(AppError::UserPoolDomainAlreadyExists);
+        return Err(AppError::InvalidParameter(
+            "Domain already associated with another user pool.".to_string(),
+        ));
     }
 
     // Check if user pool already has a domain
@@ -64,7 +65,7 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
         .is_some()
     {
         return Err(AppError::InvalidParameter(
-            "User pool already has a domain configured".to_string(),
+            "User pool already has a domain configured.".to_string(),
         ));
     }
 
@@ -213,6 +214,25 @@ mod tests {
         )
         .await;
 
-        assert!(result.is_err());
+        assert!(matches!(
+            result,
+            Err(AppError::InvalidParameter(message))
+                if message == "Domain already associated with another user pool."
+        ));
+
+        // A pool has one domain.
+        let result = handler(
+            &storage,
+            json!({
+                "Domain": "second-domain",
+                "UserPoolId": pool_id
+            }),
+        )
+        .await;
+        assert!(matches!(
+            result,
+            Err(AppError::InvalidParameter(message))
+                if message == "User pool already has a domain configured."
+        ));
     }
 }

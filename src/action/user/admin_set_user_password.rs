@@ -10,10 +10,10 @@ use crate::{
     error::{AppError, Result},
     storage::Storage,
     types::{UserPoolId, UserStatus},
-    validation::validate_password,
+    validation::validate_password_against_policy,
 };
 
-use super::helpers::hash_password;
+use super::helpers::set_user_password;
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "PascalCase")]
@@ -26,32 +26,29 @@ struct Request {
 }
 
 pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
-    let req: Request = serde_json::from_value(body)
-        .map_err(|e| AppError::InvalidParameter(format!("Invalid request: {}", e)))?;
+    let req: Request = crate::action::io::parse_request(body)?;
 
-    // Validate input
-    validate_password(&req.password)?;
-
-    storage
+    let pool = storage
         .get_user_pool(&req.user_pool_id)
         .await
         .ok_or(AppError::UserPoolNotFound)?;
+    validate_password_against_policy(&pool, &req.password)?;
 
     let mut user = storage
         .get_user_by_username(&req.user_pool_id, &req.username)
         .await
         .ok_or(AppError::UserNotFound)?;
 
-    user.password_hash = hash_password(&req.password).map_err(AppError::Internal)?;
+    set_user_password(&mut user, &req.password)?;
     user.last_modified_date = Utc::now();
 
-    if req.permanent {
-        if user.user_status == UserStatus::ForceChangePassword {
-            user.user_status = UserStatus::Confirmed;
-        }
+    // A permanent password leaves the user ready to sign in, whatever state
+    // the account was in; a temporary one has to be replaced at sign-in.
+    user.user_status = if req.permanent {
+        UserStatus::Confirmed
     } else {
-        user.user_status = UserStatus::ForceChangePassword;
-    }
+        UserStatus::ForceChangePassword
+    };
 
     storage.update_user(user).await;
 

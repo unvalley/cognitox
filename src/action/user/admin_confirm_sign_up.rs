@@ -23,8 +23,7 @@ struct Request {
 }
 
 pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
-    let req: Request = serde_json::from_value(body)
-        .map_err(|e| AppError::InvalidParameter(format!("Invalid request: {}", e)))?;
+    let req: Request = crate::action::io::parse_request(body)?;
     let _ = &req.client_metadata;
 
     storage
@@ -36,6 +35,16 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
         .get_user_by_username(&req.user_pool_id, &req.username)
         .await
         .ok_or(AppError::UserNotFound)?;
+
+    // Only a self-registered user who has not confirmed yet can be
+    // confirmed.
+    if user.user_status != UserStatus::Unconfirmed {
+        let status = json!(user.user_status);
+        return Err(AppError::NotAuthorized(format!(
+            "User cannot be confirmed. Current status is {}",
+            status.as_str().unwrap_or_default()
+        )));
+    }
 
     let user_id = user.id;
     user.user_status = UserStatus::Confirmed;
@@ -63,12 +72,19 @@ mod tests {
             .unwrap();
         let pool_id = pool["UserPool"]["Id"].as_str().unwrap();
 
-        // Create a user first
-        admin_create_user::handler(
+        // A user who registered themselves and has not confirmed yet.
+        let client = crate::action::user_pool::create_user_pool_client::handler(
+            &storage,
+            json!({"UserPoolId": pool_id, "ClientName": "test-client"}),
+        )
+        .await
+        .unwrap();
+        crate::action::user::sign_up::handler(
             &storage,
             json!({
-                "UserPoolId": pool_id,
-                "Username": "testuser"
+                "ClientId": client["UserPoolClient"]["ClientId"],
+                "Username": "testuser",
+                "Password": "Password123!"
             }),
         )
         .await
@@ -94,6 +110,54 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(user.user_status, UserStatus::Confirmed);
+
+        // Confirming twice is refused.
+        let result = handler(
+            &storage,
+            json!({
+                "UserPoolId": pool_id,
+                "Username": "testuser"
+            }),
+        )
+        .await;
+        assert!(matches!(
+            result,
+            Err(AppError::NotAuthorized(message))
+                if message == "User cannot be confirmed. Current status is CONFIRMED"
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_admin_confirm_sign_up_does_not_skip_a_temporary_password() {
+        let storage = Storage::new();
+
+        let pool = create_user_pool::handler(&storage, json!({"PoolName": "test"}))
+            .await
+            .unwrap();
+        let pool_id = pool["UserPool"]["Id"].as_str().unwrap();
+        admin_create_user::handler(
+            &storage,
+            json!({
+                "UserPoolId": pool_id,
+                "Username": "invited"
+            }),
+        )
+        .await
+        .unwrap();
+
+        let result = handler(
+            &storage,
+            json!({
+                "UserPoolId": pool_id,
+                "Username": "invited"
+            }),
+        )
+        .await;
+        assert!(matches!(
+            result,
+            Err(AppError::NotAuthorized(message))
+                if message == "User cannot be confirmed. Current status is FORCE_CHANGE_PASSWORD"
+        ));
     }
 
     #[tokio::test]

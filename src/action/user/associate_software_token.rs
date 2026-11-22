@@ -2,15 +2,17 @@
 //!
 //! <https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_AssociateSoftwareToken.html>
 
+use chrono::Utc;
 use serde::Deserialize;
 use serde_json::{Value, json};
-use uuid::Uuid;
 
 use crate::{
     error::{AppError, Result},
     storage::Storage,
+    types::ChallengeType,
 };
 
+use super::auth_flow::new_session_token;
 use super::helpers::verify_and_extract_active_user_id;
 
 #[derive(Debug, Deserialize)]
@@ -23,40 +25,86 @@ struct Request {
 }
 
 pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
-    let req: Request = serde_json::from_value(body)
-        .map_err(|e| AppError::InvalidParameter(format!("Invalid request: {}", e)))?;
+    let req: Request = crate::action::io::parse_request(body)?;
 
-    let user_id = if let Some(access_token) = req.access_token.as_deref() {
-        let user_id = verify_and_extract_active_user_id(storage, access_token)
-            .await
-            .map_err(|_| AppError::InvalidAccessToken)?;
+    if let Some(access_token) = req.access_token.as_deref() {
+        let user_id = verify_and_extract_active_user_id(storage, access_token).await?;
         storage
             .get_user(&user_id)
             .await
             .ok_or(AppError::UserNotFound)?;
-        user_id
-    } else if let Some(session) = req.session.as_deref() {
+
+        let secret_code = generate_secret_code();
         storage
-            .get_software_token_session(session)
-            .await
-            .map(|(user_id, _)| user_id)
-            .ok_or_else(|| AppError::InvalidParameter("Invalid session".to_string()))?
-    } else {
+            .set_pending_software_token_secret(&user_id, secret_code.clone())
+            .await;
+        // A token-authorized association has no session to return.
+        return Ok(secret_only(secret_code));
+    }
+
+    let Some(session) = req.session.as_deref() else {
         return Err(AppError::InvalidParameter(
             "AccessToken or Session is required".to_string(),
         ));
     };
 
-    let secret_code = generate_secret_code();
-    let session = Uuid::new_v4().to_string();
-    storage
-        .save_software_token_session(session.clone(), &user_id, secret_code.clone())
-        .await;
-
+    let (secret_code, next_session) = associate_with_session(storage, session, false).await?;
     Ok(json!({
         "SecretCode": secret_code,
-        "Session": session
+        "Session": next_session
     }))
+}
+
+/// Start registering an authenticator app under the `MFA_SETUP` challenge
+/// of a sign-in, which proves the password was presented; no other session
+/// can register a device. Returns the secret key and the session that
+/// continues the setup.
+///
+/// `managed_login` says who is asking: a session is only good where it was
+/// issued, the API or the managed login pages.
+pub(crate) async fn associate_with_session(
+    storage: &Storage,
+    session: &str,
+    managed_login: bool,
+) -> Result<(String, String)> {
+    let invalid_session = || AppError::NotAuthorized("Invalid session for the user.".to_string());
+    let mut pending = storage
+        .get_auth_challenge_session(session)
+        .await
+        .filter(|pending| {
+            pending.challenge_name == ChallengeType::MfaSetup
+                && pending.managed_login == managed_login
+        })
+        .ok_or_else(invalid_session)?;
+    if pending.expires_at < Utc::now() {
+        storage.delete_auth_challenge_session(session).await;
+        storage.delete_software_token_session(session).await;
+        return Err(AppError::NotAuthorized(
+            "Invalid session for the user, session is expired.".to_string(),
+        ));
+    }
+
+    // Each step of the setup hands out a fresh session.
+    let next_session = new_session_token();
+    storage.delete_auth_challenge_session(session).await;
+    storage.delete_software_token_session(session).await;
+    pending.session = next_session.clone();
+    pending.mfa_setup_complete = false;
+    let user_id = pending.user_id;
+    storage.save_auth_challenge_session(pending).await;
+
+    let secret_code = generate_secret_code();
+    storage
+        .save_software_token_session(next_session.clone(), &user_id, secret_code.clone())
+        .await;
+
+    Ok((secret_code, next_session))
+}
+
+fn secret_only(secret_code: String) -> Value {
+    let mut response = serde_json::Map::new();
+    response.insert("SecretCode".to_string(), json!(secret_code));
+    Value::Object(response)
 }
 
 fn generate_secret_code() -> String {
@@ -85,6 +133,7 @@ mod tests {
             storage,
             json!({
                 "UserPoolId": pool_id,
+                "ExplicitAuthFlows": ["ALLOW_USER_PASSWORD_AUTH", "ALLOW_ADMIN_USER_PASSWORD_AUTH", "ALLOW_USER_SRP_AUTH", "ALLOW_REFRESH_TOKEN_AUTH"],
                 "ClientName": "test-client"
             }),
         )
@@ -143,7 +192,8 @@ mod tests {
         assert!(result.is_ok());
         let body = result.unwrap();
         assert_eq!(body["SecretCode"].as_str().unwrap().len(), 32);
-        assert!(body["Session"].as_str().is_some());
+        // Only a session-authorized association continues with a session.
+        assert!(body.get("Session").is_none());
     }
 
     #[tokio::test]

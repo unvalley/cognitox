@@ -19,12 +19,9 @@ struct Request {
 }
 
 pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
-    let req: Request = serde_json::from_value(body)
-        .map_err(|e| AppError::InvalidParameter(format!("Invalid request: {}", e)))?;
+    let req: Request = crate::action::io::parse_request(body)?;
 
-    let user_id = verify_and_extract_active_user_id(storage, &req.access_token)
-        .await
-        .map_err(|_| AppError::InvalidAccessToken)?;
+    let user_id = verify_and_extract_active_user_id(storage, &req.access_token).await?;
 
     let user = storage
         .get_user(&user_id)
@@ -61,6 +58,7 @@ mod tests {
             storage,
             json!({
                 "UserPoolId": pool_id,
+                "ExplicitAuthFlows": ["ALLOW_USER_PASSWORD_AUTH", "ALLOW_ADMIN_USER_PASSWORD_AUTH", "ALLOW_USER_SRP_AUTH", "ALLOW_REFRESH_TOKEN_AUTH"],
                 "ClientName": "test-client"
             }),
         )
@@ -135,7 +133,6 @@ mod tests {
         )
         .await
         .unwrap();
-        let session = associated["Session"].as_str().unwrap();
         let secret = associated["SecretCode"].as_str().unwrap();
         let user_code =
             verify_software_token::generate_totp_code(secret, chrono::Utc::now().timestamp())
@@ -144,8 +141,29 @@ mod tests {
         verify_software_token::handler(
             &storage,
             json!({
-                "Session": session,
+                "AccessToken": access_token,
                 "UserCode": user_code
+            }),
+        )
+        .await
+        .unwrap();
+
+        // A verified device is not an MFA factor until the user enables it.
+        let body = handler(
+            &storage,
+            json!({
+                "AccessToken": access_token
+            }),
+        )
+        .await
+        .unwrap();
+        assert_eq!(body["ConfiguredUserAuthFactors"], json!([]));
+
+        crate::action::user::set_user_mfa_preference::handler(
+            &storage,
+            json!({
+                "AccessToken": access_token,
+                "SoftwareTokenMfaSettings": {"Enabled": true, "PreferredMfa": true}
             }),
         )
         .await

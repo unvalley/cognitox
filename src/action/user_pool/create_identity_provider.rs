@@ -29,8 +29,7 @@ struct Request {
 }
 
 pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
-    let req: Request = serde_json::from_value(body)
-        .map_err(|e| AppError::InvalidParameter(format!("Invalid request: {}", e)))?;
+    let req: Request = crate::action::io::parse_request(body)?;
 
     if req.provider_name.trim().is_empty() {
         return Err(AppError::InvalidParameter(
@@ -142,10 +141,9 @@ mod tests {
         )
         .await;
 
-        assert!(result.is_err());
-        assert!(matches!(
-            result.unwrap_err(),
-            AppError::IdentityProviderAlreadyExists
-        ));
+        let error = result.unwrap_err();
+        assert!(matches!(error, AppError::IdentityProviderAlreadyExists));
+        // Cognito has an exception of its own for this.
+        assert_eq!(error.status_and_type().1, "DuplicateProviderException");
     }
 }

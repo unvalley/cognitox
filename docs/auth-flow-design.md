@@ -1,105 +1,98 @@
 # Auth Flow Design
 
-## Goals
+`InitiateAuth`, `RespondToAuthChallenge`, and their `Admin*` variants share one
+state machine, `src/action/user/auth_flow.rs`. The handlers only parse the
+request, load the app client and user pool, and call `initiate_auth` or
+`respond_to_auth_challenge` with an `AuthContext`.
 
-- Remove duplicated auth logic across:
-  - `InitiateAuth`
-  - `RespondToAuthChallenge`
-  - `AdminInitiateAuth`
-  - `AdminRespondToAuthChallenge`
-- Separate transport parsing from auth state transitions.
-- Make it possible to add missing Cognito flows and challenges without copying token issuance and session validation logic again.
-- Keep current behavior stable while introducing structure incrementally.
+## Layers
 
-## Current Problems
+1. **Request** (the handler files): the `Request` struct of each operation and
+   the pool/client lookup. `AuthApi::User` or `AuthApi::Admin` records which
+   API the call came through, because the server-side flows
+   (`ADMIN_USER_PASSWORD_AUTH`, `ADMIN_NO_SRP_AUTH`) exist only on the admin
+   operations and `USER_PASSWORD_AUTH` only on the public one.
+2. **Engine** (`auth_flow.rs`): flow and challenge parsing, the
+   `ExplicitAuthFlows` check, the first factor, the follow-up challenges, and
+   token issuance.
+3. **Primitives**: `src/srp.rs` (SRP-6a as Cognito runs it), `src/jwt.rs`
+   (claims and signing), `helpers.rs` (password storage, secret hash, codes).
 
-- Password auth, refresh-token auth, token issuance, and `NEW_PASSWORD_REQUIRED` session handling are implemented four times with small variations.
-- Flow and challenge selection are string-driven inside large handlers.
-- `PendingAuthChallenge` stores only a string challenge name, and handlers re-implement the same session validation rules.
-- Adding a new challenge today would require edits in multiple handlers instead of one shared state machine layer.
+## A sign-in, step by step
 
-## Target Shape
+```
+first factor ──► after_password ──► after_first_factor ──► complete
+ password            │                    │
+ SRP                 ├─ UNCONFIRMED       ├─ no factor, MFA not required ─► tokens
+ one-time code ──────┼─ RESET_REQUIRED    ├─ MFA required, none set up ──► MFA_SETUP
+ (USER_AUTH)         └─ FORCE_CHANGE_     ├─ one factor / a preference ──► SOFTWARE_TOKEN_MFA,
+                        PASSWORD ──►      │                                SMS_MFA, EMAIL_OTP
+                        NEW_PASSWORD_     └─ several, no preference ────► SELECT_MFA_TYPE
+                        REQUIRED
+```
 
-Auth behavior should be split into three layers:
+- **Password flows** verify the bcrypt hash. **`USER_SRP_AUTH`** answers
+  `SRP_A` with `PASSWORD_VERIFIER` and checks the client's
+  `PASSWORD_CLAIM_SIGNATURE` against the stored verifier. Every code path that
+  sets a password goes through `helpers::set_user_password`, which stores both
+  the hash and the verifier; a user from a snapshot that predates SRP gets a
+  verifier the next time a password flow succeeds.
+- **`USER_AUTH`** offers the pool's `AllowedFirstAuthFactors` as
+  `SELECT_CHALLENGE` unless `PREFERRED_CHALLENGE` names an available one.
+  A one-time code finishes the sign-in, so it is only offered to a verified
+  address or number, and only where nothing calls for a second factor (the
+  pool does not require MFA and the user has none). A password continues as
+  above.
+- **`REFRESH_TOKEN_AUTH`** issues access and ID tokens that keep the
+  `origin_jti` and `auth_time` of the sign-in the refresh token came from.
 
-1. Request layer
-   - Parse API-specific request fields.
-   - Normalize request-specific shapes like `AuthParameters` and `ChallengeResponses`.
-   - Convert transport strings into typed flow/challenge intents where possible.
+## Sessions
 
-2. Auth engine layer
-   - Validate password auth.
-   - Validate refresh-token auth.
-   - Create and validate challenge sessions.
-   - Finalize challenge completion.
-   - Issue tokens and auth events.
+A challenge is a `PendingAuthChallenge` in storage, keyed by its `Session`
+string and bound to the user, app client, pool, and challenge name. It lives
+for the client's `AuthSessionValidity` (3 minutes by default), survives wrong
+answers up to a small limit, and is replaced by a new session whenever the
+sign-in moves to another challenge. An answer attempt is claimed under the
+storage lock before the answer is checked, so parallel guesses cannot exceed
+the limit.
 
-3. Response layer
-   - Build Cognito-compatible success/challenge payloads.
-   - Keep API-specific envelope differences local to handlers.
+`USER_SRP_AUTH` is the exception: Cognito returns no `Session` with
+`PASSWORD_VERIFIER`, and clients hand back the `SECRET_BLOCK` instead, so the
+exchange is keyed by its secret block and is single use.
 
-## Incremental Plan
+`MFA_SETUP` spans three operations. `AssociateSoftwareToken` and
+`VerifySoftwareToken` each exchange the session for a new one, and the final
+`RespondToAuthChallenge` succeeds once the pending challenge is marked
+`mfa_setup_complete`.
 
-### Phase 1
+## User existence
 
-- Extract shared helpers for:
-  - authentication result generation
-  - refresh-token authentication
-  - `NEW_PASSWORD_REQUIRED` challenge creation
-  - challenge session validation
-  - password-challenge completion
-- Keep existing request structs and public handler behavior mostly unchanged.
-- Use this phase to make the four handlers structurally similar.
+With `PreventUserExistenceErrors: ENABLED` an unknown user looks like a wrong
+password. For SRP that means handing out a `PASSWORD_VERIFIER` challenge
+nobody can answer, as Cognito does.
 
-Status:
-- Done. Shared helpers now own password auth, refresh-token auth, token issuance, and `NEW_PASSWORD_REQUIRED` session lifecycle.
+## Managed login
 
-### Phase 2
+The Hosted UI and `/oauth2/authorize` check passwords themselves
+(`api/oauth2.rs::check_credentials`), because a browser sign-in ends in an
+authorization code rather than in tokens. For MFA they come back to the
+state machine: `second_factor` decides which challenge follows the password
+and stores it as the API would, `/mfa` renders the pending challenge its
+`session` names, and `answer_second_factor` checks the answer with the same
+attempt limit. Only the last step differs: `SecondFactorAnswer::Verified`
+hands the user back to `complete_authorization`.
 
-- Introduce typed request-side flow/challenge enums with graceful fallback for unsupported values.
-- Replace most raw string matching with typed dispatch.
-- Extend `PendingAuthChallenge` so challenge metadata is typed and can carry parameters needed for MFA and SRP.
+Requests from these pages carry `AuthApi::ManagedLogin`, which skips the
+`SECRET_HASH` check: the browser never holds the client secret. For that
+reason, and because the two ends differ (an authorization code with the
+request's scopes, or tokens with the API's), a challenge records where it
+was issued (`PendingAuthChallenge::managed_login`) and is only answered
+there. For `MFA_SETUP` the page takes the steps of `AssociateSoftwareToken`
+and `VerifySoftwareToken` (`associate_with_session`, `verify_with_session`).
 
-Status:
-- In progress. Handlers now parse flow/challenge names through typed helpers while preserving existing `NotImplemented` responses for unsupported values.
-- `PendingAuthChallenge` now stores a typed `ChallengeType`.
-- `SOFTWARE_TOKEN_MFA` is wired into `InitiateAuth` / `RespondToAuthChallenge` and the admin variants as the first non-password follow-up challenge.
+## Not implemented
 
-### Phase 3
-
-- Add missing Cognito flows:
-  - `USER_AUTH`
-  - `CUSTOM_AUTH`
-  - `USER_SRP_AUTH`
-  - additional admin variants as needed
-- Add missing challenges:
-  - `SMS_MFA`
-  - `SOFTWARE_TOKEN_MFA`
-  - `SELECT_MFA_TYPE`
-  - `MFA_SETUP`
-  - `CUSTOM_CHALLENGE`
-
-### Phase 4
-
-- Move challenge progression to an explicit state machine.
-- Model challenge transitions in one place instead of branching ad hoc inside handlers.
-- Add compatibility tests per flow/challenge pair.
-
-## State Model Notes
-
-`PendingAuthChallenge` is the seed of the state machine. It should eventually represent:
-
-- challenge type
-- subject user
-- client and pool binding
-- expiry
-- challenge-scoped metadata
-
-For now, Phase 1 keeps the existing storage shape and only centralizes validation logic around it.
-
-## Immediate Non-Goals
-
-- Full SRP implementation
-- Full MFA challenge matrix
-- Reworking Hosted UI or OAuth2 flows
-- Changing externally visible behavior unless needed for correctness
+- `CUSTOM_AUTH` and `CUSTOM_CHALLENGE`: they are defined by Lambda triggers.
+- `WEB_AUTHN` sign-in and the device SRP challenges
+  (`DEVICE_SRP_AUTH`, `DEVICE_PASSWORD_VERIFIER`).
+- Lockout after repeated failed sign-ins.

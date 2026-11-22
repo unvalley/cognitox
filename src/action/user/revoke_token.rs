@@ -21,8 +21,7 @@ struct Request {
 }
 
 pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
-    let req: Request = serde_json::from_value(body)
-        .map_err(|e| AppError::InvalidParameter(format!("Invalid request: {}", e)))?;
+    let req: Request = crate::action::io::parse_request(body)?;
 
     // Verify the client exists
     let client = storage
@@ -47,6 +46,12 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
         }
     }
 
+    if !client.enable_token_revocation {
+        return Err(AppError::UnsupportedOperation(
+            "Token revocation is not enabled for this client".to_string(),
+        ));
+    }
+
     // Get and validate the refresh token
     let refresh_token = storage
         .get_refresh_token(&req.token)
@@ -58,11 +63,15 @@ pub async fn handler(storage: &Storage, body: Value) -> Result<Value> {
         return Err(AppError::InvalidRefreshToken);
     }
 
-    // Delete the refresh token
+    // Revoking a refresh token also voids the access and ID tokens that
+    // share its `origin_jti`. Tokens issued before the emulator recorded
+    // one can only be voided for the whole user.
     storage.delete_refresh_token(&req.token).await;
-    storage
-        .invalidate_access_tokens_for_user(&refresh_token.user_id)
-        .await;
+    if refresh_token.origin_jti.is_none() {
+        storage
+            .invalidate_access_tokens_for_user(&refresh_token.user_id)
+            .await;
+    }
 
     Ok(json!({}))
 }
@@ -85,6 +94,7 @@ mod tests {
             storage,
             json!({
                 "UserPoolId": pool_id,
+                "ExplicitAuthFlows": ["ALLOW_USER_PASSWORD_AUTH", "ALLOW_ADMIN_USER_PASSWORD_AUTH", "ALLOW_USER_SRP_AUTH", "ALLOW_REFRESH_TOKEN_AUTH"],
                 "ClientName": "test-client"
             }),
         )

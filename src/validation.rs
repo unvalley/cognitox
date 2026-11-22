@@ -7,14 +7,17 @@ use crate::error::{AppError, Result};
 use crate::types::{
     AccountRecoverySetting, AdminCreateUserConfig, AnalyticsConfiguration, DeviceConfiguration,
     EmailConfiguration, EmailMfaConfiguration, ExplicitAuthFlow, InviteMessageTemplate,
-    MfaConfiguration, OAuthFlow, RefreshTokenRotationType, SchemaAttributeType, SmsConfiguration,
-    SmsMfaConfiguration, SoftwareTokenMfaConfiguration, TokenValidityUnit,
-    UserAttributeUpdateSettingsType, UserPoolAddOns, UserPoolId, UserPoolPolicies,
+    MfaConfiguration, OAuthFlow, PasswordPolicy, RefreshTokenRotationType, SchemaAttributeType,
+    SmsConfiguration, SmsMfaConfiguration, SoftwareTokenMfaConfiguration, TokenValidityUnit,
+    UserAttributeUpdateSettingsType, UserPool, UserPoolAddOns, UserPoolId, UserPoolPolicies,
     VerificationMessageTemplate, WebAuthnConfiguration,
 };
 
-/// Minimum password length (AWS default is 6)
-const MIN_PASSWORD_LENGTH: usize = 6;
+/// `PasswordPolicy.MinimumLength` of a user pool created without a policy.
+const DEFAULT_MIN_PASSWORD_LENGTH: i32 = 8;
+
+/// `PasswordPolicy.TemporaryPasswordValidityDays` when unset.
+const DEFAULT_TEMPORARY_PASSWORD_VALIDITY_DAYS: i32 = 7;
 
 /// Maximum password length
 const MAX_PASSWORD_LENGTH: usize = 256;
@@ -25,56 +28,144 @@ const MAX_USERNAME_LENGTH: usize = 128;
 /// Maximum confirmation/reset code length
 const MAX_CODE_LENGTH: usize = 2048;
 
-/// Validate username is not empty and within bounds
+/// Validate a `Username` member against Cognito's shape constraints:
+/// 1 to 128 characters of letters, marks, symbols, numbers, and punctuation.
 pub fn validate_username(username: &str) -> Result<()> {
-    let trimmed = username.trim();
+    let violation = |constraint: &str| {
+        Err(AppError::InvalidParameter(format!(
+            "1 validation error detected: Value '{username}' at 'username' failed to satisfy constraint: {constraint}"
+        )))
+    };
 
-    if trimmed.is_empty() {
-        return Err(AppError::InvalidParameter(
-            "Username cannot be empty".to_string(),
+    if username.is_empty() {
+        return violation("Member must have length greater than or equal to 1");
+    }
+
+    if username.chars().count() > MAX_USERNAME_LENGTH {
+        return violation(&format!(
+            "Member must have length less than or equal to {MAX_USERNAME_LENGTH}"
         ));
     }
 
-    if trimmed.len() > MAX_USERNAME_LENGTH {
-        return Err(AppError::InvalidParameter(format!(
-            "Username cannot exceed {} characters",
-            MAX_USERNAME_LENGTH
-        )));
-    }
-
-    // Username should not contain spaces (AWS Cognito rule)
-    if trimmed.contains(' ') {
-        return Err(AppError::InvalidParameter(
-            "Username cannot contain spaces".to_string(),
-        ));
+    if username
+        .chars()
+        .any(|ch| ch.is_whitespace() || ch.is_control())
+    {
+        return violation(
+            "Member must satisfy regular expression pattern: [\\p{L}\\p{M}\\p{S}\\p{N}\\p{P}]+",
+        );
     }
 
     Ok(())
 }
 
-/// Validate password meets minimum requirements
-pub fn validate_password(password: &str) -> Result<()> {
-    if password.is_empty() {
+/// Cognito's password policy for a user pool created without one.
+pub fn default_password_policy() -> PasswordPolicy {
+    PasswordPolicy {
+        minimum_length: Some(DEFAULT_MIN_PASSWORD_LENGTH),
+        password_history_size: None,
+        require_lowercase: Some(true),
+        require_numbers: Some(true),
+        require_symbols: Some(true),
+        require_uppercase: Some(true),
+        temporary_password_validity_days: Some(DEFAULT_TEMPORARY_PASSWORD_VALIDITY_DAYS),
+    }
+}
+
+/// Characters Cognito counts as symbols for `RequireSymbols`.
+const PASSWORD_SYMBOLS: &str = "^$*.[]{}()?\"!@#%&/\\,><':;|_~`=+- ";
+
+/// The shape constraint on every password member: no leading or trailing
+/// whitespace, at most 256 characters.
+fn validate_password_shape(password: &str) -> Result<()> {
+    let length = password.chars().count();
+    if length > MAX_PASSWORD_LENGTH {
+        return Err(AppError::InvalidParameter(format!(
+            "1 validation error detected: Value at 'password' failed to satisfy constraint: Member must have length less than or equal to {MAX_PASSWORD_LENGTH}"
+        )));
+    }
+    let edge_is_whitespace = password.chars().next().is_none_or(char::is_whitespace)
+        || password.chars().next_back().is_none_or(char::is_whitespace);
+    if edge_is_whitespace {
         return Err(AppError::InvalidParameter(
-            "Password cannot be empty".to_string(),
+            "1 validation error detected: Value at 'password' failed to satisfy constraint: Member must satisfy regular expression pattern: ^[\\S]+.*[\\S]+$"
+                .to_string(),
         ));
     }
+    Ok(())
+}
 
-    if password.len() < MIN_PASSWORD_LENGTH {
-        return Err(AppError::InvalidParameter(format!(
-            "Password must be at least {} characters",
-            MIN_PASSWORD_LENGTH
-        )));
+/// Enforce a user pool's `PasswordPolicy` on a new password.
+///
+/// A pool without a stored policy is held to Cognito's default.
+pub fn validate_password_against_policy(pool: &UserPool, password: &str) -> Result<()> {
+    validate_password_shape(password)?;
+
+    let default_policy = default_password_policy();
+    let policy = pool
+        .policies
+        .as_ref()
+        .and_then(|policies| policies.password_policy.as_ref())
+        .unwrap_or(&default_policy);
+
+    let violation = |requirement: &str| {
+        Err(AppError::InvalidPassword(format!(
+            "Password did not conform with policy: {requirement}"
+        )))
+    };
+
+    let minimum_length = policy
+        .minimum_length
+        .unwrap_or(DEFAULT_MIN_PASSWORD_LENGTH)
+        .max(0) as usize;
+    if password.chars().count() < minimum_length {
+        return violation("Password not long enough");
     }
-
-    if password.len() > MAX_PASSWORD_LENGTH {
-        return Err(AppError::InvalidParameter(format!(
-            "Password cannot exceed {} characters",
-            MAX_PASSWORD_LENGTH
-        )));
+    if policy.require_uppercase == Some(true) && !password.chars().any(char::is_uppercase) {
+        return violation("Password must have uppercase characters");
+    }
+    if policy.require_lowercase == Some(true) && !password.chars().any(char::is_lowercase) {
+        return violation("Password must have lowercase characters");
+    }
+    if policy.require_numbers == Some(true) && !password.chars().any(|ch| ch.is_ascii_digit()) {
+        return violation("Password must have numeric characters");
+    }
+    if policy.require_symbols == Some(true)
+        && !password.chars().any(|ch| PASSWORD_SYMBOLS.contains(ch))
+    {
+        return violation("Password must have symbol characters");
     }
 
     Ok(())
+}
+
+/// A temporary password that satisfies the user pool's policy, for
+/// `AdminCreateUser` and `AdminResetUserPassword` calls that supply none.
+pub fn generate_temporary_password(pool: &UserPool) -> String {
+    use rand::{Rng, seq::SliceRandom};
+
+    const UPPER: &[u8] = b"ABCDEFGHJKLMNPQRSTUVWXYZ";
+    const LOWER: &[u8] = b"abcdefghijkmnopqrstuvwxyz";
+    const DIGITS: &[u8] = b"23456789";
+    const SYMBOLS: &[u8] = b"!@#$%^&*";
+
+    let minimum_length = pool
+        .policies
+        .as_ref()
+        .and_then(|policies| policies.password_policy.as_ref())
+        .and_then(|policy| policy.minimum_length)
+        .unwrap_or(DEFAULT_MIN_PASSWORD_LENGTH)
+        .max(0) as usize;
+
+    let mut rng = rand::thread_rng();
+    let mut pick = |set: &[u8]| set[rng.gen_range(0..set.len())] as char;
+    let mut password = vec![pick(UPPER), pick(LOWER), pick(DIGITS), pick(SYMBOLS)];
+    while password.len() < minimum_length.max(8) {
+        let set = [UPPER, LOWER, DIGITS][password.len() % 3];
+        password.push(pick(set));
+    }
+    password.shuffle(&mut rand::thread_rng());
+    password.into_iter().collect()
 }
 
 /// Validate email format (basic validation)
@@ -222,50 +313,87 @@ pub fn validate_callback_url(url: &str) -> Result<()> {
 }
 
 /// Validate pool name is not empty
-pub fn validate_pool_name(name: &str) -> Result<()> {
-    let trimmed = name.trim();
+/// A constraint violation in the words of the Cognito front end.
+///
+/// `member` is the path Cognito reports, in lower camel case
+/// (`policies.passwordPolicy.minimumLength`).
+fn constraint_violation(value: impl std::fmt::Display, member: &str, constraint: &str) -> AppError {
+    AppError::InvalidParameter(format!(
+        "1 validation error detected: Value '{value}' at '{member}' failed to satisfy constraint: {constraint}"
+    ))
+}
 
-    if trimmed.is_empty() {
-        return Err(AppError::InvalidParameter(
-            "Pool name cannot be empty".to_string(),
+/// Hold a string member to its length range, counted in characters.
+fn validate_member_length(member: &str, value: &str, min: usize, max: usize) -> Result<()> {
+    let length = value.chars().count();
+    if length < min {
+        return Err(constraint_violation(
+            value,
+            member,
+            &format!("Member must have length greater than or equal to {min}"),
         ));
     }
-
-    if trimmed.len() > 128 {
-        return Err(AppError::InvalidParameter(
-            "Pool name cannot exceed 128 characters".to_string(),
+    if length > max {
+        return Err(constraint_violation(
+            value,
+            member,
+            &format!("Member must have length less than or equal to {max}"),
         ));
     }
+    Ok(())
+}
 
-    if !trimmed
+/// Hold an integer member to its range.
+fn validate_member_range(member: &str, value: i32, min: i32, max: i32) -> Result<()> {
+    if value < min {
+        return Err(constraint_violation(
+            value,
+            member,
+            &format!("Member must have value greater than or equal to {min}"),
+        ));
+    }
+    if value > max {
+        return Err(constraint_violation(
+            value,
+            member,
+            &format!("Member must have value less than or equal to {max}"),
+        ));
+    }
+    Ok(())
+}
+
+/// The pattern of `PoolName` and `ClientName`.
+const RESOURCE_NAME_PATTERN: &str = r"[\w\s+=,.@-]+";
+
+/// A pool or app client name: 1 to 128 characters of `[\w\s+=,.@-]`.
+///
+/// A name of nothing but whitespace is refused as well, which is stricter
+/// than the pattern alone.
+fn validate_resource_name(member: &str, name: &str) -> Result<()> {
+    validate_member_length(member, name, 1, 128)?;
+
+    let matches_pattern = name
         .chars()
-        .all(|c| c.is_alphanumeric() || c.is_whitespace() || "_+=,.@-".contains(c))
-    {
-        return Err(AppError::InvalidParameter(
-            "Pool name contains unsupported characters".to_string(),
+        .all(|c| c.is_alphanumeric() || c.is_whitespace() || "_+=,.@-".contains(c));
+    if !matches_pattern || name.trim().is_empty() {
+        return Err(constraint_violation(
+            name,
+            member,
+            &format!("Member must satisfy regular expression pattern: {RESOURCE_NAME_PATTERN}"),
         ));
     }
 
     Ok(())
 }
 
-/// Validate client name is not empty
+/// Validate a user pool name
+pub fn validate_pool_name(name: &str) -> Result<()> {
+    validate_resource_name("poolName", name)
+}
+
+/// Validate an app client name
 pub fn validate_client_name(name: &str) -> Result<()> {
-    let trimmed = name.trim();
-
-    if trimmed.is_empty() {
-        return Err(AppError::InvalidParameter(
-            "Client name cannot be empty".to_string(),
-        ));
-    }
-
-    if trimmed.len() > 128 {
-        return Err(AppError::InvalidParameter(
-            "Client name cannot exceed 128 characters".to_string(),
-        ));
-    }
-
-    Ok(())
+    validate_resource_name("clientName", name)
 }
 
 fn validate_string_length(field: &str, value: &str, min: usize, max: usize) -> Result<()> {
@@ -298,29 +426,31 @@ fn validate_duration_seconds(field: &str, seconds: i64, min: i64, max: i64) -> R
 
 pub fn validate_user_pool_policies(policies: &UserPoolPolicies) -> Result<()> {
     if let Some(password_policy) = &policies.password_policy {
-        if let Some(minimum_length) = password_policy.minimum_length
-            && !(6..=99).contains(&minimum_length)
-        {
-            return Err(AppError::InvalidParameter(
-                "PasswordPolicy.MinimumLength must be between 6 and 99".to_string(),
-            ));
+        if let Some(minimum_length) = password_policy.minimum_length {
+            validate_member_range(
+                "policies.passwordPolicy.minimumLength",
+                minimum_length,
+                6,
+                99,
+            )?;
         }
 
-        if let Some(password_history_size) = password_policy.password_history_size
-            && !(0..=24).contains(&password_history_size)
-        {
-            return Err(AppError::InvalidParameter(
-                "PasswordPolicy.PasswordHistorySize must be between 0 and 24".to_string(),
-            ));
+        if let Some(password_history_size) = password_policy.password_history_size {
+            validate_member_range(
+                "policies.passwordPolicy.passwordHistorySize",
+                password_history_size,
+                0,
+                24,
+            )?;
         }
 
-        if let Some(days) = password_policy.temporary_password_validity_days
-            && !(0..=365).contains(&days)
-        {
-            return Err(AppError::InvalidParameter(
-                "PasswordPolicy.TemporaryPasswordValidityDays must be between 0 and 365"
-                    .to_string(),
-            ));
+        if let Some(days) = password_policy.temporary_password_validity_days {
+            validate_member_range(
+                "policies.passwordPolicy.temporaryPasswordValidityDays",
+                days,
+                0,
+                365,
+            )?;
         }
     }
 
@@ -729,22 +859,37 @@ pub fn validate_token_validities(
     Ok(())
 }
 
-/// Validate group name is not empty
+/// A group name: 1 to 128 letters, marks, symbols, numbers, and punctuation.
+/// Whitespace is not part of the pattern.
 pub fn validate_group_name(name: &str) -> Result<()> {
-    let trimmed = name.trim();
+    validate_member_length("groupName", name, 1, 128)?;
 
-    if trimmed.is_empty() {
-        return Err(AppError::InvalidParameter(
-            "Group name cannot be empty".to_string(),
+    if name.chars().any(|c| c.is_whitespace() || c.is_control()) {
+        return Err(constraint_violation(
+            name,
+            "groupName",
+            r"Member must satisfy regular expression pattern: [\p{L}\p{M}\p{S}\p{N}\p{P}]+",
         ));
     }
 
-    if trimmed.len() > 128 {
-        return Err(AppError::InvalidParameter(
-            "Group name cannot exceed 128 characters".to_string(),
-        ));
-    }
+    Ok(())
+}
 
+/// The optional members of CreateGroup and UpdateGroup.
+pub fn validate_group_settings(
+    description: Option<&str>,
+    role_arn: Option<&str>,
+    precedence: Option<i32>,
+) -> Result<()> {
+    if let Some(description) = description {
+        validate_member_length("description", description, 0, 2048)?;
+    }
+    if let Some(role_arn) = role_arn {
+        validate_member_length("roleArn", role_arn, 20, 2048)?;
+    }
+    if let Some(precedence) = precedence {
+        validate_member_range("precedence", precedence, 0, i32::MAX)?;
+    }
     Ok(())
 }
 
@@ -797,22 +942,17 @@ pub fn validate_analytics_configuration(config: &AnalyticsConfiguration) -> Resu
 }
 
 pub fn validate_auth_session_validity(value: i32) -> Result<()> {
-    if !(3..=15).contains(&value) {
-        return Err(AppError::InvalidParameter(
-            "AuthSessionValidity must be between 3 and 15".to_string(),
-        ));
-    }
-
-    Ok(())
+    validate_member_range("authSessionValidity", value, 3, 15)
 }
 
 pub fn validate_refresh_token_rotation(config: &RefreshTokenRotationType) -> Result<()> {
-    if let Some(seconds) = config.retry_grace_period_seconds
-        && !(0..=60).contains(&seconds)
-    {
-        return Err(AppError::InvalidParameter(
-            "RefreshTokenRotation.RetryGracePeriodSeconds must be between 0 and 60".to_string(),
-        ));
+    if let Some(seconds) = config.retry_grace_period_seconds {
+        validate_member_range(
+            "refreshTokenRotation.retryGracePeriodSeconds",
+            seconds,
+            0,
+            60,
+        )?;
     }
 
     Ok(())
@@ -840,16 +980,95 @@ mod tests {
         assert!(validate_username("user name").is_err());
     }
 
-    #[test]
-    fn test_validate_password_valid() {
-        assert!(validate_password("password123").is_ok());
-        assert!(validate_password("123456").is_ok());
+    fn pool_with_policy(policy: Option<PasswordPolicy>) -> UserPool {
+        let mut pool = UserPool::new_for_test(UserPoolId::new("us-east-1_Test").unwrap());
+        pool.policies = policy.map(|password_policy| UserPoolPolicies {
+            password_policy: Some(password_policy),
+            sign_in_policy: None,
+        });
+        pool
+    }
+
+    fn policy_violation(pool: &UserPool, password: &str) -> String {
+        match validate_password_against_policy(pool, password) {
+            Err(AppError::InvalidPassword(message)) => message,
+            other => panic!("expected InvalidPasswordException, got {other:?}"),
+        }
     }
 
     #[test]
-    fn test_validate_password_too_short() {
-        assert!(validate_password("12345").is_err());
-        assert!(validate_password("").is_err());
+    fn test_default_password_policy_is_cognitos() {
+        let pool = pool_with_policy(None);
+        assert!(validate_password_against_policy(&pool, "Password123!").is_ok());
+        assert_eq!(
+            policy_violation(&pool, "Pw1!"),
+            "Password did not conform with policy: Password not long enough"
+        );
+        assert_eq!(
+            policy_violation(&pool, "password123!"),
+            "Password did not conform with policy: Password must have uppercase characters"
+        );
+        assert_eq!(
+            policy_violation(&pool, "PASSWORD123!"),
+            "Password did not conform with policy: Password must have lowercase characters"
+        );
+        assert_eq!(
+            policy_violation(&pool, "Password!!!!"),
+            "Password did not conform with policy: Password must have numeric characters"
+        );
+        assert_eq!(
+            policy_violation(&pool, "Password1234"),
+            "Password did not conform with policy: Password must have symbol characters"
+        );
+    }
+
+    #[test]
+    fn test_password_policy_of_the_pool_is_enforced() {
+        let pool = pool_with_policy(Some(PasswordPolicy {
+            minimum_length: Some(6),
+            password_history_size: None,
+            require_lowercase: Some(false),
+            require_numbers: Some(false),
+            require_symbols: None,
+            require_uppercase: Some(false),
+            temporary_password_validity_days: None,
+        }));
+        assert!(validate_password_against_policy(&pool, "secret").is_ok());
+        assert_eq!(
+            policy_violation(&pool, "short"),
+            "Password did not conform with policy: Password not long enough"
+        );
+    }
+
+    #[test]
+    fn test_password_shape_is_a_validation_error() {
+        let pool = pool_with_policy(None);
+        for password in ["", " Password123!", "Password123! "] {
+            assert!(matches!(
+                validate_password_against_policy(&pool, password),
+                Err(AppError::InvalidParameter(message)) if message.contains("^[\\S]+.*[\\S]+$")
+            ));
+        }
+        assert!(matches!(
+            validate_password_against_policy(&pool, &"Aa1!".repeat(65)),
+            Err(AppError::InvalidParameter(message))
+                if message.contains("length less than or equal to 256")
+        ));
+    }
+
+    #[test]
+    fn test_generated_temporary_password_satisfies_the_policy() {
+        let default_pool = pool_with_policy(None);
+        let long_pool = pool_with_policy(Some(PasswordPolicy {
+            minimum_length: Some(24),
+            ..default_password_policy()
+        }));
+        for pool in [&default_pool, &long_pool] {
+            for _ in 0..20 {
+                let password = generate_temporary_password(pool);
+                assert!(validate_password_against_policy(pool, &password).is_ok());
+            }
+        }
     }
 
     #[test]
@@ -879,5 +1098,74 @@ mod tests {
         assert!(validate_callback_url("").is_err());
         assert!(validate_callback_url("not-a-url").is_err());
         assert!(validate_callback_url("ftp://example.com").is_err());
+    }
+
+    fn violation(result: Result<()>) -> String {
+        match result {
+            Err(AppError::InvalidParameter(message)) => message,
+            other => panic!("expected InvalidParameterException, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_pool_and_client_names_follow_cognitos_constraints() {
+        assert!(validate_pool_name("My pool+test=1,2.3@x-y_z").is_ok());
+        assert!(validate_client_name("web client").is_ok());
+
+        assert_eq!(
+            violation(validate_pool_name("")),
+            "1 validation error detected: Value '' at 'poolName' failed to satisfy constraint: Member must have length greater than or equal to 1"
+        );
+        let too_long = "a".repeat(129);
+        assert_eq!(
+            violation(validate_client_name(&too_long)),
+            format!(
+                "1 validation error detected: Value '{too_long}' at 'clientName' failed to satisfy constraint: Member must have length less than or equal to 128"
+            )
+        );
+        assert_eq!(
+            violation(validate_pool_name("bad/name")),
+            r"1 validation error detected: Value 'bad/name' at 'poolName' failed to satisfy constraint: Member must satisfy regular expression pattern: [\w\s+=,.@-]+"
+        );
+        assert!(validate_client_name("   ").is_err());
+    }
+
+    #[test]
+    fn test_group_name_excludes_whitespace() {
+        assert!(validate_group_name("admins").is_ok());
+        assert!(validate_group_name("us-east-1_Pool_Google").is_ok());
+        assert!(validate_group_name("管理者").is_ok());
+        assert!(validate_group_name("two words").is_err());
+        assert!(validate_group_name("").is_err());
+        assert!(validate_group_name(&"g".repeat(129)).is_err());
+    }
+
+    #[test]
+    fn test_integer_members_name_their_path() {
+        assert_eq!(
+            violation(validate_auth_session_validity(2)),
+            "1 validation error detected: Value '2' at 'authSessionValidity' failed to satisfy constraint: Member must have value greater than or equal to 3"
+        );
+        assert_eq!(
+            violation(validate_auth_session_validity(16)),
+            "1 validation error detected: Value '16' at 'authSessionValidity' failed to satisfy constraint: Member must have value less than or equal to 15"
+        );
+
+        let policy = |minimum_length| UserPoolPolicies {
+            password_policy: Some(PasswordPolicy {
+                minimum_length: Some(minimum_length),
+                ..default_password_policy()
+            }),
+            sign_in_policy: None,
+        };
+        assert!(validate_user_pool_policies(&policy(6)).is_ok());
+        assert_eq!(
+            violation(validate_user_pool_policies(&policy(5))),
+            "1 validation error detected: Value '5' at 'policies.passwordPolicy.minimumLength' failed to satisfy constraint: Member must have value greater than or equal to 6"
+        );
+        assert_eq!(
+            violation(validate_user_pool_policies(&policy(100))),
+            "1 validation error detected: Value '100' at 'policies.passwordPolicy.minimumLength' failed to satisfy constraint: Member must have value less than or equal to 99"
+        );
     }
 }

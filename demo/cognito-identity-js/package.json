@@ -1,0 +1,11 @@
+{
+  "name": "cognitox-demo-cognito-identity-js",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "demo": "node demo.mjs"
+  },
+  "dependencies": {
+    "amazon-cognito-identity-js": "^6.3.22"
+  }
+}

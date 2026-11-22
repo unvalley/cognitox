@@ -7,6 +7,7 @@ pub mod create_user_import_job;
 pub mod create_user_pool;
 pub mod create_user_pool_client;
 pub mod create_user_pool_domain;
+pub(crate) mod defaults;
 pub mod delete_identity_provider;
 pub mod delete_managed_login_branding;
 pub mod delete_resource_server;
